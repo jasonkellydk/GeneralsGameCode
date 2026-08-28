@@ -904,6 +904,7 @@ ControlBar::ControlBar()
 
 	m_currContext = CB_CONTEXT_NONE;
 	m_defaultControlBarPosition.x = m_defaultControlBarPosition.y = 0;
+	m_currentControlBarStage = CONTROL_BAR_STAGE_DEFAULT;
 	m_genStarFlash = FALSE;
 	m_genStarFlashTimeAccumulator = 0.0f;
 	m_genStarOff = nullptr;
@@ -1259,10 +1260,12 @@ void ControlBar::init()
 		m_radarAttackGlowWindow = TheWindowManager->winGetWindowFromId(nullptr, TheNameKeyGenerator->nameToKey("ControlBar.wnd:WinUAttack"));
 
 
+		win = TheWindowManager->winGetWindowFromId(nullptr,TheNameKeyGenerator->nameToKey( "ControlBar.wnd:ForegroundMarker" ));
+		if (win)
+			win->winGetScreenPosition(&m_controlBarForegroundMarkerPos.x, &m_controlBarForegroundMarkerPos.y);
 		win = TheWindowManager->winGetWindowFromId(nullptr,TheNameKeyGenerator->nameToKey( "ControlBar.wnd:BackgroundMarker" ));
-		win->winGetScreenPosition(&m_controlBarForegroundMarkerPos.x, &m_controlBarForegroundMarkerPos.y);
-		win = TheWindowManager->winGetWindowFromId(nullptr,TheNameKeyGenerator->nameToKey( "ControlBar.wnd:BackgroundMarker" ));
-		win->winGetScreenPosition(&m_controlBarBackgroundMarkerPos.x,&m_controlBarBackgroundMarkerPos.y);
+		if (win)
+			win->winGetScreenPosition(&m_controlBarBackgroundMarkerPos.x,&m_controlBarBackgroundMarkerPos.y);
 
 		if(!m_videoManager)
 			m_videoManager = NEW WindowVideoManager;
@@ -3100,6 +3103,73 @@ void ControlBar::setHiddenControlBar()
 	m_currentControlBarStage = CONTROL_BAR_STAGE_HIDDEN;
 	m_contextParent[ CP_MASTER ]->winHide(TRUE);
 }
+
+//-------------------------------------------------------------------------------------------------
+/** Keep the live control bar aligned with a resized drawable display. */
+//-------------------------------------------------------------------------------------------------
+void ControlBar::onDisplaySizeChanged( UnsignedInt oldWidth, UnsignedInt oldHeight,
+	UnsignedInt newWidth, UnsignedInt newHeight )
+{
+	if (oldWidth == 0 || oldHeight == 0 || newWidth == 0 || newHeight == 0 ||
+		m_contextParent[ CP_MASTER ] == nullptr || TheDisplay == nullptr)
+	{
+		return;
+	}
+
+	if (oldWidth != newWidth || oldHeight != newHeight)
+	{
+		const Real scaleX = static_cast<Real>(newWidth) / static_cast<Real>(oldWidth);
+		const Real scaleY = static_cast<Real>(newHeight) / static_cast<Real>(oldHeight);
+		const Real scaledX = static_cast<Real>(m_defaultControlBarPosition.x) * scaleX;
+		const Real scaledY = static_cast<Real>(m_defaultControlBarPosition.y) * scaleY;
+		m_defaultControlBarPosition.x = scaledX >= 0.0f ? static_cast<Int>(scaledX + 0.5f) : static_cast<Int>(scaledX - 0.5f);
+		m_defaultControlBarPosition.y = scaledY >= 0.0f ? static_cast<Int>(scaledY + 0.5f) : static_cast<Int>(scaledY - 0.5f);
+	}
+
+	// winScaleToResolution has already scaled the entire tree. These stage
+	// adjustments update the control bar's own baseline, which is used later
+	// by the stage toggle code, without rebuilding any child window.
+	switch (m_currentControlBarStage)
+	{
+	case CONTROL_BAR_STAGE_DEFAULT:
+		m_contextParent[ CP_MASTER ]->winSetPosition(m_defaultControlBarPosition.x,
+			m_defaultControlBarPosition.y);
+		if (TheTacticalView)
+			setScaledViewportHeight();
+		break;
+	case CONTROL_BAR_STAGE_SQUISHED:
+		m_contextParent[ CP_MASTER ]->winSetPosition(m_defaultControlBarPosition.x,
+			m_defaultControlBarPosition.y);
+		if (TheTacticalView)
+			setFullViewportHeight();
+		break;
+	case CONTROL_BAR_STAGE_LOW:
+		m_contextParent[ CP_MASTER ]->winSetPosition(m_defaultControlBarPosition.x,
+			TheDisplay->getHeight() - static_cast<Int>(0.1f * TheDisplay->getHeight() + 0.5f));
+		if (TheTacticalView)
+			setFullViewportHeight();
+		break;
+	case CONTROL_BAR_STAGE_HIDDEN:
+		if (TheTacticalView)
+			setFullViewportHeight();
+		break;
+	default:
+		break;
+	}
+
+	GameWindow *win = TheWindowManager ?
+		TheWindowManager->winGetWindowFromId(nullptr, TheNameKeyGenerator->nameToKey("ControlBar.wnd:ForegroundMarker")) : nullptr;
+	if (win)
+		win->winGetScreenPosition(&m_controlBarForegroundMarkerPos.x, &m_controlBarForegroundMarkerPos.y);
+	win = TheWindowManager ?
+		TheWindowManager->winGetWindowFromId(nullptr, TheNameKeyGenerator->nameToKey("ControlBar.wnd:BackgroundMarker")) : nullptr;
+	if (win)
+		win->winGetScreenPosition(&m_controlBarBackgroundMarkerPos.x, &m_controlBarBackgroundMarkerPos.y);
+
+	// The context windows are still alive, but a resize can have changed their
+	// visibility/layout inputs. Re-evaluate that state on the next game update.
+	markUIDirty();
+}
 // removed from multiplayer test
 //void ControlBar::showCommandMarkers()
 //{
@@ -3819,10 +3889,12 @@ void ControlBar::hideSpecialPowerShortcut()
 
 void ControlBar::setFullViewportHeight()
 {
-	TheTacticalView->setHeight(TheDisplay->getHeight());
+	if (TheTacticalView && TheDisplay)
+		TheTacticalView->setHeight(TheDisplay->getHeight());
 }
 
 void ControlBar::setScaledViewportHeight()
 {
-	TheTacticalView->setHeight(TheDisplay->getHeight() * TheGlobalData->m_viewportHeightScale);
+	if (TheTacticalView && TheDisplay && TheGlobalData)
+		TheTacticalView->setHeight(TheDisplay->getHeight() * TheGlobalData->m_viewportHeightScale);
 }

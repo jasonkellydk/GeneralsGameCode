@@ -751,7 +751,7 @@ void PlayMovieAndBlock(AsciiString movieTitle)
 			}
 		}
 
-		TheGameEngine->serviceWindowsOS();
+		TheGameEngine->serviceSDL3();
 
 		if(!videoStream->isFrameReady())
 		{

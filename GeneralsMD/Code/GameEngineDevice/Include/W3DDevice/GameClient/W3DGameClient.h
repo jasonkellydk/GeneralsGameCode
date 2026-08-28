@@ -46,15 +46,13 @@
 #include "W3DDevice/GameClient/W3DGameFont.h"
 #include "W3DDevice/GameClient/W3DDisplayStringManager.h"
 #include "VideoDevice/FFmpeg/FFmpegVideoPlayer.h"
-#include "Win32Device/GameClient/Win32DIKeyboard.h"
-#include "Win32Device/GameClient/Win32DIMouse.h"
-#include "Win32Device/GameClient/Win32Mouse.h"
+#include "SDL3Device/GameClient/SDL3Keyboard.h"
+#include "SDL3Device/GameClient/SDL3Mouse.h"
 #include "W3DDevice/GameClient/W3DMouse.h"
 #include "W3DDevice/GameClient/W3DSnow.h"
 
 class ThingTemplate;
 
-extern Win32Mouse *TheWin32Mouse;
 
 ///////////////////////////////////////////////////////////////////////////////
 // PROTOTYPES /////////////////////////////////////////////////////////////////
@@ -119,11 +117,9 @@ protected:
 
 };
 
-inline Keyboard *W3DGameClient::createKeyboard() { return NEW DirectInputKeyboard; }
+inline Keyboard *W3DGameClient::createKeyboard() { return NEW SDL3Keyboard; }
 inline Mouse *W3DGameClient::createMouse()
 {
 	//return new DirectInputMouse;
-	Win32Mouse * mouse = NEW W3DMouse;
-	TheWin32Mouse = mouse;   ///< global cheat for the WndProc()
-	return mouse;
+	return NEW W3DMouse;
 }

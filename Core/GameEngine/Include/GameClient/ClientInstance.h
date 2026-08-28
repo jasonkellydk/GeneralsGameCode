@@ -16,6 +16,7 @@
 **	along with this program.  If not, see <http://www.gnu.org/licenses/>.
 */
 #include "Lib/BaseType.h"
+#include <SDL3/SDL.h>
 
 namespace rts
 {
@@ -49,7 +50,7 @@ public:
 	static const char* getFirstInstanceName();
 
 private:
-	static HANDLE s_mutexHandle;
+	static SDL_Mutex *s_mutexHandle;
 	static UnsignedInt s_instanceIndex;
 	static Bool s_isMultiInstance;
 };

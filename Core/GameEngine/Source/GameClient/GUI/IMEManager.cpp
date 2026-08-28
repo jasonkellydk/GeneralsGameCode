@@ -60,14 +60,18 @@
 #include "GameClient/Mouse.h"
 #include "GameClient/Color.h"
 #include "Common/NameKeyGenerator.h"
+#include "Platform/SDLPlatformWindow.h"
 
 
 //----------------------------------------------------------------------------
 //         Externals
 //----------------------------------------------------------------------------
 
-extern HWND ApplicationHWnd;  ///< our application window handle
 extern Int	IMECandidateWindowLineSpacing;
+
+// The legacy IME implementation still uses Win32 IMM calls, but obtains its
+// window through the SDL3 platform boundary rather than a global game HWND.
+#define ApplicationHWnd static_cast<HWND>(SDLPlatformWindow::nativeHandle())
 
 //----------------------------------------------------------------------------
 //         Defines

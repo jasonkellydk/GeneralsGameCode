@@ -1,4 +1,4 @@
-add_executable(z_generals WIN32)
+add_executable(z_generals)
 
 # Use a binary name that doesn't conflict with original game.
 if("${CMAKE_SYSTEM}" MATCHES "Windows")
@@ -11,6 +11,7 @@ target_link_libraries(z_generals PRIVATE
     comctl32
     d3d9lib
     imm32
+    SDL3::SDL3
     vfw32
     winmm
     z_gameengine
@@ -53,6 +54,9 @@ add_custom_command(TARGET z_generals POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_directory
         "${ffmpeg_SOURCE_DIR}/bin"
         "$<TARGET_FILE_DIR:z_generals>"
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        "$<TARGET_FILE:SDL3::SDL3>"
+        "$<TARGET_FILE_DIR:z_generals>"
 )
 
 target_include_directories(z_generals PRIVATE
@@ -61,8 +65,9 @@ target_include_directories(z_generals PRIVATE
 )
 
 target_sources(z_generals PRIVATE
-    WinMain.cpp
-    WinMain.h
+    SDL3Main.cpp
+    SDL3Main.h
+    ../../../Generals/Code/Main/Platform/SDLPlatformWindow.h
 )
 
 # RC files optional for MinGW builds

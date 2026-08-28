@@ -46,6 +46,7 @@
 #include "GameClient/InGameUI.h"
 #include "WWLib/mutex.h"
 #include "WWLib/thread.h"
+#include <SDL3/SDL.h>
 
 
 //Since there can't be more than 1 mouse, might as well keep these static.
@@ -113,7 +114,7 @@ W3DMouse::~W3DMouse()
 	if (m_pDev)
 	{
 		m_pDev->ShowCursor(FALSE);	//kill DX8 cursor
-		Win32Mouse::setCursor(ARROW); //enable default windows cursor
+		SDL3Mouse::setCursor(ARROW);
 	}
 
 	freeD3DAssets();
@@ -332,7 +333,7 @@ void W3DMouse::init()
 {
 
 	//check if system already initialized and texture assets loaded.
-	Win32Mouse::init();
+	SDL3Mouse::init();
 	setCursor(ARROW);	//set default starting cursor image
 
 	WWASSERT(!thread.Is_Running());
@@ -352,7 +353,7 @@ void W3DMouse::reset()
 {
 
 	// extend
-	Win32Mouse::reset();
+	SDL3Mouse::reset();
 
 }
 
@@ -371,8 +372,10 @@ void W3DMouse::setCursor( MouseCursor cursor )
 		m_currentW3DCursor=NONE;
 		m_currentPolygonCursor=NONE;
 		setCursorDirection(cursor);
-		if (m_drawing)	//only allow cursor to change when drawing the cursor (once per frame) to fix flickering.
-			Win32Mouse::setCursor(cursor);
+		// SDL owns the system cursor, so it is safe to apply the selection
+		// immediately. The old drawing guard only worked around Win32
+		// WM_SETCURSOR flicker.
+		SDL3Mouse::setCursorWithDirection(cursor, m_directionFrame);
 		m_currentCursor = cursor;
 		return;
 	}
@@ -387,7 +390,7 @@ void W3DMouse::setCursor( MouseCursor cursor )
 	//make sure Windows didn't reset our cursor
 	if (m_currentRedrawMode == RM_DX8)
 	{
-		SetCursor(nullptr);	//Kill Windows Cursor
+		SDL_HideCursor();	//Kill the SDL cursor while the DX8 cursor is active.
 
 		LPDIRECT3DDEVICE9 m_pDev=DX8Wrapper::_Get_D3D_Device8();
 		Bool doImageChange=FALSE;
@@ -423,7 +426,7 @@ void W3DMouse::setCursor( MouseCursor cursor )
 	}
 	else if (m_currentRedrawMode == RM_POLYGON)
 	{
-		SetCursor(nullptr);	//Kill Windows Cursor
+		SDL_HideCursor();	//Kill the SDL cursor while the polygon cursor is active.
 		m_currentD3DCursor=NONE;
 		m_currentW3DCursor=NONE;
 		m_currentPolygonCursor = cursor;
@@ -431,7 +434,7 @@ void W3DMouse::setCursor( MouseCursor cursor )
 	}
 	else if (m_currentRedrawMode == RM_W3D)
 	{
-		SetCursor(nullptr);	//Kill Windows Cursor
+		SDL_HideCursor();	//Kill the SDL cursor while the W3D cursor is active.
 		m_currentD3DCursor=NONE;
 		m_currentPolygonCursor=NONE;
 		if (cursor != m_currentW3DCursor)
@@ -470,8 +473,6 @@ void W3DMouse::setCursor( MouseCursor cursor )
 
 }
 
-extern HWND ApplicationHWnd;
-
 void W3DMouse::draw()
 {
 	CriticalSectionClass::LockClass m(mutex);
@@ -491,11 +492,10 @@ void W3DMouse::draw()
 
 			if (TheDisplay && !TheDisplay->getWindowed())
 			{	//if we're full-screen, need to manually move cursor image
-				POINT ptCursor;
-
-				GetCursorPos( &ptCursor );
-				ScreenToClient( ApplicationHWnd, &ptCursor );
-				m_pDev->SetCursorPosition( ptCursor.x, ptCursor.y, D3DCURSOR_IMMEDIATE_UPDATE);
+				float cursorX = 0.0f;
+				float cursorY = 0.0f;
+				SDL_GetMouseState(&cursorX, &cursorY);
+				m_pDev->SetCursorPosition(static_cast<int>(cursorX), static_cast<int>(cursorY), D3DCURSOR_IMMEDIATE_UPDATE);
 			}
 			//Check if animated cursor and new frame
 			if (m_currentFrames > 1)

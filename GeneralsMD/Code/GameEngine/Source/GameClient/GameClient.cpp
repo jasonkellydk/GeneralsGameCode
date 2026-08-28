@@ -766,7 +766,7 @@ Bool GameClient::isMovieAbortRequested()
 {
 	if (TheGameEngine)
 	{
-		TheGameEngine->serviceWindowsOS();
+		TheGameEngine->serviceSDL3();
 	}
 
 	// TheSuperHackers @feature User can skip video by pressing ESC

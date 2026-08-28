@@ -275,6 +275,7 @@ public:
 	virtual void init() override;		///< init mouse, extend this functionality, do not replace
 	virtual void reset() override;		///< Reset the system
 	virtual void update() override;  ///< update the state of the mouse position and buttons
+	virtual void addWheelDelta( Real wheelDelta ) {}	///< add a device wheel delta in scroll ticks
 	virtual void initCursorResources()=0;	///< needed so Win32 cursors can load resources before D3D device created.
 
 	virtual void createStreamMessages();  /**< given state of device, create

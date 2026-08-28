@@ -90,14 +90,13 @@ set(GAMEENGINEDEVICE_SRC
 #    Include/W3DDevice/GameLogic/W3DGameLogic.h
 #    Include/W3DDevice/GameLogic/W3DGhostObject.h
 #    Include/W3DDevice/GameLogic/W3DTerrainLogic.h
-    Include/Win32Device/Common/Win32BIGFile.h
-    Include/Win32Device/Common/Win32BIGFileSystem.h
-    Include/Win32Device/Common/Win32GameEngine.h
-    Include/Win32Device/Common/Win32LocalFile.h
-    Include/Win32Device/Common/Win32LocalFileSystem.h
-    Include/Win32Device/GameClient/Win32DIKeyboard.h
-    #Include/Win32Device/GameClient/Win32DIMouse.h
-    Include/Win32Device/GameClient/Win32Mouse.h
+    Include/SDL3Device/GameClient/SDL3Mouse.h
+    Include/SDL3Device/GameClient/SDL3Keyboard.h
+    Include/SDL3Device/Common/SDL3GameEngine.h
+    Include/SDL3Device/Common/SDL3LocalFile.h
+    Include/SDL3Device/Common/SDL3LocalFileSystem.h
+    Include/SDL3Device/Common/SDL3BIGFile.h
+    Include/SDL3Device/Common/SDL3BIGFileSystem.h
     Source/XAudio2AudioDevice/XAudio2AudioManager.cpp
     Source/XAudio2AudioDevice/XAudio2AudioSystem.cpp
     Source/XAudio2AudioDevice/XAudio2Decoder.cpp
@@ -202,30 +201,15 @@ set(GAMEENGINEDEVICE_SRC
 #    Source/W3DDevice/GameLogic/W3DGameLogic.cpp
 #    Source/W3DDevice/GameLogic/W3DGhostObject.cpp
 #    Source/W3DDevice/GameLogic/W3DTerrainLogic.cpp
-    Source/Win32Device/Common/Win32BIGFile.cpp
-    Source/Win32Device/Common/Win32BIGFileSystem.cpp
-    Source/Win32Device/Common/Win32GameEngine.cpp
-    Source/Win32Device/Common/Win32LocalFile.cpp
-    Source/Win32Device/Common/Win32LocalFileSystem.cpp
-    Source/Win32Device/Common/Win32OSDisplay.cpp
-    Source/Win32Device/GameClient/Win32DIKeyboard.cpp
-    #Source/Win32Device/GameClient/Win32DIMouse.cpp
-    Source/Win32Device/GameClient/Win32Mouse.cpp
+    Source/SDL3Device/GameClient/SDL3Mouse.cpp
+    Source/SDL3Device/GameClient/SDL3Keyboard.cpp
+    Source/SDL3Device/Common/SDL3GameEngine.cpp
+    Source/SDL3Device/Common/SDL3OSDisplay.cpp
+    Source/SDL3Device/Common/SDL3LocalFile.cpp
+    Source/SDL3Device/Common/SDL3LocalFileSystem.cpp
+    Source/SDL3Device/Common/SDL3BIGFile.cpp
+    Source/SDL3Device/Common/SDL3BIGFileSystem.cpp
 )
-
-# Add C++ 17 FileSystem implementation for non-VS6 builds
-if(NOT IS_VS6_BUILD)
-    list(APPEND GAMEENGINEDEVICE_SRC
-        Include/StdDevice/Common/StdBIGFile.h
-        Include/StdDevice/Common/StdBIGFileSystem.h
-        Include/StdDevice/Common/StdLocalFile.h
-        Include/StdDevice/Common/StdLocalFileSystem.h
-        Source/StdDevice/Common/StdBIGFile.cpp
-        Source/StdDevice/Common/StdBIGFileSystem.cpp
-        Source/StdDevice/Common/StdLocalFile.cpp
-        Source/StdDevice/Common/StdLocalFileSystem.cpp
-    )
-endif()
 
 add_library(corei_gameenginedevice_private INTERFACE)
 add_library(corei_gameenginedevice_public INTERFACE)
@@ -244,6 +228,7 @@ target_include_directories(corei_gameenginedevice_private INTERFACE
 target_link_libraries(corei_gameenginedevice_private INTERFACE
     corei_always
     corei_main
+    SDL3::SDL3
     stb
 )
 

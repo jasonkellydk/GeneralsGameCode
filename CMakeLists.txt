@@ -55,6 +55,7 @@ if(WIN32 OR "${CMAKE_SYSTEM}" MATCHES "Windows")
     include(cmake/miles.cmake)
     include(cmake/dx9.cmake)
     include(cmake/ffmpeg.cmake)
+    include(cmake/sdl3.cmake)
 endif()
 
 # Define a dummy stlport target when not on VC6.

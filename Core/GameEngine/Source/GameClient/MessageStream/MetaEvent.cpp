@@ -608,7 +608,14 @@ void MetaEventTranslator::onKeyPressed(GameMessageDisposition &disp, Int systemK
 		if (!isMessageUsable(map->m_usableIn))
 			continue;
 
-		const Bool isMatchingKeyCombo = map->m_key == keyType && map->m_modState == keyModState;
+		// The original bindings use the keypad +/- key codes.  Accept the main
+		// keyboard +/- keys as aliases as well; SDL reports those as EQUAL/MINUS,
+		// while users commonly use them for the same Ctrl and Ctrl+Shift commands.
+		const Bool isKeypadPlusAlias = keyType == MK_EQUAL && map->m_key == MK_KPPLUS;
+		const Bool isKeypadMinusAlias = keyType == MK_MINUS && map->m_key == MK_KPMINUS;
+		const Bool isMatchingKeyCombo =
+			(map->m_key == keyType || isKeypadPlusAlias || isKeypadMinusAlias) &&
+			map->m_modState == keyModState;
 		const Bool isMatchingTransitionUp = map->m_transition == UP && (systemKeyState & KEY_STATE_UP) != 0;
 		const Bool isMatchingTransitionDown = map->m_transition == DOWN && (systemKeyState & KEY_STATE_DOWN) != 0;
 		//const Bool isMatchingTransitionDoubleDown = map->m_transition == DOUBLEDOWN && (systemKeyState & KEY_STATE_DOWN) && m_lastKeyDown == key;

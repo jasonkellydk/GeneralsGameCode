@@ -36,6 +36,9 @@
 
 class WorldHeightMap;
 #define TILE_OFFSET 8
+#define TERRAIN_TILE_PIXEL_EXTENT TILE_CACHE_PIXEL_EXTENT
+#define TERRAIN_TILE_OFFSET 32
+#define TERRAIN_TEXTURE_WIDTH 8192
 /** ***********************************************************************
 **                             TerrainTextureClass
 ***************************************************************************/

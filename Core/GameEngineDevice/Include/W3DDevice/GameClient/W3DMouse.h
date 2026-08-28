@@ -48,7 +48,7 @@
 // SYSTEM INCLUDES ////////////////////////////////////////////////////////////
 
 // USER INCLUDES //////////////////////////////////////////////////////////////
-#include "Win32Device/GameClient/Win32Mouse.h"
+#include "SDL3Device/GameClient/SDL3Mouse.h"
 
 // FORWARD REFERENCES /////////////////////////////////////////////////////////
 class CameraClass;
@@ -59,7 +59,7 @@ class SurfaceClass;
 // W3DMouse -----------------------------------------------------------------
 /** Mouse interface for when using only the Win32 messages and W3D for cursor */
 //-----------------------------------------------------------------------------
-class W3DMouse : public Win32Mouse
+class W3DMouse : public SDL3Mouse
 {
 
 public:
@@ -81,6 +81,7 @@ private:
 	Int	m_currentFrames;	///< total number of frames in current 2D cursor animation.
 	Real m_currentAnimFrame;///< current frame of 2D cursor animation.
 	Int m_currentD3DFrame;	///< current frame actually sent to the hardware.
+	Int m_directionFrame;	///< selected frame for oriented cursors.
 	Int m_lastAnimTime;		///< ms at last animation update.
 	Real m_currentFMS;		///< frames per ms.
 	Bool m_drawing;			///< flag to indicate mouse cursor is currently in the act of drawing.

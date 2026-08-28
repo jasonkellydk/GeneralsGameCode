@@ -158,7 +158,7 @@ LoadScreen::~LoadScreen()
 
 void LoadScreen::update( Int percent )
 {
-	TheGameEngine->serviceWindowsOS();
+	TheGameEngine->serviceSDL3();
 	if (TheGameEngine->getQuitting() || (TheGameLogic && TheGameLogic->isQuitToDesktopRequested()))
 		return;	//don't bother with any of this if the player is exiting game.
 
