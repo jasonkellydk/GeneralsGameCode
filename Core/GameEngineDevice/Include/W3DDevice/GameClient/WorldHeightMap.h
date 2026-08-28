@@ -329,8 +329,8 @@ public:  // modify height value
 		if ((ndx>=0) && (ndx<m_dataSize) && m_data) m_data[ndx]=height;
 	};
 public: // Read tile utilities. jba [7/9/2003]
-	static Bool readTiles(InputStream *pStrm, TileData **tiles, Int numRows);
-	static Int countTiles(InputStream *pStrm, Bool *halfTile=nullptr);
+	static Bool readTiles(InputStream *pStrm, TileData **tiles, Int numRows, Int tilePixelExtent=TILE_PIXEL_EXTENT);
+	static Int countTiles(InputStream *pStrm, Bool *halfTile=nullptr, Int tilePixelExtent=TILE_PIXEL_EXTENT);
 
 protected:
 	void setCliffState(Int xIndex, Int yIndex, Bool state);
