@@ -606,8 +606,8 @@ void Render2DClass::Render()
 	Matrix4x4 view,proj;
 	Matrix4x4 identity(true);
 
-	DX8Wrapper::Get_Transform(D3DTS_VIEW,view);
-	DX8Wrapper::Get_Transform(D3DTS_PROJECTION,proj);
+	WW3D::Get_Render_Backend()->Get_Transform(RenderBackendTransform::View,view);
+	WW3D::Get_Render_Backend()->Get_Transform(RenderBackendTransform::Projection,proj);
 
 	//
 	//	Configure the viewport for entire screen
@@ -615,23 +615,20 @@ void Render2DClass::Render()
 	int width, height, bits;
 	bool windowed;
 	WW3D::Get_Device_Resolution( width, height, bits, windowed );
-	D3DVIEWPORT9 vp = { 0 };
-	vp.X			= 0;
-	vp.Y			= 0;
-	vp.Width		= width;
-	vp.Height	= height;
-	vp.MinZ		= 0;
-	vp.MaxZ		= 1;
-	DX8Wrapper::Set_Viewport(&vp);
-	DX8Wrapper::Set_Texture(0,Texture);
+	RenderBackendViewport viewport = { 0 };
+	viewport.width = width;
+	viewport.height = height;
+	viewport.max_z = 1.0f;
+	WW3D::Get_Render_Backend()->Set_Viewport(viewport);
+	WW3D::Get_Render_Backend()->Set_Texture(0,Texture);
 
 	VertexMaterialClass *vm=VertexMaterialClass::Get_Preset(VertexMaterialClass::PRELIT_DIFFUSE);
-	DX8Wrapper::Set_Material(vm);
+	WW3D::Get_Render_Backend()->Set_Material(vm);
 	REF_PTR_RELEASE(vm);
 
-	DX8Wrapper::Set_World_Identity();
-	DX8Wrapper::Set_View_Identity();
-	DX8Wrapper::Set_Transform(D3DTS_PROJECTION,identity);
+	WW3D::Get_Render_Backend()->Set_World_Identity();
+	WW3D::Get_Render_Backend()->Set_View_Identity();
+	WW3D::Get_Render_Backend()->Set_Transform(RenderBackendTransform::Projection,identity);
 
 	DynamicVBAccessClass vb(BUFFER_TYPE_DYNAMIC_DX8,dynamic_fvf_type,Vertices.Count());
 	{
@@ -658,42 +655,42 @@ void Render2DClass::Render()
 			mem[i]=Indices[i];
 	}
 
-	DX8Wrapper::Set_Vertex_Buffer(vb);
-	DX8Wrapper::Set_Index_Buffer(ib,0);
+	WW3D::Get_Render_Backend()->Set_Vertex_Buffer(vb);
+	WW3D::Get_Render_Backend()->Set_Index_Buffer(ib,0);
 
 	if (IsGrayScale)
 	{	//special case added to draw grayscale non-alpha blended images.
-		DX8Wrapper::Set_Shader(ShaderClass::_PresetOpaqueShader);
-		DX8Wrapper::Apply_Render_State_Changes();	//force update of all regular W3D states.
-		if (DX8Wrapper::Get_Current_Caps()->Support_Dot3())
+		WW3D::Get_Render_Backend()->Set_Shader(ShaderClass::_PresetOpaqueShader);
+		WW3D::Get_Render_Backend()->Apply_Render_State_Changes();	//force update of all regular W3D states.
+		if (WW3D::Get_Render_Backend()->Supports_Dot3())
 		{	//Override W3D states with customizations for grayscale
-			DX8Wrapper::Set_DX8_Render_State(D3DRS_TEXTUREFACTOR, 0x80A5CA8E);
-			DX8Wrapper::Set_DX8_Texture_Stage_State( 0, D3DTSS_COLORARG0, D3DTA_TFACTOR | D3DTA_ALPHAREPLICATE);
-			DX8Wrapper::Set_DX8_Texture_Stage_State( 0, D3DTSS_COLORARG1, D3DTA_TEXTURE);
-			DX8Wrapper::Set_DX8_Texture_Stage_State( 0, D3DTSS_COLORARG2, D3DTA_TFACTOR | D3DTA_ALPHAREPLICATE);
-			DX8Wrapper::Set_DX8_Texture_Stage_State( 0, D3DTSS_COLOROP, D3DTOP_MULTIPLYADD);
+		WW3D::Get_Render_Backend()->Set_Texture_Factor(0x80A5CA8E);
+			WW3D::Get_Render_Backend()->Set_Texture_Argument(0,RenderBackendTextureComponent::Color,0,RenderBackendTextureArgument::TextureFactorAlpha);
+			WW3D::Get_Render_Backend()->Set_Texture_Argument(0,RenderBackendTextureComponent::Color,1,RenderBackendTextureArgument::Texture);
+			WW3D::Get_Render_Backend()->Set_Texture_Argument(0,RenderBackendTextureComponent::Color,2,RenderBackendTextureArgument::TextureFactorAlpha);
+			WW3D::Get_Render_Backend()->Set_Texture_Operation(0,RenderBackendTextureComponent::Color,RenderBackendTextureOperation::MultiplyAdd);
 
-			DX8Wrapper::Set_DX8_Texture_Stage_State( 1, D3DTSS_COLORARG1, D3DTA_CURRENT);
-			DX8Wrapper::Set_DX8_Texture_Stage_State( 1, D3DTSS_COLORARG2, D3DTA_TFACTOR);
-			DX8Wrapper::Set_DX8_Texture_Stage_State( 1, D3DTSS_COLOROP, D3DTOP_DOTPRODUCT3);
+			WW3D::Get_Render_Backend()->Set_Texture_Argument(1,RenderBackendTextureComponent::Color,1,RenderBackendTextureArgument::Current);
+			WW3D::Get_Render_Backend()->Set_Texture_Argument(1,RenderBackendTextureComponent::Color,2,RenderBackendTextureArgument::TextureFactor);
+			WW3D::Get_Render_Backend()->Set_Texture_Operation(1,RenderBackendTextureComponent::Color,RenderBackendTextureOperation::DotProduct3);
 		}
 		else
 		{	//doesn't have DOT3 blend mode so fake it another way.
-			DX8Wrapper::Set_DX8_Render_State(D3DRS_TEXTUREFACTOR, 0x60606060);
-			DX8Wrapper::Set_DX8_Texture_Stage_State( 0, D3DTSS_COLORARG1, D3DTA_TEXTURE);
-			DX8Wrapper::Set_DX8_Texture_Stage_State( 0, D3DTSS_COLORARG2, D3DTA_TFACTOR);
-			DX8Wrapper::Set_DX8_Texture_Stage_State( 0, D3DTSS_COLOROP, D3DTOP_MODULATE);
+			WW3D::Get_Render_Backend()->Set_Texture_Factor(0x60606060);
+			WW3D::Get_Render_Backend()->Set_Texture_Argument(0,RenderBackendTextureComponent::Color,1,RenderBackendTextureArgument::Texture);
+			WW3D::Get_Render_Backend()->Set_Texture_Argument(0,RenderBackendTextureComponent::Color,2,RenderBackendTextureArgument::TextureFactor);
+			WW3D::Get_Render_Backend()->Set_Texture_Operation(0,RenderBackendTextureComponent::Color,RenderBackendTextureOperation::Modulate);
 
 			// TheSuperHackers @bugfix Stubbjax 08/01/2026 Fix possible greyscale rendering issues on hardware without DOT3 support.
-			DX8Wrapper::Set_DX8_Texture_Stage_State( 1, D3DTSS_COLOROP, D3DTOP_DISABLE);
+			WW3D::Get_Render_Backend()->Set_Texture_Operation(1,RenderBackendTextureComponent::Color,RenderBackendTextureOperation::Disable);
 		}
 	}
 	else
-		DX8Wrapper::Set_Shader(Shader);
-	DX8Wrapper::Draw_Triangles(0,Indices.Count()/3,0,Vertices.Count());
+		WW3D::Get_Render_Backend()->Set_Shader(Shader);
+	WW3D::Get_Render_Backend()->Draw_Triangles(0,Indices.Count()/3,0,Vertices.Count());
 
-	DX8Wrapper::Set_Transform(D3DTS_VIEW,view);
-	DX8Wrapper::Set_Transform(D3DTS_PROJECTION,proj);
+	WW3D::Get_Render_Backend()->Set_Transform(RenderBackendTransform::View,view);
+	WW3D::Get_Render_Backend()->Set_Transform(RenderBackendTransform::Projection,proj);
 	if (IsGrayScale)
 		ShaderClass::Invalidate();	//force both stages to be reset.
 

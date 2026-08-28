@@ -179,6 +179,7 @@ class DynamicIBAccessClass;
 class TextureClass;
 class LightClass;
 class SurfaceClass;
+class DX9Backend;
 
 struct DX8FrameStatistics
 {
@@ -800,6 +801,7 @@ protected:
 
 	friend void DX8_Assert();
 	friend class WW3D;
+	friend class DX9Backend;
 	friend class DX8IndexBufferClass;
 	friend class DX8VertexBufferClass;
 };

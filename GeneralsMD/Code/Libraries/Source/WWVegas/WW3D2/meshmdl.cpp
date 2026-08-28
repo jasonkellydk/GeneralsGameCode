@@ -47,6 +47,7 @@
 #include "bwrender.h"
 #include "camera.h"
 #include "dx8renderer.h"
+#include "ww3d.h"
 #include "WWLib/hashtemplate.h"
 
 
@@ -639,7 +640,7 @@ void GapFillerClass::Shrink_Buffers()
 
 void MeshModelClass::Init_For_NPatch_Rendering()
 {
-	if (!DX8Wrapper::Get_Current_Caps()->Support_NPatches()) return;
+	if (!WW3D::Is_Initted() || !WW3D::Get_Render_Backend()->Supports_NPatches()) return;
 	if (!Get_Flag(MeshGeometryClass::ALLOW_NPATCHES)) return;
 	if (GapFiller) return;
 

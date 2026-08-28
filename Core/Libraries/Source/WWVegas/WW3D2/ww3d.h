@@ -37,6 +37,7 @@
 #pragma once
 
 #include "WWLib/always.h"
+#include "WW3D2/IRenderBackend.h"
 #include "WWMath/vector3.h"
 #include "WW3D2/layer.h"
 #include "WW3D2/w3derr.h"
@@ -110,6 +111,9 @@ public:
 	static WW3DErrorType		Init(void * hwnd, char *defaultpal = nullptr, bool lite = false);
 	static WW3DErrorType		Shutdown();
 	static bool					Is_Initted()								{ return IsInitted; }
+
+	// The active rendering backend. It is created by Init and destroyed by Shutdown.
+	static IRenderBackend *	Get_Render_Backend()							{ return RenderBackend; }
 
 	static int					Get_Render_Device_Count();
 	static const char *		Get_Render_Device_Name(int device_index);
@@ -369,6 +373,8 @@ private:
 
 	static float						PixelCenterX;
 	static float						PixelCenterY;
+
+	static IRenderBackend *		RenderBackend;
 
 	static bool							IsInitted;
 	static bool							IsRendering;

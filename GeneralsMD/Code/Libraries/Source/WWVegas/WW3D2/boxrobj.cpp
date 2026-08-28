@@ -458,7 +458,7 @@ void BoxRenderObjClass::render_box(RenderInfoClass & rinfo,const Vector3 & cente
 		/*
 		** Dump the box vertices into the sorting dynamic vertex buffer.
 		*/
-		DWORD color = DX8Wrapper::Convert_Color(Color,Opacity);
+	DWORD color = WW3D::Get_Render_Backend()->Pack_Color(Color,Opacity);
 
 		int buffer_type = BUFFER_TYPE_DYNAMIC_DX8;
 
@@ -504,14 +504,14 @@ void BoxRenderObjClass::render_box(RenderInfoClass & rinfo,const Vector3 & cente
 		/*
 		** Apply the shader and material
 		*/
-		DX8Wrapper::Set_Material(_BoxMaterial);
-		DX8Wrapper::Set_Shader(_BoxShader);
-		DX8Wrapper::Set_Texture(0,nullptr);
+		WW3D::Get_Render_Backend()->Set_Material(_BoxMaterial);
+		WW3D::Get_Render_Backend()->Set_Shader(_BoxShader);
+		WW3D::Get_Render_Backend()->Set_Texture(0,nullptr);
 
-		DX8Wrapper::Set_Index_Buffer(ibaccess,0);
-		DX8Wrapper::Set_Vertex_Buffer(vbaccess);
+		WW3D::Get_Render_Backend()->Set_Index_Buffer(ibaccess,0);
+		WW3D::Get_Render_Backend()->Set_Vertex_Buffer(vbaccess);
 
-		DX8Wrapper::Draw_Triangles(buffer_type,0,NUM_BOX_FACES,0,NUM_BOX_VERTS);
+		WW3D::Get_Render_Backend()->Draw_Triangles(buffer_type,0,NUM_BOX_FACES,0,NUM_BOX_VERTS);
 	}
 }
 
@@ -701,7 +701,7 @@ void AABoxRenderObjClass::Render(RenderInfoClass & rinfo)
 {
 	Matrix3D temp(1);
 	temp.Translate(Transform.Get_Translation());
-	DX8Wrapper::Set_Transform(D3DTS_WORLD,temp);
+	WW3D::Get_Render_Backend()->Set_Transform(RenderBackendTransform::World,temp);
 	render_box(rinfo,ObjSpaceCenter,ObjSpaceExtent);
 }
 
@@ -1085,7 +1085,7 @@ int OBBoxRenderObjClass::Class_ID() const
  *=============================================================================================*/
 void OBBoxRenderObjClass::Render(RenderInfoClass & rinfo)
 {
-	DX8Wrapper::Set_Transform(D3DTS_WORLD,Transform);
+	WW3D::Get_Render_Backend()->Set_Transform(RenderBackendTransform::World,Transform);
 	render_box(rinfo,ObjSpaceCenter,ObjSpaceExtent);
 }
 

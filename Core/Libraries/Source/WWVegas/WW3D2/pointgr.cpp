@@ -880,7 +880,7 @@ void PointGroupClass::Render(RenderInfoClass &rinfo)
 
 	// Get the world and view matrices
 	Matrix4x4 view;
-	DX8Wrapper::Get_Transform(D3DTS_VIEW,view);
+	WW3D::Get_Render_Backend()->Get_Transform(RenderBackendTransform::View,view);
 
 	// Transform the point locations from worldspace to camera space if needed
 	// (i.e. if they are not already in camera space):
@@ -919,12 +919,12 @@ void PointGroupClass::Render(RenderInfoClass &rinfo)
 	// so set world and view matrices to identity and render
 
 	Matrix4x4 identity(true);
-	DX8Wrapper::Set_Transform(D3DTS_WORLD,identity);
-	DX8Wrapper::Set_Transform(D3DTS_VIEW,identity);
+	WW3D::Get_Render_Backend()->Set_Transform(RenderBackendTransform::World,identity);
+	WW3D::Get_Render_Backend()->Set_Transform(RenderBackendTransform::View,identity);
 
-	DX8Wrapper::Set_Material(PointMaterial);
-	DX8Wrapper::Set_Shader(Shader);
-	DX8Wrapper::Set_Texture(0,Texture);
+	WW3D::Get_Render_Backend()->Set_Material(PointMaterial);
+	WW3D::Get_Render_Backend()->Set_Shader(Shader);
+	WW3D::Get_Render_Backend()->Set_Texture(0,Texture);
 
 	// Enable sorting if the primitives are translucent and alpha testing is not enabled.
 	// TheSuperHackers @bugfix stephanmeesters 30/06/2026 However, do not apply sorting to ground-aligned particles.
@@ -980,8 +980,8 @@ void PointGroupClass::Render(RenderInfoClass &rinfo)
 			}
 		}
 
-		DX8Wrapper::Set_Index_Buffer (indexbuffer, 0);
-		DX8Wrapper::Set_Vertex_Buffer (PointVerts);
+		WW3D::Get_Render_Backend()->Set_Index_Buffer(indexbuffer, 0);
+		WW3D::Get_Render_Backend()->Set_Vertex_Buffer(PointVerts);
 
 		if ( sort )
 		{
@@ -989,14 +989,14 @@ void PointGroupClass::Render(RenderInfoClass &rinfo)
 		}
 		else
 		{
-			DX8Wrapper::Draw_Triangles (0, delta / verticesperprimitive, 0, delta);
+			WW3D::Get_Render_Backend()->Draw_Triangles(0, delta / verticesperprimitive, 0, delta);
 		}
 
 		current+=delta;
 	}
 
 	// restore the matrices
-	DX8Wrapper::Set_Transform(D3DTS_VIEW,view);
+	WW3D::Get_Render_Backend()->Set_Transform(RenderBackendTransform::View,view);
 }
 
 
@@ -1208,7 +1208,7 @@ void PointGroupClass::Update_Arrays(
 				Matrix4x4 view;
 				Vector4 result;
 				if (!Billboard) {
-					DX8Wrapper::Get_Transform(D3DTS_VIEW,view);
+					WW3D::Get_Render_Backend()->Get_Transform(RenderBackendTransform::View,view);
 				}
 
 				// Scale vertex offsets and add them to point locations to get vertex locations
@@ -1696,7 +1696,7 @@ void PointGroupClass::RenderVolumeParticle(RenderInfoClass &rinfo, unsigned int 
 
 		// Get the world and view matrices
 		Matrix4x4 view;
-		DX8Wrapper::Get_Transform(D3DTS_VIEW,view);
+		WW3D::Get_Render_Backend()->Get_Transform(RenderBackendTransform::View,view);
 
 
 
@@ -1834,12 +1834,12 @@ void PointGroupClass::RenderVolumeParticle(RenderInfoClass &rinfo, unsigned int 
 		// so set world and view matrices to identity and render
 
 		Matrix4x4 identity(true);
-		DX8Wrapper::Set_Transform(D3DTS_WORLD,identity);
-		DX8Wrapper::Set_Transform(D3DTS_VIEW,identity);
+	WW3D::Get_Render_Backend()->Set_Transform(RenderBackendTransform::World,identity);
+	WW3D::Get_Render_Backend()->Set_Transform(RenderBackendTransform::View,identity);
 
-		DX8Wrapper::Set_Material(PointMaterial);
-		DX8Wrapper::Set_Shader(Shader);
-		DX8Wrapper::Set_Texture(0,Texture);
+	WW3D::Get_Render_Backend()->Set_Material(PointMaterial);
+	WW3D::Get_Render_Backend()->Set_Shader(Shader);
+	WW3D::Get_Render_Backend()->Set_Texture(0,Texture);
 
 		// Enable sorting if the primitives are translucent and alpha testing is not enabled.
 		// TheSuperHackers @info Volumetric particles, both billboarded and ground-aligned, must have sorting enabled to
@@ -1897,8 +1897,8 @@ void PointGroupClass::RenderVolumeParticle(RenderInfoClass &rinfo, unsigned int 
 				}
 			}
 
-			DX8Wrapper::Set_Index_Buffer (indexbuffer, 0);
-			DX8Wrapper::Set_Vertex_Buffer (PointVerts);
+			WW3D::Get_Render_Backend()->Set_Index_Buffer(indexbuffer, 0);
+			WW3D::Get_Render_Backend()->Set_Vertex_Buffer(PointVerts);
 
 			/// @todo lorenzen sez: precompute these params, above
 
@@ -1906,7 +1906,7 @@ void PointGroupClass::RenderVolumeParticle(RenderInfoClass &rinfo, unsigned int 
 			if ( sort )
 					SortingRendererClass::Insert_Triangles (0, delta / verticesperprimitive, 0, delta);
 			else
-				DX8Wrapper::Draw_Triangles (0, delta / verticesperprimitive, 0, delta);
+				WW3D::Get_Render_Backend()->Draw_Triangles(0, delta / verticesperprimitive, 0, delta);
 
 
 			current+=delta;
@@ -1920,5 +1920,5 @@ void PointGroupClass::RenderVolumeParticle(RenderInfoClass &rinfo, unsigned int 
 
 
 	// restore the matrices
-	DX8Wrapper::Set_Transform(D3DTS_VIEW,view);
+	WW3D::Get_Render_Backend()->Set_Transform(RenderBackendTransform::View,view);
 }

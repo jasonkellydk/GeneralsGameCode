@@ -47,6 +47,7 @@
 
 
 #include "matpass.h"
+#include "ww3d.h"
 #include "vertmaterial.h"
 #include "shader.h"
 #include "texture.h"
@@ -117,11 +118,11 @@ MaterialPassClass::~MaterialPassClass()
  *=============================================================================================*/
 void MaterialPassClass::Install_Materials() const
 {
-	DX8Wrapper::Set_Material(Peek_Material());
-	DX8Wrapper::Set_Shader(Peek_Shader());
-	for (int i=0;i<DX8Wrapper::Get_Current_Caps()->Get_Max_Textures_Per_Pass();++i)
+	WW3D::Get_Render_Backend()->Set_Material(Peek_Material());
+	WW3D::Get_Render_Backend()->Set_Shader(Peek_Shader());
+	for (int i=0;i<WW3D::Get_Render_Backend()->Get_Max_Textures_Per_Pass();++i)
 	{
-		DX8Wrapper::Set_Texture(i,Peek_Texture(i));
+		WW3D::Get_Render_Backend()->Set_Texture(i,Peek_Texture(i));
 	}
 }
 

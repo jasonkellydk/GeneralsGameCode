@@ -22,6 +22,8 @@
 #include <WW3D2/rinfo.h>
 #include <WW3D2/camera.h>
 #include <WW3D2/light.h>
+#include <WW3D2/IRenderBackend.h>
+#include <WW3D2/ww3d.h>
 
 #include "StdAfx.h"
 #include "resource.h"
@@ -46,7 +48,6 @@
 #include "GameClient/Color.h"
 
 #include "W3DDevice/GameClient/W3DAssetManager.h"
-#include "WW3D2/dx8wrapper.h"
 #include "WWLib/TARGA.h"
 
 /////////////////////////////////////////////////////////////////////////////
@@ -78,22 +79,49 @@ END_MESSAGE_MAP()
 #define PREVIEW_WIDTH 128
 #define PREVIEW_HEIGHT 128
 
-static UnsignedByte * saveSurface(IDirect3DSurface9 *surface)
+static UnsignedByte * saveSurface(SurfaceClass *surface)
 {
-	D3DSURFACE_DESC desc;
-	IDirect3DSurface9 *tempSurface;
+	if (surface == nullptr)
+	{
+		return nullptr;
+	}
 
-	surface->GetDesc(&desc);
+	SurfaceClass::SurfaceDescription desc = {};
+	surface->Get_Description(desc);
+	IRenderBackend *backend = WW3D::Get_Render_Backend();
+	if (backend == nullptr)
+	{
+		return nullptr;
+	}
 
-	LPDIRECT3DDEVICE9 m_pDev=DX8Wrapper::_Get_D3D_Device8();
+	RenderBackendSurface *tempSurface = backend->Create_System_Memory_Surface(
+		desc.Width, desc.Height, desc.Format);
+	if (tempSurface == nullptr)
+	{
+		return nullptr;
+	}
 
-	HRESULT hr=m_pDev->CreateImageSurface(  desc.Width,desc.Height,desc.Format, &tempSurface);
+	const RenderBackendRect sourceRect =
+	{
+		0,
+		0,
+		static_cast<int>(desc.Width),
+		static_cast<int>(desc.Height)
+	};
+	const RenderBackendPoint destinationPoint = {0, 0};
+	if (!backend->Copy_Surface_Rect(surface, sourceRect, tempSurface,
+		destinationPoint))
+	{
+		backend->Release_Surface(tempSurface);
+		return nullptr;
+	}
 
-	hr=m_pDev->CopyRects(surface,nullptr,0,tempSurface,nullptr);
-
-	D3DLOCKED_RECT lrect;
-
-	DX8_ErrorCode(tempSurface->LockRect(&lrect,nullptr,D3DLOCK_READONLY));
+	RenderBackendLockedSurface lrect = {};
+	if (!backend->Lock_Surface(tempSurface, lrect))
+	{
+		backend->Release_Surface(tempSurface);
+		return nullptr;
+	}
 
 	unsigned int x,y,index,index2,width,height;
 
@@ -110,11 +138,11 @@ static UnsignedByte * saveSurface(IDirect3DSurface9 *surface)
 			// index for image
 			index=3*(x+y*width);
 			// index for fb
-			index2=y*lrect.Pitch+4*x;
+			index2=y*lrect.pitch+4*x;
 
-			image[index]=*((char *) lrect.pBits + index2+2);
-			image[index+1]=*((char *) lrect.pBits + index2+1);
-			image[index+2]=*((char *) lrect.pBits + index2+0);
+			image[index]=*((char *) lrect.bits + index2+2);
+			image[index+1]=*((char *) lrect.bits + index2+1);
+			image[index+2]=*((char *) lrect.bits + index2+0);
 		}
 	}
 
@@ -129,6 +157,8 @@ static UnsignedByte * saveSurface(IDirect3DSurface9 *surface)
 
 	targ.Save("ObjectPreview.tga",TGAF_IMAGE,false);
 
+	backend->Unlock_Surface(tempSurface);
+	backend->Release_Surface(tempSurface);
 	return nullptr;
 
 #else
@@ -142,11 +172,11 @@ static UnsignedByte * saveSurface(IDirect3DSurface9 *surface)
 			// index for image
 			index=3*(x+y*width);
 			// index for fb
-			index2=y*lrect.Pitch+4*x;
+			index2=y*lrect.pitch+4*x;
 
-			bgraImage[index]=*((UnsignedByte *) lrect.pBits + index2+0);
-			bgraImage[index+1]=*((UnsignedByte *) lrect.pBits + index2+1);
-			bgraImage[index+2]=*((UnsignedByte *) lrect.pBits + index2+2);
+			bgraImage[index]=*((UnsignedByte *) lrect.bits + index2+0);
+			bgraImage[index+1]=*((UnsignedByte *) lrect.bits + index2+1);
+			bgraImage[index+2]=*((UnsignedByte *) lrect.bits + index2+2);
 			//bgraImage[index+3]=0;
 		}
 	}
@@ -174,7 +204,8 @@ static UnsignedByte * saveSurface(IDirect3DSurface9 *surface)
 			}
 	}
 
-	tempSurface->Release();
+	backend->Unlock_Surface(tempSurface);
+	backend->Release_Surface(tempSurface);
 
 	return bgraImage;
 #endif
@@ -210,7 +241,9 @@ static UnsignedByte * generatePreview( const ThingTemplate *tt )
 			model->Set_Position(Vector3(-sphere.Center.X, -sphere.Center.Y, -sphere.Center.Z));
 
 			// Create reflection texture
-			TextureClass *objectTexture = DX8Wrapper::Create_Render_Target (PREVIEW_WIDTH, PREVIEW_HEIGHT);
+			IRenderBackend *backend = WW3D::Get_Render_Backend();
+			TextureClass *objectTexture = backend != nullptr ?
+				backend->Create_Render_Target(PREVIEW_WIDTH, PREVIEW_HEIGHT) : nullptr;
 			if (!objectTexture)
 			{
 				model->Release_Ref();
@@ -218,7 +251,7 @@ static UnsignedByte * generatePreview( const ThingTemplate *tt )
 			}
 
 			// Set the render target
-			DX8Wrapper::Set_Render_Target_With_Z(objectTexture);
+			backend->Set_Render_Target(objectTexture);
 
 			// create the camera
 			Bool orthoCamera = false;
@@ -248,10 +281,10 @@ static UnsignedByte * generatePreview( const ThingTemplate *tt )
 			WW3D::End_Render(false);
 
 			// Change the rendertarget back to the main backbuffer
-			DX8Wrapper::Set_Render_Target((IDirect3DSurface9 *)nullptr);
+			backend->Set_Render_Target(nullptr);
 
 			SurfaceClass *surface = objectTexture->Get_Surface_Level();
-			UnsignedByte *data = saveSurface(surface->Peek_D3D_Surface());
+			UnsignedByte *data = saveSurface(surface);
 
 			REF_PTR_RELEASE(surface);
 

@@ -544,7 +544,7 @@ void W3DDisplay::setGamma(Real gamma, Real bright, Real contrast, Bool calibrate
 	if (m_windowed)
 		return;	//we don't allow gamma to change in window because it would affect desktop.
 
-	DX8Wrapper::Set_Gamma(gamma,bright,contrast,calibrate, false);
+	WW3D::Get_Render_Backend()->Set_Gamma(gamma,bright,contrast,calibrate, false);
 }
 
 static void resizeSDLWindow(UnsignedInt xres, UnsignedInt yres, Bool windowed)
@@ -1976,7 +1976,7 @@ AGAIN:
 	do {
 
 		// update all views of the world - recomputes data which will affect drawing
-		if (DX8Wrapper::_Get_D3D_Device8() && (DX8Wrapper::_Get_D3D_Device8()->TestCooperativeLevel()) == D3D_OK)
+		if (WW3D::Get_Render_Backend()->Is_Device_Ready())
 		{	//Checking if we have the device before updating views because the heightmap crashes otherwise while
 			//trying to refresh the visible terrain geometry.
 //			if(TheGlobalData->m_loadScreenRender != TRUE)
@@ -2936,28 +2936,28 @@ VideoBuffer*	W3DDisplay::createVideoBuffer()
 
 	// first try to use the native format
 
-	WW3DFormat displayFormat = DX8Wrapper::getBackBufferFormat();
+	WW3DFormat displayFormat = WW3D::Get_Render_Backend()->Get_Back_Buffer_Format();
 
-	if ( DX8Wrapper::Get_Current_Caps()->Support_Texture_Format( displayFormat ))
+	if ( WW3D::Get_Render_Backend()->Supports_Texture_Format( displayFormat ))
 	{
 		format = W3DVideoBuffer::W3DFormatToType( displayFormat );
 	}
 
 	if ( format == VideoBuffer::TYPE_UNKNOWN )
 	{
-		if ( DX8Wrapper::Get_Current_Caps()->Support_Texture_Format( WW3D_FORMAT_X8R8G8B8 ))
+		if ( WW3D::Get_Render_Backend()->Supports_Texture_Format( WW3D_FORMAT_X8R8G8B8 ))
 		{
 			format = VideoBuffer::TYPE_X8R8G8B8;
 		}
-		else if ( DX8Wrapper::Get_Current_Caps()->Support_Texture_Format( WW3D_FORMAT_R8G8B8 ))
+		else if ( WW3D::Get_Render_Backend()->Supports_Texture_Format( WW3D_FORMAT_R8G8B8 ))
 		{
 			format = VideoBuffer::TYPE_R8G8B8;
 		}
-		else if ( DX8Wrapper::Get_Current_Caps()->Support_Texture_Format( WW3D_FORMAT_R5G6B5 ))
+		else if ( WW3D::Get_Render_Backend()->Supports_Texture_Format( WW3D_FORMAT_R5G6B5 ))
 		{
 			format = VideoBuffer::TYPE_R5G6B5;
 		}
-		else if ( DX8Wrapper::Get_Current_Caps()->Support_Texture_Format( WW3D_FORMAT_X1R5G5B5 ))
+		else if ( WW3D::Get_Render_Backend()->Supports_Texture_Format( WW3D_FORMAT_X1R5G5B5 ))
 		{
 			format = VideoBuffer::TYPE_X1R5G5B5;
 		}

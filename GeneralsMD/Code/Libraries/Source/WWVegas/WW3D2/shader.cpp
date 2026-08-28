@@ -43,6 +43,7 @@
 #include "shader.h"
 #include "w3d_file.h"
 #include "WWDebug/wwdebug.h"
+#include "ww3d.h"
 #include "dx8wrapper.h"
 #include "dx8caps.h"
 
@@ -50,6 +51,89 @@
 bool ShaderClass::ShaderDirty=true;
 unsigned long ShaderClass::CurrentShader=0;
 unsigned long _PolygonCullMode = D3DCULL_CW;
+
+namespace
+{
+	RenderBackendTextureOperation To_Render_Backend_Texture_Operation(D3DTEXTUREOP operation)
+	{
+		switch (operation)
+		{
+			case D3DTOP_DISABLE: return RenderBackendTextureOperation::Disable;
+			case D3DTOP_SELECTARG1: return RenderBackendTextureOperation::SelectArgument1;
+			case D3DTOP_SELECTARG2: return RenderBackendTextureOperation::SelectArgument2;
+			case D3DTOP_MODULATE: return RenderBackendTextureOperation::Modulate;
+			case D3DTOP_ADDSMOOTH: return RenderBackendTextureOperation::AddSmooth;
+			case D3DTOP_ADD: return RenderBackendTextureOperation::Add;
+			case D3DTOP_SUBTRACT: return RenderBackendTextureOperation::Subtract;
+			case D3DTOP_BLENDTEXTUREALPHA: return RenderBackendTextureOperation::BlendTextureAlpha;
+			case D3DTOP_BLENDCURRENTALPHA: return RenderBackendTextureOperation::BlendCurrentAlpha;
+			case D3DTOP_ADDSIGNED: return RenderBackendTextureOperation::AddSigned;
+			case D3DTOP_ADDSIGNED2X: return RenderBackendTextureOperation::AddSigned2X;
+			case D3DTOP_MODULATE2X: return RenderBackendTextureOperation::Modulate2X;
+			case D3DTOP_MODULATEALPHA_ADDCOLOR: return RenderBackendTextureOperation::ModulateAlphaAddColor;
+			case D3DTOP_BUMPENVMAP: return RenderBackendTextureOperation::BumpEnvironmentMap;
+			case D3DTOP_BUMPENVMAPLUMINANCE: return RenderBackendTextureOperation::BumpEnvironmentMapLuminance;
+			case D3DTOP_DOTPRODUCT3: return RenderBackendTextureOperation::DotProduct3;
+			case D3DTOP_MULTIPLYADD: return RenderBackendTextureOperation::MultiplyAdd;
+			default:
+				WWASSERT(false);
+				return RenderBackendTextureOperation::Disable;
+		}
+	}
+
+	RenderBackendTextureArgument To_Render_Backend_Texture_Argument(DWORD argument)
+	{
+		const bool alpha_replicate = (argument & D3DTA_ALPHAREPLICATE) != 0;
+		switch (argument & D3DTA_SELECTMASK)
+		{
+			case D3DTA_CURRENT:
+				return alpha_replicate ? RenderBackendTextureArgument::CurrentAlpha : RenderBackendTextureArgument::Current;
+			case D3DTA_DIFFUSE:
+				return alpha_replicate ? RenderBackendTextureArgument::DiffuseAlpha : RenderBackendTextureArgument::Diffuse;
+			case D3DTA_TEXTURE:
+				return alpha_replicate ? RenderBackendTextureArgument::TextureAlpha : RenderBackendTextureArgument::Texture;
+			case D3DTA_TFACTOR:
+				return alpha_replicate ? RenderBackendTextureArgument::TextureFactorAlpha : RenderBackendTextureArgument::TextureFactor;
+			default:
+				WWASSERT(false);
+				return RenderBackendTextureArgument::Current;
+		}
+	}
+
+	RenderBackendBlendFactor To_Render_Backend_Blend_Factor(D3DBLEND factor)
+	{
+		switch (factor)
+		{
+			case D3DBLEND_ZERO: return RenderBackendBlendFactor::Zero;
+			case D3DBLEND_ONE: return RenderBackendBlendFactor::One;
+			case D3DBLEND_SRCCOLOR: return RenderBackendBlendFactor::SourceColor;
+			case D3DBLEND_INVSRCCOLOR: return RenderBackendBlendFactor::InverseSourceColor;
+			case D3DBLEND_SRCALPHA: return RenderBackendBlendFactor::SourceAlpha;
+			case D3DBLEND_INVSRCALPHA: return RenderBackendBlendFactor::InverseSourceAlpha;
+			case D3DBLEND_DESTALPHA: return RenderBackendBlendFactor::DestinationAlpha;
+			case D3DBLEND_INVDESTALPHA: return RenderBackendBlendFactor::InverseDestinationAlpha;
+			case D3DBLEND_DESTCOLOR: return RenderBackendBlendFactor::DestinationColor;
+			case D3DBLEND_INVDESTCOLOR: return RenderBackendBlendFactor::InverseDestinationColor;
+			default:
+				WWASSERT(false);
+				return RenderBackendBlendFactor::One;
+		}
+	}
+
+	void Set_Backend_Texture_Operation(unsigned stage,
+		RenderBackendTextureComponent component, D3DTEXTUREOP operation)
+	{
+		WW3D::Get_Render_Backend()->Set_Texture_Operation(stage, component,
+			To_Render_Backend_Texture_Operation(operation));
+	}
+
+	void Set_Backend_Texture_Argument(unsigned stage,
+		RenderBackendTextureComponent component, unsigned argument_index, DWORD argument)
+	{
+		WW3D::Get_Render_Backend()->Set_Texture_Argument(stage, component, argument_index,
+			To_Render_Backend_Texture_Argument(argument));
+	}
+}
 
 
 /*
@@ -410,8 +494,6 @@ void ShaderClass::Apply()
 {
 	unsigned long diff;
 
-	unsigned int TextureOpCaps=DX8Wrapper::Get_Current_Caps()->Get_DX8_Caps().TextureOpCaps;
-
 	if (ShaderDirty)
 	{
 		diff=0xffffffff;
@@ -456,11 +538,12 @@ void ShaderClass::Apply()
 
 		if(sf != D3DBLEND_ONE || df != D3DBLEND_ZERO)
 		{
-			DX8Wrapper::Set_DX8_Render_State(D3DRS_SRCBLEND,sf);
-			DX8Wrapper::Set_DX8_Render_State(D3DRS_DESTBLEND,df);
+			WW3D::Get_Render_Backend()->Set_Blend_Factors(
+				To_Render_Backend_Blend_Factor(sf),
+				To_Render_Backend_Blend_Factor(df));
 			blendOn = TRUE;
 		}
-		DX8Wrapper::Set_DX8_Render_State(D3DRS_ALPHABLENDENABLE,blendOn);
+		WW3D::Get_Render_Backend()->Set_Alpha_Blend_Enabled(blendOn != FALSE);
 
 		BOOL alphaTest = FALSE;
 
@@ -470,18 +553,18 @@ void ShaderClass::Apply()
 
 			if(sf == D3DBLEND_INVSRCALPHA)
 			{
-				DX8Wrapper::Set_DX8_Render_State(D3DRS_ALPHAREF,0xff - alphareference);
-				DX8Wrapper::Set_DX8_Render_State(D3DRS_ALPHAFUNC,D3DCMP_LESSEQUAL);
+				WW3D::Get_Render_Backend()->Set_Alpha_Test_Reference(0xff - alphareference);
+				WW3D::Get_Render_Backend()->Set_Alpha_Test_Function(RenderBackendCompareFunction::LessEqual);
 			}
 			else
 			{
-				DX8Wrapper::Set_DX8_Render_State(D3DRS_ALPHAREF,alphareference);
-				DX8Wrapper::Set_DX8_Render_State(D3DRS_ALPHAFUNC,D3DCMP_GREATEREQUAL);
+				WW3D::Get_Render_Backend()->Set_Alpha_Test_Reference(alphareference);
+				WW3D::Get_Render_Backend()->Set_Alpha_Test_Function(RenderBackendCompareFunction::GreaterEqual);
 			}
 			blendAlpha = true;
 			alphaTest = TRUE;
 		}
-		DX8Wrapper::Set_DX8_Render_State(D3DRS_ALPHATESTENABLE,alphaTest);
+		WW3D::Get_Render_Backend()->Set_Alpha_Test_Enabled(alphaTest != FALSE);
 
 		diff &= ~(ShaderClass::MASK_COLORMASK | ShaderClass::MASK_SRCBLEND | ShaderClass::MASK_DSTBLEND | ShaderClass::MASK_ALPHATEST);
 		if(!diff)
@@ -492,10 +575,10 @@ void ShaderClass::Apply()
 	{
 		// Whenever fog is enabled or disabled, the entire shader is invalidated. This is why we
 		// can defer the "fog enabled" check inside the "fog settings changed" check.
-		if (DX8Wrapper::Get_Current_Caps()->Is_Fog_Allowed() && DX8Wrapper::Get_Fog_Enable()) {
+		if (WW3D::Get_Render_Backend()->Is_Fog_Allowed() && WW3D::Get_Render_Backend()->Is_Fog_Enabled()) {
 
 			BOOL fm = FALSE;
-			D3DCOLOR fogColor = DX8Wrapper::Get_Fog_Color();
+			unsigned fogColor = WW3D::Get_Render_Backend()->Get_Fog_Color();
 
 			switch(Get_Fog_Func())
 			{
@@ -515,15 +598,15 @@ void ShaderClass::Apply()
 				break;
 			}
 
-			DX8Wrapper::Set_DX8_Render_State(D3DRS_FOGENABLE,fm);
+			WW3D::Get_Render_Backend()->Set_Fog_Enabled(fm != FALSE);
 
 			if(fm)
 			{
-				DX8Wrapper::Set_DX8_Render_State(D3DRS_FOGCOLOR,fogColor);
+				WW3D::Get_Render_Backend()->Set_Fog_Color(fogColor);
 			}
 
 		} else {
-			DX8Wrapper::Set_DX8_Render_State(D3DRS_FOGENABLE,FALSE);
+			WW3D::Get_Render_Backend()->Set_Fog_Enabled(false);
 		}
 
 		diff &= ~(ShaderClass::MASK_FOG);
@@ -549,8 +632,7 @@ void ShaderClass::Apply()
 	DWORD			SecaArg1 = D3DTA_TEXTURE;
 	DWORD			SecaArg2 = D3DTA_CURRENT;
 
-	bool voodoo3=(DX8Wrapper::Get_Current_Caps()->Get_Vendor()==DX8Caps::VENDOR_3DFX) &&
-					 (DX8Wrapper::Get_Current_Caps()->Get_Device()==DX8Caps::DEVICE_3DFX_VOODOO_3);
+	bool voodoo3=WW3D::Get_Render_Backend()->Is_3DFX_Voodoo3();
 	int pri_mask=ShaderClass::MASK_PRIGRADIENT|ShaderClass::MASK_TEXTURING;
 	int sec_mask=ShaderClass::MASK_POSTDETAILALPHAFUNC|ShaderClass::MASK_POSTDETAILCOLORFUNC|ShaderClass::MASK_TEXTURING;
 
@@ -587,7 +669,7 @@ void ShaderClass::Apply()
 				break;
 			case ShaderClass::GRADIENT_ADD:
 				//Modulate Alpha
-				if(!(TextureOpCaps & D3DTEXOPCAPS_ADD))
+				if(!WW3D::Get_Render_Backend()->Supports_Texture_Operation(RenderBackendTextureOperation::Add))
 					PricOp = D3DTOP_MODULATE;
 				else
 					PricOp = D3DTOP_ADD;
@@ -600,7 +682,7 @@ void ShaderClass::Apply()
 
 			// Bump map is a hack currently as we only have two stages in use!
 			case ShaderClass::GRADIENT_BUMPENVMAP:
-				if(TextureOpCaps & D3DTEXOPCAPS_BUMPENVMAP)
+				if(WW3D::Get_Render_Backend()->Supports_Texture_Operation(RenderBackendTextureOperation::BumpEnvironmentMap))
 				{
 					PricOp=D3DTOP_BUMPENVMAP;
 					PricArg1=D3DTA_TEXTURE;
@@ -620,7 +702,7 @@ void ShaderClass::Apply()
 
 			// Bump map is a hack currently as we only have two stages in use!
 			case ShaderClass::GRADIENT_BUMPENVMAPLUMINANCE:
-				if(TextureOpCaps & D3DTEXOPCAPS_BUMPENVMAPLUMINANCE)
+				if(WW3D::Get_Render_Backend()->Supports_Texture_Operation(RenderBackendTextureOperation::BumpEnvironmentMapLuminance))
 				{
 					PricOp=D3DTOP_BUMPENVMAPLUMINANCE;
 					PricArg1=D3DTA_TEXTURE;
@@ -640,7 +722,7 @@ void ShaderClass::Apply()
 
 			case ShaderClass::GRADIENT_MODULATE2X:
 				//Modulate Alpha
-				if(!(TextureOpCaps & D3DTOP_MODULATE2X))
+				if(!WW3D::Get_Render_Backend()->Supports_Texture_Operation(RenderBackendTextureOperation::Modulate2X))
 					PricOp = D3DTOP_MODULATE;
 				else
 					PricOp = D3DTOP_MODULATE2X;
@@ -697,7 +779,7 @@ void ShaderClass::Apply()
 				break;
 
 			case ShaderClass::DETAILCOLOR_DETAIL:
-				if(TextureOpCaps & D3DTEXOPCAPS_SELECTARG1)
+				if(WW3D::Get_Render_Backend()->Supports_Texture_Operation(RenderBackendTextureOperation::SelectArgument1))
 				{
 					SeccOp = D3DTOP_SELECTARG1;
 					SeccArg1 = D3DTA_TEXTURE;
@@ -709,7 +791,7 @@ void ShaderClass::Apply()
 				break;
 
 			case ShaderClass::DETAILCOLOR_SCALE:
-				if(TextureOpCaps & D3DTEXOPCAPS_MODULATE)
+				if(WW3D::Get_Render_Backend()->Supports_Texture_Operation(RenderBackendTextureOperation::Modulate))
 				{
 					SeccOp = D3DTOP_MODULATE;
 					SeccArg1 = D3DTA_TEXTURE;
@@ -721,12 +803,12 @@ void ShaderClass::Apply()
 				break;
 
 			case ShaderClass::DETAILCOLOR_INVSCALE:
-				if(TextureOpCaps & D3DTEXOPCAPS_ADDSMOOTH)
+				if(WW3D::Get_Render_Backend()->Supports_Texture_Operation(RenderBackendTextureOperation::AddSmooth))
 				{
 					SeccOp = D3DTOP_ADDSMOOTH;
 					SeccArg1 = D3DTA_TEXTURE;
 					SeccArg2 = D3DTA_CURRENT;
-				} else if(TextureOpCaps & D3DTEXOPCAPS_ADD) {
+				} else if(WW3D::Get_Render_Backend()->Supports_Texture_Operation(RenderBackendTextureOperation::Add)) {
 					SeccOp = D3DTOP_ADD;
 					SeccArg1 = D3DTA_TEXTURE;
 					SeccArg2 = D3DTA_CURRENT;
@@ -737,7 +819,7 @@ void ShaderClass::Apply()
 				break;
 
 			case ShaderClass::DETAILCOLOR_ADD:
-				if(TextureOpCaps & D3DTEXOPCAPS_ADD)
+				if(WW3D::Get_Render_Backend()->Supports_Texture_Operation(RenderBackendTextureOperation::Add))
 				{
 					SeccOp = D3DTOP_ADD;
 					SeccArg1 = D3DTA_TEXTURE;
@@ -749,7 +831,7 @@ void ShaderClass::Apply()
 				break;
 
 			case ShaderClass::DETAILCOLOR_SUB:
-				if(TextureOpCaps & D3DTEXOPCAPS_SUBTRACT)
+				if(WW3D::Get_Render_Backend()->Supports_Texture_Operation(RenderBackendTextureOperation::Subtract))
 				{
 					SeccOp = D3DTOP_SUBTRACT;
 					SeccArg1 = D3DTA_TEXTURE;
@@ -761,7 +843,7 @@ void ShaderClass::Apply()
 				break;
 
 			case ShaderClass::DETAILCOLOR_SUBR:
-				if(TextureOpCaps & D3DTEXOPCAPS_SUBTRACT)
+				if(WW3D::Get_Render_Backend()->Supports_Texture_Operation(RenderBackendTextureOperation::Subtract))
 				{
 					SeccOp = D3DTOP_SUBTRACT;
 					SeccArg1 = D3DTA_CURRENT;
@@ -773,7 +855,7 @@ void ShaderClass::Apply()
 				break;
 
 			case ShaderClass::DETAILCOLOR_BLEND:
-				if(TextureOpCaps & D3DTEXOPCAPS_BLENDTEXTUREALPHA)
+				if(WW3D::Get_Render_Backend()->Supports_Texture_Operation(RenderBackendTextureOperation::BlendTextureAlpha))
 				{
 					SeccOp = D3DTOP_BLENDTEXTUREALPHA;
 					SeccArg1 = D3DTA_TEXTURE;
@@ -785,7 +867,7 @@ void ShaderClass::Apply()
 				break;
 
 			case ShaderClass::DETAILCOLOR_DETAILBLEND:
-				if(TextureOpCaps & D3DTEXOPCAPS_BLENDCURRENTALPHA)
+				if(WW3D::Get_Render_Backend()->Supports_Texture_Operation(RenderBackendTextureOperation::BlendCurrentAlpha))
 				{
 					SeccOp = D3DTOP_BLENDCURRENTALPHA;
 					SeccArg1 = D3DTA_TEXTURE;
@@ -797,11 +879,11 @@ void ShaderClass::Apply()
 				break;
 
 			case ShaderClass::DETAILCOLOR_ADDSIGNED:
-				if (TextureOpCaps & D3DTEXOPCAPS_ADDSIGNED) {
+				if (WW3D::Get_Render_Backend()->Supports_Texture_Operation(RenderBackendTextureOperation::AddSigned)) {
 					SeccOp = D3DTOP_ADDSIGNED;
 					SeccArg1 = D3DTA_TEXTURE;
 					SeccArg2 = D3DTA_CURRENT;
-				}  else if (TextureOpCaps & D3DTEXOPCAPS_ADD) {
+				}  else if (WW3D::Get_Render_Backend()->Supports_Texture_Operation(RenderBackendTextureOperation::Add)) {
 					SeccOp = D3DTOP_ADD;
 					SeccArg1 = D3DTA_TEXTURE;
 					SeccArg2 = D3DTA_CURRENT;
@@ -811,15 +893,15 @@ void ShaderClass::Apply()
 				break;
 
 			case ShaderClass::DETAILCOLOR_ADDSIGNED2X:
-				if (TextureOpCaps & D3DTEXOPCAPS_ADDSIGNED2X) {
+				if (WW3D::Get_Render_Backend()->Supports_Texture_Operation(RenderBackendTextureOperation::AddSigned2X)) {
 					SeccOp = D3DTOP_ADDSIGNED2X;
 					SeccArg1 = D3DTA_TEXTURE;
 					SeccArg2 = D3DTA_CURRENT;
-				} else if (TextureOpCaps & D3DTEXOPCAPS_ADDSIGNED) {
+				} else if (WW3D::Get_Render_Backend()->Supports_Texture_Operation(RenderBackendTextureOperation::AddSigned)) {
 					SeccOp = D3DTOP_ADDSIGNED;
 					SeccArg1 = D3DTA_TEXTURE;
 					SeccArg2 = D3DTA_CURRENT;
-				}  else if (TextureOpCaps & D3DTEXOPCAPS_ADD) {
+				}  else if (WW3D::Get_Render_Backend()->Supports_Texture_Operation(RenderBackendTextureOperation::Add)) {
 					SeccOp = D3DTOP_ADD;
 					SeccArg1 = D3DTA_TEXTURE;
 					SeccArg2 = D3DTA_CURRENT;
@@ -829,11 +911,11 @@ void ShaderClass::Apply()
 				break;
 
 			case ShaderClass::DETAILCOLOR_SCALE2X:
-				if(TextureOpCaps & D3DTEXOPCAPS_MODULATE2X) {
+				if(WW3D::Get_Render_Backend()->Supports_Texture_Operation(RenderBackendTextureOperation::Modulate2X)) {
 					SeccOp = D3DTOP_MODULATE2X;
 					SeccArg1 = D3DTA_TEXTURE;
 					SeccArg2 = D3DTA_CURRENT;
-				} else if(TextureOpCaps & D3DTEXOPCAPS_MODULATE) {
+				} else if(WW3D::Get_Render_Backend()->Supports_Texture_Operation(RenderBackendTextureOperation::Modulate)) {
 					SeccOp = D3DTOP_MODULATE;
 					SeccArg1 = D3DTA_TEXTURE;
 					SeccArg2 = D3DTA_CURRENT;
@@ -844,11 +926,11 @@ void ShaderClass::Apply()
 				break;
 
 			case ShaderClass::DETAILCOLOR_MODALPHAADDCOLOR:
-				if (DX8Wrapper::Get_Current_Caps()->Support_ModAlphaAddClr()) {
+				if (WW3D::Get_Render_Backend()->Supports_Modulate_Alpha_Add_Color()) {
 					SeccOp = D3DTOP_MODULATEALPHA_ADDCOLOR;
 					SeccArg1 = D3DTA_CURRENT;
 					SeccArg2 = D3DTA_TEXTURE;
-				} else if (TextureOpCaps & D3DTEXOPCAPS_ADD) {
+				} else if (WW3D::Get_Render_Backend()->Supports_Texture_Operation(RenderBackendTextureOperation::Add)) {
 					SeccOp = D3DTOP_ADD;
 					SeccArg1 = D3DTA_TEXTURE;
 					SeccArg2 = D3DTA_CURRENT;
@@ -865,7 +947,7 @@ void ShaderClass::Apply()
 				break;
 
 			case ShaderClass::DETAILALPHA_DETAIL:
-				if(TextureOpCaps & D3DTEXOPCAPS_SELECTARG1)
+				if(WW3D::Get_Render_Backend()->Supports_Texture_Operation(RenderBackendTextureOperation::SelectArgument1))
 				{
 					SecaOp = D3DTOP_SELECTARG1;
 					SecaArg1 = D3DTA_TEXTURE;
@@ -877,7 +959,7 @@ void ShaderClass::Apply()
 				break;
 
 			case ShaderClass::DETAILALPHA_SCALE:
-				if(TextureOpCaps & D3DTEXOPCAPS_MODULATE)
+				if(WW3D::Get_Render_Backend()->Supports_Texture_Operation(RenderBackendTextureOperation::Modulate))
 				{
 					SecaOp = D3DTOP_MODULATE;
 					SecaArg1 = D3DTA_TEXTURE;
@@ -889,7 +971,7 @@ void ShaderClass::Apply()
 				break;
 
 			case ShaderClass::DETAILALPHA_INVSCALE:
-				if(TextureOpCaps & D3DTEXOPCAPS_ADDSMOOTH)
+				if(WW3D::Get_Render_Backend()->Supports_Texture_Operation(RenderBackendTextureOperation::AddSmooth))
 				{
 					SecaOp = D3DTOP_ADDSMOOTH;
 					SecaArg1 = D3DTA_TEXTURE;
@@ -935,8 +1017,8 @@ void ShaderClass::Apply()
 			if ((PricOp==D3DTOP_SELECTARG1)&&(PricArg1==D3DTA_DIFFUSE)) {
 				WWDEBUG_SAY(("Wasted Stage 0 in shader-vertex diffuse only"));
 				// set stage 0 to disable
-				DX8Wrapper::Set_DX8_Texture_Stage_State(0,D3DTSS_COLOROP,D3DTOP_DISABLE);
-				DX8Wrapper::Set_DX8_Texture_Stage_State(0,D3DTSS_ALPHAOP,D3DTOP_DISABLE);
+				Set_Backend_Texture_Operation(0,RenderBackendTextureComponent::Color,D3DTOP_DISABLE);
+				Set_Backend_Texture_Operation(0,RenderBackendTextureComponent::Alpha,D3DTOP_DISABLE);
 				// set stage 1 to accept diffuse
 				if (SeccArg2==D3DTA_CURRENT) SeccArg2=D3DTA_DIFFUSE;
 				if (SecaArg2==D3DTA_CURRENT) SecaArg2=D3DTA_DIFFUSE;
@@ -944,21 +1026,21 @@ void ShaderClass::Apply()
 				kill_stage_2=true;
 			} else {
 				// set stage 0 to pass through what it needs
-				DX8Wrapper::Set_DX8_Texture_Stage_State(0,D3DTSS_COLOROP,D3DTOP_SELECTARG1);
-				DX8Wrapper::Set_DX8_Texture_Stage_State(0,D3DTSS_COLORARG1,tex_arg);
-				DX8Wrapper::Set_DX8_Texture_Stage_State(0,D3DTSS_ALPHAOP,D3DTOP_SELECTARG1);
-				DX8Wrapper::Set_DX8_Texture_Stage_State(0,D3DTSS_ALPHAARG1,tex_arg);
+				Set_Backend_Texture_Operation(0,RenderBackendTextureComponent::Color,D3DTOP_SELECTARG1);
+				Set_Backend_Texture_Argument(0,RenderBackendTextureComponent::Color,1,tex_arg);
+				Set_Backend_Texture_Operation(0,RenderBackendTextureComponent::Alpha,D3DTOP_SELECTARG1);
+				Set_Backend_Texture_Argument(0,RenderBackendTextureComponent::Alpha,1,tex_arg);
 
 				// set stage 2 to do the diffuse op
 				// bypass the wrapper since it only supports 2 texture stages
-				DX8CALL(SetTextureStageState(2,D3DTSS_COLOROP,PricOp));
-				DX8CALL(SetTextureStageState(2,D3DTSS_COLORARG1,D3DTA_CURRENT));
-				DX8CALL(SetTextureStageState(2,D3DTSS_COLORARG2,D3DTA_DIFFUSE));
-				DX8CALL(SetTextureStageState(2,D3DTSS_ALPHAOP,PriaOp));
-				DX8CALL(SetTextureStageState(2,D3DTSS_ALPHAARG1,D3DTA_CURRENT));
-				DX8CALL(SetTextureStageState(2,D3DTSS_ALPHAARG2,D3DTA_DIFFUSE));
-				DX8CALL(SetTextureStageState(2,D3DTSS_TEXCOORDINDEX,D3DTSS_TCI_PASSTHRU));
-				DX8CALL(SetTexture(2,nullptr));
+				Set_Backend_Texture_Operation(2,RenderBackendTextureComponent::Color,PricOp);
+				Set_Backend_Texture_Argument(2,RenderBackendTextureComponent::Color,1,D3DTA_CURRENT);
+				Set_Backend_Texture_Argument(2,RenderBackendTextureComponent::Color,2,D3DTA_DIFFUSE);
+				Set_Backend_Texture_Operation(2,RenderBackendTextureComponent::Alpha,PriaOp);
+				Set_Backend_Texture_Argument(2,RenderBackendTextureComponent::Alpha,1,D3DTA_CURRENT);
+				Set_Backend_Texture_Argument(2,RenderBackendTextureComponent::Alpha,2,D3DTA_DIFFUSE);
+				WW3D::Get_Render_Backend()->Set_Texture_Coordinate_Source(2,RenderBackendTextureCoordinateSource::PassThrough);
+				WW3D::Get_Render_Backend()->Set_Texture(2,nullptr);
 				kill_stage_2=false;
 				ShaderDirty=true;
 			}
@@ -972,24 +1054,24 @@ void ShaderClass::Apply()
 				cOp=aOp=D3DTOP_SELECTARG2;
 			}
 #endif
-			DX8Wrapper::Set_DX8_Texture_Stage_State(0,D3DTSS_COLOROP,PricOp);
-			DX8Wrapper::Set_DX8_Texture_Stage_State(0,D3DTSS_COLORARG1,PricArg1);
-			DX8Wrapper::Set_DX8_Texture_Stage_State(0,D3DTSS_COLORARG2,PricArg2);
-			DX8Wrapper::Set_DX8_Texture_Stage_State(0,D3DTSS_ALPHAOP,PriaOp);
-			DX8Wrapper::Set_DX8_Texture_Stage_State(0,D3DTSS_ALPHAARG1,PriaArg1);
-			DX8Wrapper::Set_DX8_Texture_Stage_State(0,D3DTSS_ALPHAARG2,PriaArg2);
+			Set_Backend_Texture_Operation(0,RenderBackendTextureComponent::Color,PricOp);
+			Set_Backend_Texture_Argument(0,RenderBackendTextureComponent::Color,1,PricArg1);
+			Set_Backend_Texture_Argument(0,RenderBackendTextureComponent::Color,2,PricArg2);
+			Set_Backend_Texture_Operation(0,RenderBackendTextureComponent::Alpha,PriaOp);
+			Set_Backend_Texture_Argument(0,RenderBackendTextureComponent::Alpha,1,PriaArg1);
+			Set_Backend_Texture_Argument(0,RenderBackendTextureComponent::Alpha,2,PriaArg2);
 			kill_stage_2=true;
 		}
 		diff &= ~(ShaderClass::MASK_PRIGRADIENT);
 	}
 
 	if (diff & sec_mask) {
-		DX8Wrapper::Set_DX8_Texture_Stage_State(1,D3DTSS_COLOROP,SeccOp);
-		DX8Wrapper::Set_DX8_Texture_Stage_State(1,D3DTSS_COLORARG1,SeccArg1);
-		DX8Wrapper::Set_DX8_Texture_Stage_State(1,D3DTSS_COLORARG2,SeccArg2);
-		DX8Wrapper::Set_DX8_Texture_Stage_State(1,D3DTSS_ALPHAOP,SecaOp);
-		DX8Wrapper::Set_DX8_Texture_Stage_State(1,D3DTSS_ALPHAARG1,SecaArg1);
-		DX8Wrapper::Set_DX8_Texture_Stage_State(1,D3DTSS_ALPHAARG2,SecaArg2);
+		Set_Backend_Texture_Operation(1,RenderBackendTextureComponent::Color,SeccOp);
+		Set_Backend_Texture_Argument(1,RenderBackendTextureComponent::Color,1,SeccArg1);
+		Set_Backend_Texture_Argument(1,RenderBackendTextureComponent::Color,2,SeccArg2);
+		Set_Backend_Texture_Operation(1,RenderBackendTextureComponent::Alpha,SecaOp);
+		Set_Backend_Texture_Argument(1,RenderBackendTextureComponent::Alpha,1,SecaArg1);
+		Set_Backend_Texture_Argument(1,RenderBackendTextureComponent::Alpha,2,SecaArg2);
 		diff &= ~(ShaderClass::MASK_POSTDETAILCOLORFUNC);
 		diff &= ~(ShaderClass::MASK_POSTDETAILALPHAFUNC);
 		diff &= ~(ShaderClass::MASK_TEXTURING);
@@ -1000,44 +1082,52 @@ void ShaderClass::Apply()
 	// bypass the wrapper since it only supports 2 texture stages
 	if (voodoo3 && kill_stage_2) {
 		if ((SeccOp!=D3DTOP_DISABLE)&&(SecaOp!=D3DTOP_DISABLE)) {
-			DX8CALL(SetTextureStageState(2,D3DTSS_COLOROP,D3DTOP_SELECTARG1));
-			DX8CALL(SetTextureStageState(2,D3DTSS_COLORARG1,D3DTA_CURRENT));
-			DX8CALL(SetTextureStageState(2,D3DTSS_ALPHAOP,D3DTOP_SELECTARG1));
-			DX8CALL(SetTextureStageState(2,D3DTSS_ALPHAARG1,D3DTA_CURRENT));
+			Set_Backend_Texture_Operation(2,RenderBackendTextureComponent::Color,D3DTOP_SELECTARG1);
+			Set_Backend_Texture_Argument(2,RenderBackendTextureComponent::Color,1,D3DTA_CURRENT);
+			Set_Backend_Texture_Operation(2,RenderBackendTextureComponent::Alpha,D3DTOP_SELECTARG1);
+			Set_Backend_Texture_Argument(2,RenderBackendTextureComponent::Alpha,1,D3DTA_CURRENT);
 		} else {
-			DX8CALL(SetTextureStageState(2,D3DTSS_COLOROP,D3DTOP_DISABLE));
-			DX8CALL(SetTextureStageState(2,D3DTSS_ALPHAOP,D3DTOP_DISABLE));
+			Set_Backend_Texture_Operation(2,RenderBackendTextureComponent::Color,D3DTOP_DISABLE);
+			Set_Backend_Texture_Operation(2,RenderBackendTextureComponent::Alpha,D3DTOP_DISABLE);
 		}
-		DX8CALL(SetTextureStageState(2,D3DTSS_TEXCOORDINDEX,D3DTSS_TCI_PASSTHRU));
-		DX8CALL(SetTexture(2,nullptr));
+		WW3D::Get_Render_Backend()->Set_Texture_Coordinate_Source(2,RenderBackendTextureCoordinateSource::PassThrough);
+		WW3D::Get_Render_Backend()->Set_Texture(2,nullptr);
 	}
 
 	if(!diff)
 		return;
 
-	DX8Wrapper::Set_DX8_Render_State(D3DRS_SPECULARENABLE,BOOL(Get_Secondary_Gradient()));
+	WW3D::Get_Render_Backend()->Set_Specular_Enabled(Get_Secondary_Gradient() != 0);
 
 	// DEPTH COMPARE FUNCTION
-	DX8Wrapper::Set_DX8_Render_State(D3DRS_ZFUNC,D3DCMPFUNC(int(Get_Depth_Compare())+1));
+	WW3D::Get_Render_Backend()->Set_Depth_Function(
+		static_cast<RenderBackendCompareFunction>(Get_Depth_Compare()));
 
 	// DEPTH MASK
-	DX8Wrapper::Set_DX8_Render_State(D3DRS_ZWRITEENABLE,BOOL(Get_Depth_Mask()));
+	WW3D::Get_Render_Backend()->Set_Depth_Write_Enabled(Get_Depth_Mask() != 0);
 
 	// DITHERING
 //	DX8Wrapper::Set_DX8_Render_State(D3DRS_DITHERENABLE,BOOL(Get_Dither_Mask()));
 
 	// CULLMODE
-	DX8Wrapper::Set_DX8_Render_State(D3DRS_CULLMODE,Get_Cull_Mode() ? _PolygonCullMode : D3DCULL_NONE);
+	RenderBackendCullMode cull_mode = RenderBackendCullMode::None;
+	if (Get_Cull_Mode())
+	{
+		cull_mode = _PolygonCullMode == D3DCULL_CCW
+			? RenderBackendCullMode::CounterClockwise
+			: RenderBackendCullMode::Clockwise;
+	}
+	WW3D::Get_Render_Backend()->Set_Cull_Mode(cull_mode);
 
 	// NPATCHES
 	if (diff&ShaderClass::MASK_NPATCHENABLE) {
 		float level=1.0f;
 		if (Get_NPatch_Enable()) level=float(WW3D::Get_NPatches_Level());
-		DX8Wrapper::Set_DX8_Render_State(D3DRS_PATCHSEGMENTS,*((DWORD*)&level));
+		WW3D::Get_Render_Backend()->Set_NPatch_Segments(level);
 	}
 
 	// Enable/disable alpha test
-	DX8Wrapper::Set_DX8_Render_State(D3DRS_ALPHATESTENABLE,BOOL(Get_Alpha_Test()));
+	WW3D::Get_Render_Backend()->Set_Alpha_Test_Enabled(Get_Alpha_Test() != 0);
 
 	// Enable/disable stencil test
 	// Not supported yet

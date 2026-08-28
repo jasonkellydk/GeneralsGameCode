@@ -54,6 +54,7 @@
 #include "decalmsh.h"
 #include "decalsys.h"
 #include "rinfo.h"
+#include "ww3d.h"
 #include "mesh.h"
 #include "meshmdl.h"
 #include "WWMath/plane.h"
@@ -298,7 +299,7 @@ void RigidDecalMeshClass::Render()
 	** transform between the time that the mesh is rendered and the time that the decal
 	** mesh is rendered...  It shouldn't happen though.
 	*/
-	DX8Wrapper::Set_Transform(D3DTS_WORLD,Parent->Get_Transform());
+	WW3D::Get_Render_Backend()->Set_Transform(RenderBackendTransform::World,Parent->Get_Transform());
 
 	/*
 	** Copy the vertices into the dynamic vb
@@ -354,9 +355,9 @@ void RigidDecalMeshClass::Render()
 	while (next_poly_index < Polys.Count()) {
 		next_poly_index = Process_Material_Run(cur_poly_index);
 
-		DX8Wrapper::Set_Index_Buffer(dynamic_ib,0);
-		DX8Wrapper::Set_Vertex_Buffer(dynamic_vb);
-		DX8Wrapper::Draw_Triangles(	3*cur_poly_index,
+		WW3D::Get_Render_Backend()->Set_Index_Buffer(dynamic_ib,0);
+		WW3D::Get_Render_Backend()->Set_Vertex_Buffer(dynamic_vb);
+		WW3D::Get_Render_Backend()->Draw_Triangles(	3*cur_poly_index,
 												(next_poly_index - cur_poly_index), // poly count
 												Polys[cur_poly_index].I,
 												1 + Polys[next_poly_index-1].K - Polys[cur_poly_index].I);
@@ -383,9 +384,9 @@ void RigidDecalMeshClass::Render()
  *=============================================================================================*/
 int RigidDecalMeshClass::Process_Material_Run(int start_index)
 {
-	DX8Wrapper::Set_Texture(0,Textures[start_index]);
-	DX8Wrapper::Set_Material(VertexMaterials[Polys[start_index].I]);
-	DX8Wrapper::Set_Shader(Shaders[start_index]);
+	WW3D::Get_Render_Backend()->Set_Texture(0,Textures[start_index]);
+	WW3D::Get_Render_Backend()->Set_Material(VertexMaterials[Polys[start_index].I]);
+	WW3D::Get_Render_Backend()->Set_Shader(Shaders[start_index]);
 
 	int next_index = start_index;
 	while (	(next_index < Polys.Count()) &&
@@ -424,7 +425,7 @@ bool RigidDecalMeshClass::Create_Decal
 	// on hardware "polygon offset" we could remove this code and we could make decals non-sorting
 	Vector3 zbias_offset(0.0f,0.0f,0.0f);
 
-	if (!DX8Wrapper::Get_Current_Caps()->Support_ZBias()) {
+	if (!WW3D::Get_Render_Backend()->Supports_Z_Bias()) {
 		const float ZBIAS_DISTANCE = 0.01f;
 		generator->Get_Transform().Get_Z_Vector(&zbias_offset);
 		Matrix3D invtm;
@@ -788,7 +789,7 @@ void SkinDecalMeshClass::Render()
 	/*
 	** Skin decals coordinates are in world space
 	*/
-	DX8Wrapper::Set_Transform(D3DTS_WORLD,Matrix3D::Identity);
+	WW3D::Get_Render_Backend()->Set_Transform(RenderBackendTransform::World,Matrix3D::Identity);
 
 	/*
 	** Skin decals have to get the deformed vertices of their parent meshes.  For this
@@ -852,9 +853,9 @@ void SkinDecalMeshClass::Render()
 	while (next_poly_index < Polys.Count()) {
 		next_poly_index = Process_Material_Run(cur_poly_index);
 
-		DX8Wrapper::Set_Index_Buffer(dynamic_ib,0);
-		DX8Wrapper::Set_Vertex_Buffer(dynamic_vb);
-		DX8Wrapper::Draw_Triangles(3*cur_poly_index,
+		WW3D::Get_Render_Backend()->Set_Index_Buffer(dynamic_ib,0);
+		WW3D::Get_Render_Backend()->Set_Vertex_Buffer(dynamic_vb);
+		WW3D::Get_Render_Backend()->Draw_Triangles(3*cur_poly_index,
 											(next_poly_index - cur_poly_index), // poly count
 											Polys[cur_poly_index].I,
 											1 + Polys[next_poly_index-1].K - Polys[cur_poly_index].I);
@@ -881,9 +882,9 @@ void SkinDecalMeshClass::Render()
  *=============================================================================================*/
 int SkinDecalMeshClass::Process_Material_Run(int start_index)
 {
-	DX8Wrapper::Set_Texture(0,Textures[start_index]);
-	DX8Wrapper::Set_Material(VertexMaterials[Polys[start_index].I]);
-	DX8Wrapper::Set_Shader(Shaders[start_index]);
+	WW3D::Get_Render_Backend()->Set_Texture(0,Textures[start_index]);
+	WW3D::Get_Render_Backend()->Set_Material(VertexMaterials[Polys[start_index].I]);
+	WW3D::Get_Render_Backend()->Set_Shader(Shaders[start_index]);
 
 	int next_index = start_index;
 	while (	(next_index < Polys.Count()) &&

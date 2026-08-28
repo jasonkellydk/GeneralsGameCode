@@ -39,6 +39,8 @@
  * - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
 
 #include "sortingrenderer.h"
+#include "ww3d.h"
+#include "WWMath/matrix4.h"
 #include "dx8vertexbuffer.h"
 #include "dx8indexbuffer.h"
 #include "dx8wrapper.h"
@@ -216,7 +218,7 @@ void SortingRendererClass::Insert_Triangles(
 	unsigned short vertex_count)
 {
 	if (!WW3D::Is_Sorting_Enabled()) {
-		DX8Wrapper::Draw_Triangles(start_index,polygon_count,min_vertex_index,vertex_count);
+		WW3D::Get_Render_Backend()->Draw_Triangles(start_index,polygon_count,min_vertex_index,vertex_count);
 		return;
 	}
 
@@ -313,7 +315,7 @@ void Release_Refs(SortingNodeStruct* state)
 	}
 	REF_PTR_RELEASE(state->sorting_state.index_buffer);
 	REF_PTR_RELEASE(state->sorting_state.material);
-	for (i=0;i<DX8Wrapper::Get_Current_Caps()->Get_Max_Textures_Per_Pass();++i)
+	for (i=0;i<WW3D::Get_Render_Backend()->Get_Max_Textures_Per_Pass();++i)
 	{
 		REF_PTR_RELEASE(state->sorting_state.Textures[i]);
 	}
@@ -364,17 +366,19 @@ void SortingRendererClass::Insert_To_Sorting_Pool(SortingNodeStruct* state)
 
 static void Apply_Render_State(RenderStateStruct& render_state)
 {
-	DX8Wrapper::Set_Shader(render_state.shader);
+	WW3D::Get_Render_Backend()->Set_Shader(render_state.shader);
 
-	DX8Wrapper::Set_Material(render_state.material);
+	WW3D::Get_Render_Backend()->Set_Material(render_state.material);
 
-	for (int i=0;i<DX8Wrapper::Get_Current_Caps()->Get_Max_Textures_Per_Pass();++i)
+	for (int i=0;i<WW3D::Get_Render_Backend()->Get_Max_Textures_Per_Pass();++i)
 	{
-		DX8Wrapper::Set_Texture(i,render_state.Textures[i]);
+		WW3D::Get_Render_Backend()->Set_Texture(i,render_state.Textures[i]);
 	}
 
-	DX8Wrapper::_Set_DX8_Transform(D3DTS_WORLD,render_state.world);
-	DX8Wrapper::_Set_DX8_Transform(D3DTS_VIEW,render_state.view);
+	Matrix4x4 world = To_Matrix4x4(render_state.world);
+	Matrix4x4 view = To_Matrix4x4(render_state.view);
+	WW3D::Get_Render_Backend()->Set_Transform(RenderBackendTransform::World,world);
+	WW3D::Get_Render_Backend()->Set_Transform(RenderBackendTransform::View,view);
 
 
 	if (!render_state.material->Get_Lighting())
@@ -541,10 +545,10 @@ void SortingRendererClass::Flush_Sorting_Pool()
 
 		// Set index buffer and render!
 
-		DX8Wrapper::Set_Index_Buffer(dyn_ib_access,0); // Override with this buffer (do something to prevent need for this!)
-		DX8Wrapper::Set_Vertex_Buffer(dyn_vb_access); // Override with this buffer (do something to prevent need for this!)
+		WW3D::Get_Render_Backend()->Set_Index_Buffer(dyn_ib_access,0); // Override with this buffer (do something to prevent need for this!)
+		WW3D::Get_Render_Backend()->Set_Vertex_Buffer(dyn_vb_access); // Override with this buffer (do something to prevent need for this!)
 
-		DX8Wrapper::Apply_Render_State_Changes();
+		WW3D::Get_Render_Backend()->Apply_Render_State_Changes();
 
 		unsigned count_to_render=1;
 		unsigned start_index=0;
@@ -554,7 +558,7 @@ void SortingRendererClass::Flush_Sorting_Pool()
 				SortingNodeStruct* state=overlapping_nodes[node_id];
 				Apply_Render_State(state->sorting_state);
 
-				DX8Wrapper::Draw_Triangles(
+				WW3D::Get_Render_Backend()->Draw_Triangles(
 					start_index*3,
 					count_to_render,
 					state->min_vertex_index,
@@ -572,7 +576,7 @@ void SortingRendererClass::Flush_Sorting_Pool()
 			SortingNodeStruct* state=overlapping_nodes[node_id];
 			Apply_Render_State(state->sorting_state);
 
-			DX8Wrapper::Draw_Triangles(
+			WW3D::Get_Render_Backend()->Draw_Triangles(
 				start_index*3,
 				count_to_render,
 				state->min_vertex_index,
@@ -603,8 +607,8 @@ void SortingRendererClass::Flush()
 	WWPROFILE("SortingRenderer::Flush");
 	Matrix4x4 old_view;
 	Matrix4x4 old_world;
-	DX8Wrapper::Get_Transform(D3DTS_VIEW,old_view);
-	DX8Wrapper::Get_Transform(D3DTS_WORLD,old_world);
+	WW3D::Get_Render_Backend()->Get_Transform(RenderBackendTransform::View,old_view);
+	WW3D::Get_Render_Backend()->Get_Transform(RenderBackendTransform::World,old_world);
 
 	// TheSuperHackers @perf stephanmeesters 04/07/2026
 	// Splice nodes that have no bounding information (Z=0.0) at the correct location into the sorted list.
@@ -631,21 +635,21 @@ void SortingRendererClass::Flush()
 		}
 	}
 
-	bool old_enable=DX8Wrapper::_Is_Triangle_Draw_Enabled();
-	DX8Wrapper::_Enable_Triangle_Draw(_EnableTriangleDraw);
+	bool old_enable=WW3D::Get_Render_Backend()->Is_Triangle_Draw_Enabled();
+	WW3D::Get_Render_Backend()->Set_Triangle_Draw_Enabled(_EnableTriangleDraw);
 	Flush_Sorting_Pool();
-	DX8Wrapper::_Enable_Triangle_Draw(old_enable);
+	WW3D::Get_Render_Backend()->Set_Triangle_Draw_Enabled(old_enable);
 
-	DX8Wrapper::Set_Index_Buffer(nullptr,0);
-	DX8Wrapper::Set_Vertex_Buffer(nullptr);
+	WW3D::Get_Render_Backend()->Set_Index_Buffer(nullptr,0);
+	WW3D::Get_Render_Backend()->Set_Vertex_Buffer(nullptr);
 	total_sorting_vertices=0;
 
 	DynamicIBAccessClass::_Reset(false);
 	DynamicVBAccessClass::_Reset(false);
 
 
-	DX8Wrapper::Set_Transform(D3DTS_VIEW,old_view);
-	DX8Wrapper::Set_Transform(D3DTS_WORLD,old_world);
+	WW3D::Get_Render_Backend()->Set_Transform(RenderBackendTransform::View,old_view);
+	WW3D::Get_Render_Backend()->Set_Transform(RenderBackendTransform::World,old_world);
 
 }
 

@@ -31,6 +31,8 @@
 #include "WW3D2/camera.h"
 #include "WWLib/simplevec.h"
 #include "WW3D2/dx8wrapper.h"
+#include "WW3D2/ww3d.h"
+#include "WW3D2/surfaceclass.h"
 #include "Common/MapObject.h"
 #include "Common/PerfTimer.h"
 #include "W3DDevice/GameClient/HeightMap.h"
@@ -94,7 +96,7 @@ W3DShroud::~W3DShroud()
 	ReleaseResources();
 
 	if (m_pSrcTexture)
-		m_pSrcTexture->Release();
+		WW3D::Get_Render_Backend()->Release_Surface(m_pSrcTexture);
 
 	delete [] m_finalFogData;
 	delete [] m_currentFogData;
@@ -157,24 +159,31 @@ void W3DShroud::init(WorldHeightMap *pMap, Real worldCellSizeX, Real worldCellSi
 
 #if defined(RTS_DEBUG)
 	if (TheGlobalData && TheGlobalData->m_fogOfWarOn)
-		m_pSrcTexture = DX8Wrapper::_Create_DX8_Surface(srcWidth,srcHeight, WW3D_FORMAT_A4R4G4B4);
+		m_pSrcTexture = WW3D::Get_Render_Backend()->Create_System_Memory_Surface(srcWidth,srcHeight, WW3D_FORMAT_A4R4G4B4);
 	else
 #endif
-		m_pSrcTexture = DX8Wrapper::_Create_DX8_Surface(srcWidth,srcHeight, WW3D_FORMAT_R5G6B5);
+		m_pSrcTexture = WW3D::Get_Render_Backend()->Create_System_Memory_Surface(srcWidth,srcHeight, WW3D_FORMAT_R5G6B5);
 
 	DEBUG_ASSERTCRASH( m_pSrcTexture != nullptr, ("Failed to Allocate Shroud Src Surface"));
 
-	D3DLOCKED_RECT rect;
+	RenderBackendLockedSurface rect = {};
 
 	//Get a pointer to source surface pixels.
-	HRESULT res = m_pSrcTexture->LockRect(&rect,nullptr,D3DLOCK_NO_DIRTY_UPDATE);
-	m_pSrcTexture->UnlockRect();
+	IRenderBackend *backend = WW3D::Get_Render_Backend();
+	const bool locked = m_pSrcTexture != nullptr && backend != nullptr &&
+		backend->Lock_Surface(m_pSrcTexture, rect);
+	if (locked)
+	{
+		backend->Unlock_Surface(m_pSrcTexture);
+	}
+	else
+	{
+		DEBUG_ASSERTCRASH(false, ("Failed to lock shroud src surface"));
+		return;
+	}
 
-	DEBUG_ASSERTCRASH( res == D3D_OK, ("Failed to lock shroud src surface"));
-	res = 0;// just to avoid compiler warnings
-
-	m_srcTextureData=rect.pBits;
-	m_srcTexturePitch=rect.Pitch;
+	m_srcTextureData=rect.bits;
+	m_srcTexturePitch=rect.pitch;
 
 	//clear entire texture to black
 	memset(m_srcTextureData,0,m_srcTexturePitch*srcHeight);
@@ -205,7 +214,7 @@ void W3DShroud::reset()
 	//Free old shroud data since it may no longer fit new map.
 	if (m_pSrcTexture)
 	{
-		m_pSrcTexture->Release();
+		WW3D::Get_Render_Backend()->Release_Surface(m_pSrcTexture);
 		m_pSrcTexture=nullptr;
 	}
 
@@ -457,7 +466,7 @@ void W3DShroud::fillBorderShroudData(W3DShroudLevel level, SurfaceClass* pDestSu
 
 	//Fill destination texture with border color
 
-	RECT	srcRect;
+	RenderBackendRect	srcRect;
 
 	//create a rectangle enclosing bottom row of unused pixels long enough
 	//to cover destination width.
@@ -466,7 +475,7 @@ void W3DShroud::fillBorderShroudData(W3DShroudLevel level, SurfaceClass* pDestSu
 	srcRect.right= m_numCellsX;
 	srcRect.bottom= m_numCellsY+1;
 
-	POINT	dstPoint={0,0};
+	RenderBackendPoint	dstPoint={0,0};
 
 	Int numFullCopies = m_dstTextureWidth/srcRect.right;
 	Int numExtraPixels = m_dstTextureWidth%srcRect.right;
@@ -480,23 +489,21 @@ void W3DShroud::fillBorderShroudData(W3DShroudLevel level, SurfaceClass* pDestSu
 		{
 			dstPoint.x = x * srcRect.right;	//advance to next set of pixel in row.
 
-			DX8Wrapper::_Copy_DX8_Rects(
+			WW3D::Get_Render_Backend()->Copy_Surface_Rect(
 				m_pSrcTexture,
-				&srcRect,
-				1,
-				pDestSurface->Peek_D3D_Surface(),
-				&dstPoint);
+				srcRect,
+				pDestSurface,
+				dstPoint);
 		}
 		if (numExtraPixels)
 		{	Int oldVal=srcRect.right;
 			dstPoint.x = numFullCopies * oldVal;
 			srcRect.right = numExtraPixels;
-			DX8Wrapper::_Copy_DX8_Rects(
+			WW3D::Get_Render_Backend()->Copy_Surface_Rect(
 				m_pSrcTexture,
-				&srcRect,
-				1,
-				pDestSurface->Peek_D3D_Surface(),
-				&dstPoint);
+				srcRect,
+				pDestSurface,
+				dstPoint);
 			srcRect.right = oldVal;
 		}
 	}
@@ -526,7 +533,8 @@ void W3DShroud::render(CameraClass *cam)
 	if (!m_pSrcTexture)
 		return; //nothing to update from.  Must be in reset state.
 
-	if (DX8Wrapper::_Get_D3D_Device8() && (DX8Wrapper::_Get_D3D_Device8()->TestCooperativeLevel()) != D3D_OK)
+	if (WW3D::Get_Render_Backend() == nullptr ||
+		WW3D::Get_Render_Backend()->Get_Device_Status() != RenderBackendDeviceStatus::Ready)
 		return;	//device not ready to render anything
 
 #if defined(RTS_DEBUG)
@@ -688,8 +696,8 @@ void W3DShroud::render(CameraClass *cam)
 		pDestSurface=m_pDstTexture->Get_Surface_Level(0);
 	}
 
-	RECT	srcRect;
-	POINT	dstPoint={1,1};	//first row/column is reserved for border.
+	RenderBackendRect	srcRect;
+	RenderBackendPoint	dstPoint={1,1};	//first row/column is reserved for border.
 
 	srcRect.left=visStartX;
 	srcRect.top=visStartY;
@@ -711,12 +719,11 @@ void W3DShroud::render(CameraClass *cam)
 
 	{
 		//USE_PERF_TIMER(shroudCopy)
-		DX8Wrapper::_Copy_DX8_Rects(
+		WW3D::Get_Render_Backend()->Copy_Surface_Rect(
 				m_pSrcTexture,
-				&srcRect,
-				1,
-				pDestSurface->Peek_D3D_Surface(),
-				&dstPoint);
+				srcRect,
+				pDestSurface,
+				dstPoint);
 	}
 
 	REF_PTR_RELEASE (pDestSurface);
@@ -724,7 +731,7 @@ void W3DShroud::render(CameraClass *cam)
 
 #define FOG_INTERPOLATION_RATE	(255.0f/1000.0f)	//take one second to go from black to fully lit.
 //-----------------------------------------------------------------------------
-void W3DShroud::interpolateFogLevels(RECT *rect)
+void W3DShroud::interpolateFogLevels(RenderBackendRect *rect)
 {
 	static UnsignedInt prevTime = timeGetTime();
 

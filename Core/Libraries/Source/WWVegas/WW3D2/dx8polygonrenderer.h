@@ -43,6 +43,7 @@
 #include "dx8list.h"
 #include "sortingrenderer.h"
 #include "WW3D2/mesh.h"
+#include "WW3D2/ww3d.h"
 #include "dx8wrapper.h"
 
 class DX8PolygonRendererClass;
@@ -114,10 +115,10 @@ inline void DX8PolygonRendererClass::Render(/*const Matrix3D & tm,*/int base_ver
 //	SNAPSHOT_SAY(("Set_Transform"));
 	SNAPSHOT_SAY(("Set_Index_Buffer_Index_Offset(%d)",base_vertex_offset));
 
-	DX8Wrapper::Set_Index_Buffer_Index_Offset(base_vertex_offset);
+	WW3D::Get_Render_Backend()->Set_Index_Buffer_Index_Offset(base_vertex_offset);
 	if (strip) {
 		SNAPSHOT_SAY(("Draw_Strip(%d,%d,%d,%d)",index_offset,index_count-2,min_vertex_index,vertex_index_range));
-		DX8Wrapper::Draw_Strip(
+		WW3D::Get_Render_Backend()->Draw_Strip(
 			index_offset,
 			index_count-2,
 			min_vertex_index,
@@ -125,7 +126,7 @@ inline void DX8PolygonRendererClass::Render(/*const Matrix3D & tm,*/int base_ver
 	}
 	else {
 		SNAPSHOT_SAY(("Draw_Triangles(%d,%d,%d,%d)",index_offset,index_count-2,min_vertex_index,vertex_index_range));
-		DX8Wrapper::Draw_Triangles(
+		WW3D::Get_Render_Backend()->Draw_Triangles(
 			index_offset,
 			index_count/3,
 			min_vertex_index,
@@ -141,7 +142,7 @@ inline void DX8PolygonRendererClass::Render_Sorted(/*const Matrix3D & tm,*/int b
 	SNAPSHOT_SAY(("Set_Index_Buffer_Index_Offset(%d)",base_vertex_offset));
 	SNAPSHOT_SAY(("Insert_Sorting_Triangles(%d,%d,%d,%d)",index_offset,index_count-2,min_vertex_index,vertex_index_range));
 
-	DX8Wrapper::Set_Index_Buffer_Index_Offset(base_vertex_offset);
+	WW3D::Get_Render_Backend()->Set_Index_Buffer_Index_Offset(base_vertex_offset);
 	SortingRendererClass::Insert_Triangles(
 		bounding_sphere,
 		index_offset,

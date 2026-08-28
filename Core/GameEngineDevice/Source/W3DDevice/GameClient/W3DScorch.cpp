@@ -25,6 +25,8 @@
 #include "W3DDevice/GameClient/TerrainTex.h"
 #include "W3DDevice/GameClient/WorldHeightMap.h"
 #include "WW3D2/dx8wrapper.h"
+#include "WW3D2/IRenderBackend.h"
+#include "WW3D2/ww3d.h"
 
 W3DScorch::W3DScorch(bool deduplicateScorches)
   : m_vertexScorch(nullptr)
@@ -122,12 +124,12 @@ void W3DScorch::drawScorches(WorldHeightMap& map)
 	{
 		return;
 	}
-	DX8Wrapper::Set_Index_Buffer(m_indexScorch, 0);
-	DX8Wrapper::Set_Vertex_Buffer(m_vertexScorch);
-	DX8Wrapper::Set_Shader(ShaderClass::_PresetAlphaShader);
+	WW3D::Get_Render_Backend()->Set_Index_Buffer(m_indexScorch, 0);
+	WW3D::Get_Render_Backend()->Set_Vertex_Buffer(m_vertexScorch);
+	WW3D::Get_Render_Backend()->Set_Shader(ShaderClass::_PresetAlphaShader);
 
-	DX8Wrapper::Set_Texture(0, m_scorchTexture);
-	DX8Wrapper::Draw_Triangles(0, m_curNumScorchIndices / 3, 0, m_curNumScorchVertices);
+	WW3D::Get_Render_Backend()->Set_Texture(0, m_scorchTexture);
+	WW3D::Get_Render_Backend()->Draw_Triangles(0, m_curNumScorchIndices / 3, 0, m_curNumScorchVertices);
 }
 
 static Real getMapHeight(WorldHeightMap& map, Int x, Int y)
@@ -157,7 +159,7 @@ void W3DScorch::updateScorches(WorldHeightMap& map)
 	Real shadeR = (TheGlobalData->m_terrainAmbient[0].red + TheGlobalData->m_terrainDiffuse[0].red) / 2.0f;
 	Real shadeG = (TheGlobalData->m_terrainAmbient[0].green + TheGlobalData->m_terrainDiffuse[0].green) / 2.0f;
 	Real shadeB = (TheGlobalData->m_terrainAmbient[0].blue + TheGlobalData->m_terrainDiffuse[0].blue) / 2.0f;
-	UnsignedInt diffuse = DX8Wrapper::Convert_Color_Clamp(Vector4(shadeR, shadeG, shadeB, 1.0f));
+	UnsignedInt diffuse = WW3D::Get_Render_Backend()->Pack_Color_Clamped(Vector4(shadeR, shadeG, shadeB, 1.0f));
 
 	// TheSuperHackers @info Scorches are written in reverse order to ensure that the last added scorches fit in the buffers.
 	for (std::deque<TScorch>::reverse_iterator it = m_scorches.rbegin(); it != m_scorches.rend(); ++it)

@@ -311,11 +311,11 @@ void StreakRendererClass::RenderStreak
 )
 {
 	Matrix4x4 view;
-	DX8Wrapper::Get_Transform(D3DTS_VIEW,view);
+	WW3D::Get_Render_Backend()->Get_Transform(RenderBackendTransform::View,view);
 
 	Matrix4x4 identity(true);
-	DX8Wrapper::Set_Transform(D3DTS_WORLD,identity);
-	DX8Wrapper::Set_Transform(D3DTS_VIEW,identity);
+	WW3D::Get_Render_Backend()->Set_Transform(RenderBackendTransform::World,identity);
+	WW3D::Get_Render_Backend()->Set_Transform(RenderBackendTransform::View,identity);
 
 	/*
 	** Handle texture UV offset animation (done once for entire line).
@@ -1303,7 +1303,7 @@ void StreakRendererClass::RenderStreak
 
 		VertexMaterialClass *mat;
 		mat=VertexMaterialClass::Get_Preset(VertexMaterialClass::PRELIT_DIFFUSE);
-		DX8Wrapper::Set_Material(mat);
+		WW3D::Get_Render_Backend()->Set_Material(mat);
 		REF_PTR_RELEASE(mat);
 
 		// If Texture is non-null enable texturing in shader - otherwise disable.
@@ -1372,10 +1372,10 @@ void StreakRendererClass::RenderStreak
 		}
 
 
-		DX8Wrapper::Set_Index_Buffer(ib_access,0);
-		DX8Wrapper::Set_Vertex_Buffer(Verts);
-		DX8Wrapper::Set_Texture(0,Texture);
-		DX8Wrapper::Set_Shader(shader);
+		WW3D::Get_Render_Backend()->Set_Index_Buffer(ib_access,0);
+		WW3D::Get_Render_Backend()->Set_Vertex_Buffer(Verts);
+		WW3D::Get_Render_Backend()->Set_Texture(0,Texture);
+		WW3D::Get_Render_Backend()->Set_Shader(shader);
 
 		if (sorting)
 		{
@@ -1383,12 +1383,12 @@ void StreakRendererClass::RenderStreak
 		}
 		else
 		{
-			DX8Wrapper::Draw_Triangles(0,triangleIndex,0,vnum);
+			WW3D::Get_Render_Backend()->Draw_Triangles(0,triangleIndex,0,vnum);
 		}
 
 	}
 
-	DX8Wrapper::Set_Transform(D3DTS_VIEW,view);
+	WW3D::Get_Render_Backend()->Set_Transform(RenderBackendTransform::View,view);
 
 }
 

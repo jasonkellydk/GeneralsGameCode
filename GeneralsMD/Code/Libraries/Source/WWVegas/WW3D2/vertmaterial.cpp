@@ -46,6 +46,7 @@
 #include "WWLib/INI.h"
 #include "WWLib/XSTRAW.h"
 #include "dx8wrapper.h"
+#include "ww3d.h"
 
 
 static unsigned int unique=1;
@@ -947,24 +948,41 @@ WW3DErrorType VertexMaterialClass::Save_W3D(ChunkSaveClass & csave)
 void VertexMaterialClass::Apply() const
 {
 	int i;
+	const auto to_backend_source = [](unsigned source) {
+		switch (source)
+		{
+			case D3DMCS_COLOR1: return RenderBackendMaterialSource::Color1;
+			case D3DMCS_COLOR2: return RenderBackendMaterialSource::Color2;
+			default: return RenderBackendMaterialSource::MaterialValue;
+		}
+	};
 
-	DX8Wrapper::Set_DX8_Material(Material);
+	const RenderBackendMaterial backend_material =
+	{
+		{ Material->Diffuse.r, Material->Diffuse.g, Material->Diffuse.b, Material->Diffuse.a },
+		{ Material->Ambient.r, Material->Ambient.g, Material->Ambient.b, Material->Ambient.a },
+		{ Material->Specular.r, Material->Specular.g, Material->Specular.b, Material->Specular.a },
+		{ Material->Emissive.r, Material->Emissive.g, Material->Emissive.b, Material->Emissive.a },
+		Material->Power
+	};
+	WW3D::Get_Render_Backend()->Set_Material_Values(backend_material);
 
 	if (WW3D::Is_Coloring_Enabled())
-		DX8Wrapper::Set_DX8_Render_State(D3DRS_LIGHTING,FALSE);
+		WW3D::Get_Render_Backend()->Set_Lighting_Enabled(false);
 	else
-		DX8Wrapper::Set_DX8_Render_State(D3DRS_LIGHTING,UseLighting);
-	DX8Wrapper::Set_DX8_Render_State(D3DRS_AMBIENTMATERIALSOURCE,AmbientColorSource);
-	DX8Wrapper::Set_DX8_Render_State(D3DRS_DIFFUSEMATERIALSOURCE,DiffuseColorSource);
-	DX8Wrapper::Set_DX8_Render_State(D3DRS_EMISSIVEMATERIALSOURCE,EmissiveColorSource);
+		WW3D::Get_Render_Backend()->Set_Lighting_Enabled(UseLighting);
+	WW3D::Get_Render_Backend()->Set_Material_Color_Sources(
+		to_backend_source(AmbientColorSource),
+		to_backend_source(DiffuseColorSource),
+		to_backend_source(EmissiveColorSource));
 
 	// set to default values if no mappers
 	for (i=0; i<MeshBuilderClass::MAX_STAGES; i++) {
 		if (Mapper[i]) {
 			Mapper[i]->Apply(UVSource[i]);
 		} else {
-			DX8Wrapper::Set_DX8_Texture_Stage_State(i,D3DTSS_TEXCOORDINDEX,D3DTSS_TCI_PASSTHRU | UVSource[i]);
-			DX8Wrapper::Set_DX8_Texture_Stage_State(i,D3DTSS_TEXTURETRANSFORMFLAGS,D3DTTFF_DISABLE);
+			WW3D::Get_Render_Backend()->Set_Texture_Coordinate_Source(i,RenderBackendTextureCoordinateSource::PassThrough,UVSource[i]);
+			WW3D::Get_Render_Backend()->Set_Texture_Transform_Flags(i,RenderBackendTextureTransformFlags::Disabled);
 		}
 	}
 }
@@ -972,7 +990,7 @@ void VertexMaterialClass::Apply() const
 void VertexMaterialClass::Apply_Null()
 {
 	int i;
-	static D3DMATERIAL9 default_settings =
+	static const RenderBackendMaterial default_settings =
 	{
 		{ 1.0f, 1.0f, 1.0f, 1.0f },	// diffuse
 		{ 1.0f, 1.0f, 1.0f, 1.0f },	// ambient
@@ -981,17 +999,18 @@ void VertexMaterialClass::Apply_Null()
 		1.0f									// power
 	};
 
-	DX8Wrapper::Set_DX8_Render_State(D3DRS_LIGHTING,FALSE);
-	DX8Wrapper::Set_DX8_Material(&default_settings);
+	WW3D::Get_Render_Backend()->Set_Lighting_Enabled(false);
+	WW3D::Get_Render_Backend()->Set_Material_Values(default_settings);
 
-	DX8Wrapper::Set_DX8_Render_State(D3DRS_AMBIENTMATERIALSOURCE,D3DMCS_MATERIAL);
-	DX8Wrapper::Set_DX8_Render_State(D3DRS_DIFFUSEMATERIALSOURCE,D3DMCS_MATERIAL);
-	DX8Wrapper::Set_DX8_Render_State(D3DRS_EMISSIVEMATERIALSOURCE,D3DMCS_MATERIAL);
+	WW3D::Get_Render_Backend()->Set_Material_Color_Sources(
+		RenderBackendMaterialSource::MaterialValue,
+		RenderBackendMaterialSource::MaterialValue,
+		RenderBackendMaterialSource::MaterialValue);
 
 	// set to default values if no mappers
 	for (i=0; i<MeshBuilderClass::MAX_STAGES; i++) {
-		DX8Wrapper::Set_DX8_Texture_Stage_State(i,D3DTSS_TEXCOORDINDEX,D3DTSS_TCI_PASSTHRU | i);
-		DX8Wrapper::Set_DX8_Texture_Stage_State(i,D3DTSS_TEXTURETRANSFORMFLAGS,D3DTTFF_DISABLE);
+		WW3D::Get_Render_Backend()->Set_Texture_Coordinate_Source(i,RenderBackendTextureCoordinateSource::PassThrough,i);
+		WW3D::Get_Render_Backend()->Set_Texture_Transform_Flags(i,RenderBackendTextureTransformFlags::Disabled);
 	}
 }
 
