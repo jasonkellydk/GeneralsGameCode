@@ -42,6 +42,8 @@
 #include "Common/ThingTemplate.h"
 #include "Common/WellKnownKeys.h"
 
+#include <vector>
+
 #include "GameLogic/PolygonTrigger.h"
 #include "GameLogic/SidesList.h"
 
@@ -1004,19 +1006,26 @@ void WorldHeightMap::readTexClass(TXTextureClass *texClass, TileData **tileData)
 	if (theFile != nullptr) {
 		GDIFileStream theStream(theFile);
 		InputStream *pStr = &theStream;
-		Int numTiles = WorldHeightMap::countTiles(pStr);
+		Int numTiles = WorldHeightMap::countTiles(pStr, nullptr, TERRAIN_TILE_PIXEL_EXTENT);
 		theFile->seek(0, File::START);
-		if (numTiles >= texClass->numTiles) {
-			numTiles = texClass->numTiles;
-			Int width;
-			for (width = 10; width >= 1; width--) {
-				if (numTiles >= width*width) {
-					numTiles = width*width;
+
+		// The map stores the logical tile grid that was used when it was
+		// authored.  Do not use countTiles as a gate here: it deliberately
+		// rejects large source images, while an AI-upscaled image still contains
+		// the same logical grid at a higher pixel density.
+		Int width = texClass->width;
+		if (width < 1 || width > 10 || texClass->numTiles < width * width) {
+			width = 0;
+			for (Int candidate = 10; candidate >= 1; candidate--) {
+				if (numTiles >= candidate * candidate && texClass->numTiles >= candidate * candidate) {
+					width = candidate;
 					break;
 				}
 			}
-			WorldHeightMap::readTiles(pStr, tileData+texClass->firstTile, width);
 		}
+
+		if (width > 0 && texClass->numTiles > 0)
+			WorldHeightMap::readTiles(pStr, tileData + texClass->firstTile, width, TERRAIN_TILE_PIXEL_EXTENT);
 		theFile->close();
 	}
 }
@@ -1295,7 +1304,7 @@ typedef struct {
 
 
 /// Count how many tiles come in from a targa file.
-Int WorldHeightMap::countTiles(InputStream *pStr, Bool *halfTile)
+Int WorldHeightMap::countTiles(InputStream *pStr, Bool *halfTile, Int tilePixelExtent)
 {
 	TTargaHeader hdr;
 	if (halfTile) {
@@ -1303,8 +1312,12 @@ Int WorldHeightMap::countTiles(InputStream *pStr, Bool *halfTile)
 	}
 	Int len = pStr->read(&hdr,sizeof(hdr));
 	if (len!=sizeof(hdr)) return(0);
-	Int tileWidth = hdr.imageWidth/TILE_PIXEL_EXTENT;
-	Int tileHeight = hdr.imageHeight/TILE_PIXEL_EXTENT;
+	if (tilePixelExtent <= 0 || tilePixelExtent > TILE_CACHE_PIXEL_EXTENT ||
+		(TILE_CACHE_PIXEL_EXTENT % tilePixelExtent) != 0) {
+		return(0);
+	}
+	Int tileWidth = hdr.imageWidth/tilePixelExtent;
+	Int tileHeight = hdr.imageHeight/tilePixelExtent;
 
 	if (hdr.colorMapType != 0) {
 		return(0); // we don't do indexed at this time. jba.
@@ -1330,96 +1343,190 @@ Int WorldHeightMap::countTiles(InputStream *pStr, Bool *halfTile)
 	if (tileWidth>=3 && tileHeight >=3) return(9);
 	if (tileWidth>=2 && tileHeight >=2) return(4);
 	if (tileWidth>=1 && tileHeight >=1) return(1);
-	if (halfTile && hdr.imageHeight==TILE_PIXEL_EXTENT/2 && hdr.imageWidth==TILE_PIXEL_EXTENT/2) {
+	if (halfTile && hdr.imageHeight==tilePixelExtent/2 && hdr.imageWidth==tilePixelExtent/2) {
 		*halfTile = true;
 		return 1;
 	}
 	return(0);
 }
-/*Break down a .tga file into a collection of tiles.  numRows * numRows total tiles.*/
-Bool WorldHeightMap::readTiles(InputStream *pStr, TileData **tiles, Int numRows)
+/* Read one pixel from an uncompressed or RLE true-color TGA stream. */
+static Bool readTerrainTgaPixel(InputStream *pStr, UnsignedByte *pixel, Int bytesPerPixel,
+	Bool compressed, Int *repeatCount, Bool *running)
 {
+	if (compressed && *repeatCount == 0)
+	{
+		UnsignedByte flag;
+		if (pStr->read(&flag, 1) != 1)
+			return false;
+
+		*repeatCount = (flag & 0x7f) + 1;
+		*running = (flag & 0x80) != 0;
+		if (*running && pStr->read(pixel, bytesPerPixel) != bytesPerPixel)
+			return false;
+	}
+
+	if (compressed)
+	{
+		--*repeatCount;
+		if (!*running && pStr->read(pixel, bytesPerPixel) != bytesPerPixel)
+			return false;
+	}
+	else if (pStr->read(pixel, bytesPerPixel) != bytesPerPixel)
+	{
+		return false;
+	}
+
+	return true;
+}
+
+/* Break down a .tga file into a collection of tile caches.
+ *
+ * Terrain uses a 256x256 cache per logical tile.  A source sheet with the
+ * same dimensions is copied pixel-for-pixel, so AI-upscaled terrain keeps all
+ * of its detail.  Older 64x64 callers (trees and tools) still pass 64 and
+ * receive the same logical pixels expanded into the larger cache; consumers
+ * of those tiles continue to use the generated 64x64 mip.
+ */
+Bool WorldHeightMap::readTiles(InputStream *pStr, TileData **tiles, Int numRows, Int tilePixelExtent)
+{
+	if (pStr == nullptr || tiles == nullptr || numRows < 1 || numRows > 10 ||
+		tilePixelExtent <= 0 || tilePixelExtent > TILE_CACHE_PIXEL_EXTENT ||
+		(TILE_CACHE_PIXEL_EXTENT % tilePixelExtent) != 0)
+		return false;
+
 	TTargaHeader hdr;
-	pStr->read(&hdr, sizeof(hdr));
-	Int tileWidth = hdr.imageWidth/TILE_PIXEL_EXTENT;
-	Int tileHeight = hdr.imageHeight/TILE_PIXEL_EXTENT;
+	if (pStr->read(&hdr, sizeof(hdr)) != sizeof(hdr))
+		return false;
 
-	if (hdr.imageHeight==TILE_PIXEL_EXTENT/2) {
-		tileHeight = 1;
-	}
-	if (hdr.imageWidth==TILE_PIXEL_EXTENT/2) {
-		tileWidth = 1;
+	if (hdr.colorMapType != 0 || (hdr.imageType != 0x2 && hdr.imageType != 0xA) ||
+		hdr.pixelDepth < 24 || hdr.pixelDepth > 32 || hdr.imageWidth <= 0 || hdr.imageHeight <= 0)
+	{
+		return false;
 	}
 
-	if (tileWidth<numRows && tileHeight<numRows) {
-		return(false);
+	const Int bytesPerPixel = (hdr.pixelDepth + 7) / 8;
+	const Int targetWidth = numRows * tilePixelExtent;
+	const Int targetHeight = targetWidth;
+	const Bool halfTile = numRows == 1 &&
+		hdr.imageWidth == tilePixelExtent / 2 && hdr.imageHeight == tilePixelExtent / 2;
+
+	// Keep malformed or unexpectedly huge TGAs from turning a bad asset into
+	// an unbounded allocation.  The shipped terrain sheets are at most 2560px.
+	if (hdr.imageWidth > 8192 || hdr.imageHeight > 8192)
+		return false;
+
+	const Int outputWidth = halfTile ? hdr.imageWidth : targetWidth;
+	const Int outputHeight = halfTile ? hdr.imageHeight : targetHeight;
+
+	// TGA permits an optional image identification field between the header and
+	// pixels. The old terrain reader assumed it was always empty.
+	UnsignedByte discard[256];
+	Int idBytesRemaining = hdr.idLength;
+	while (idBytesRemaining > 0)
+	{
+		const Int chunkSize = idBytesRemaining < static_cast<Int>(sizeof(discard)) ?
+			idBytesRemaining : static_cast<Int>(sizeof(discard));
+		if (pStr->read(discard, chunkSize) != chunkSize)
+			return false;
+		idBytesRemaining -= chunkSize;
 	}
-	Bool compressed = false;
-	if (hdr.imageType & 0x08) {
-		compressed = true;
-	}
-	int row = 0;
-	int column = 0;
-	int bytesPerPixel = (hdr.pixelDepth+7)/8;
-	if (bytesPerPixel < 3) return(false);
-	if (bytesPerPixel > 4) return(false);
-	int i;
-	for (i=0; i<numRows*numRows; i++) {
+
+	const Int tileCount = numRows * numRows;
+	for (Int i = 0; i < tileCount; ++i)
+	{
 		if (tiles[i] == nullptr)
 			tiles[i] = MSGNEW("WorldHeightMap_readTiles") TileData;
+		memset(tiles[i]->getDataPtr(), 0, TileData::dataLen());
 	}
+
+	// Decode into canonical lower-left order first.  This keeps the resampling
+	// below independent of the TGA origin flags and also handles RLE packets
+	// without making the tile writer aware of packet boundaries.
+	const size_t sourcePixelCount = static_cast<size_t>(hdr.imageWidth) *
+		static_cast<size_t>(hdr.imageHeight);
+	std::vector<UnsignedByte> sourcePixels(sourcePixelCount * TILE_BYTES_PER_PIXEL);
+	const Bool rightToLeft = (hdr.flags & 0x10) != 0;
+	const Bool topToBottom = (hdr.flags & 0x20) != 0;
+	const Bool compressed = hdr.imageType == 0xA;
 	UnsignedByte buf[4];
-	int repeatCount = 0;
-//	Bool read = false;
+	Int repeatCount = 0;
 	Bool running = false;
-	for (row = 0; row < numRows*TILE_PIXEL_EXTENT; row++) {
-		for (column=0; column<hdr.imageWidth; column++) {
-			UnsignedByte r, g, b, a;
-			if (row < hdr.imageHeight) {
-				if (compressed && repeatCount==0) {
-					UnsignedByte flag;
-					pStr->read(&flag, 1);
-					repeatCount = flag&0x7f;
-					repeatCount++;
-					if (flag&0x80) {
-						running = true;
-						pStr->read(buf, bytesPerPixel);
-					} else {
-						running = false;
-					}
-				}
-				if (compressed) repeatCount--;
-				if (!running) {
-					pStr->read(buf, bytesPerPixel);
-				}
-				r = buf[2]; g = buf[1]; b = buf[0];
-				if (bytesPerPixel==4) {
-					a = buf[3];
-				} else {
-					a = 255;// solid alpha.
-				}
-			} else {
-				r = g = b = a = 0;
-			}
-			if (column >= (numRows*TILE_PIXEL_EXTENT)) continue;
-			int tileNdx = (column/TILE_PIXEL_EXTENT) + numRows*(row/TILE_PIXEL_EXTENT);
-			int pixelNdx = (column%TILE_PIXEL_EXTENT) + TILE_PIXEL_EXTENT*(row%TILE_PIXEL_EXTENT);
 
-			UnsignedByte *pixel = tiles[tileNdx]->getDataPtr();
+	for (Int fileY = 0; fileY < hdr.imageHeight; ++fileY)
+	{
+		for (Int fileX = 0; fileX < hdr.imageWidth; ++fileX)
+		{
+			if (!readTerrainTgaPixel(pStr, buf, bytesPerPixel, compressed, &repeatCount, &running))
+				return false;
 
-			pixel += pixelNdx*TILE_BYTES_PER_PIXEL;
-			*pixel++ = b;
-			*pixel++ = g;
-			*pixel++ = r;
-			*pixel = a;
-
+			const Int sourceX = rightToLeft ? hdr.imageWidth - fileX - 1 : fileX;
+			const Int sourceY = topToBottom ? hdr.imageHeight - fileY - 1 : fileY;
+			UnsignedByte *pixel = &sourcePixels[(static_cast<size_t>(sourceY) * hdr.imageWidth + sourceX) * TILE_BYTES_PER_PIXEL];
+			pixel[0] = buf[0];
+			pixel[1] = buf[1];
+			pixel[2] = buf[2];
+			pixel[3] = bytesPerPixel == 4 ? buf[3] : 255;
 		}
-		DEBUG_ASSERTCRASH(repeatCount==0, ("Invalid tga."));
 	}
-	for (i=0; i<numRows*numRows; i++) {
+
+	if (compressed && repeatCount != 0)
+		return false;
+
+	const Int cacheScale = TILE_CACHE_PIXEL_EXTENT / tilePixelExtent;
+	for (Int outputY = 0; outputY < outputHeight; ++outputY)
+	{
+		const Int sourceY0 = (outputY * hdr.imageHeight) / outputHeight;
+		Int sourceY1 = ((outputY + 1) * hdr.imageHeight) / outputHeight;
+		if (sourceY1 <= sourceY0) sourceY1 = sourceY0 + 1;
+
+		for (Int outputX = 0; outputX < outputWidth; ++outputX)
+		{
+			const Int sourceX0 = (outputX * hdr.imageWidth) / outputWidth;
+			Int sourceX1 = ((outputX + 1) * hdr.imageWidth) / outputWidth;
+			if (sourceX1 <= sourceX0) sourceX1 = sourceX0 + 1;
+
+			UnsignedInt sumB = 0;
+			UnsignedInt sumG = 0;
+			UnsignedInt sumR = 0;
+			UnsignedInt sumA = 0;
+			for (Int sourceY = sourceY0; sourceY < sourceY1; ++sourceY)
+			{
+				for (Int sourceX = sourceX0; sourceX < sourceX1; ++sourceX)
+				{
+					const UnsignedByte *source = &sourcePixels[(static_cast<size_t>(sourceY) * hdr.imageWidth + sourceX) * TILE_BYTES_PER_PIXEL];
+					sumB += source[0];
+					sumG += source[1];
+					sumR += source[2];
+					sumA += source[3];
+				}
+			}
+
+			const Int samples = (sourceX1 - sourceX0) * (sourceY1 - sourceY0);
+			const Int tileNdx = (outputX / tilePixelExtent) + numRows * (outputY / tilePixelExtent);
+			const Int cacheX = (outputX % tilePixelExtent) * cacheScale;
+			const Int cacheY = (outputY % tilePixelExtent) * cacheScale;
+			UnsignedByte pixel[TILE_BYTES_PER_PIXEL];
+			pixel[0] = static_cast<UnsignedByte>((sumB + samples / 2) / samples);
+			pixel[1] = static_cast<UnsignedByte>((sumG + samples / 2) / samples);
+			pixel[2] = static_cast<UnsignedByte>((sumR + samples / 2) / samples);
+			pixel[3] = static_cast<UnsignedByte>((sumA + samples / 2) / samples);
+
+			for (Int cacheYOffset = 0; cacheYOffset < cacheScale; ++cacheYOffset)
+			{
+				for (Int cacheXOffset = 0; cacheXOffset < cacheScale; ++cacheXOffset)
+				{
+					UnsignedByte *destination = tiles[tileNdx]->getDataPtr() +
+						((cacheY + cacheYOffset) * TILE_CACHE_PIXEL_EXTENT + cacheX + cacheXOffset) * TILE_BYTES_PER_PIXEL;
+					memcpy(destination, pixel, TILE_BYTES_PER_PIXEL);
+				}
+			}
+		}
+	}
+
+	for (Int i = 0; i < tileCount; ++i)
 		tiles[i]->updateMips();
-	}
-	return(true);
+
+	return true;
 }
 
 
@@ -1430,7 +1537,7 @@ Int WorldHeightMap::updateTileTexturePositions(Int *edgeHeight)
 {
 	Int i, j;
 	Int maxHeight = 0;
-	const Int tilesPerRow = TEXTURE_WIDTH/(TILE_PIXEL_EXTENT+TILE_OFFSET);
+	const Int tilesPerRow = TERRAIN_TEXTURE_WIDTH/(TERRAIN_TILE_PIXEL_EXTENT+TERRAIN_TILE_OFFSET);
 
 	Bool availableGrid[tilesPerRow][tilesPerRow];
 	Int row, column;
@@ -1479,11 +1586,11 @@ Int WorldHeightMap::updateTileTexturePositions(Int *edgeHeight)
 				continue;
 			}
 
-			Int xOrigin = TILE_OFFSET/2 + column*(TILE_PIXEL_EXTENT+TILE_OFFSET);
-			Int yOrigin = TILE_OFFSET/2 + row*(TILE_PIXEL_EXTENT+TILE_OFFSET);
+			Int xOrigin = TERRAIN_TILE_OFFSET/2 + column*(TERRAIN_TILE_PIXEL_EXTENT+TERRAIN_TILE_OFFSET);
+			Int yOrigin = TERRAIN_TILE_OFFSET/2 + row*(TERRAIN_TILE_PIXEL_EXTENT+TERRAIN_TILE_OFFSET);
 			m_textureClasses[texClass].positionInTexture.x = xOrigin;
 			m_textureClasses[texClass].positionInTexture.y = yOrigin;
-			Int classHeight = yOrigin + width*TILE_PIXEL_EXTENT+ TILE_OFFSET/2;
+			Int classHeight = yOrigin + width*TERRAIN_TILE_PIXEL_EXTENT+ TERRAIN_TILE_OFFSET/2;
 			if (maxHeight < classHeight) maxHeight = classHeight;
 
 			for (i=0; i<width; i++) {
@@ -1492,8 +1599,8 @@ Int WorldHeightMap::updateTileTexturePositions(Int *edgeHeight)
 					Int baseNdx = m_textureClasses[texClass].firstTile + i + j*width;
 					// In case we are just checking for room...
 					if (m_sourceTiles[baseNdx] == nullptr) continue;
-					Int x = xOrigin + i*TILE_PIXEL_EXTENT;
-					Int y = yOrigin + (width-j-1)*TILE_PIXEL_EXTENT;
+					Int x = xOrigin + i*TERRAIN_TILE_PIXEL_EXTENT;
+					Int y = yOrigin + (width-j-1)*TERRAIN_TILE_PIXEL_EXTENT;
 					m_sourceTiles[baseNdx]->m_tileLocationInTexture.x = x;
 					m_sourceTiles[baseNdx]->m_tileLocationInTexture.y = y;
 				}
@@ -1543,11 +1650,11 @@ Int WorldHeightMap::updateTileTexturePositions(Int *edgeHeight)
 			continue;
 		}
 
-		Int xOrigin = TILE_OFFSET/2 + column*(TILE_PIXEL_EXTENT+TILE_OFFSET);
-		Int yOrigin = TILE_OFFSET/2 + row*(TILE_PIXEL_EXTENT+TILE_OFFSET);
+		Int xOrigin = TERRAIN_TILE_OFFSET/2 + column*(TERRAIN_TILE_PIXEL_EXTENT+TERRAIN_TILE_OFFSET);
+		Int yOrigin = TERRAIN_TILE_OFFSET/2 + row*(TERRAIN_TILE_PIXEL_EXTENT+TERRAIN_TILE_OFFSET);
 		m_edgeTextureClasses[texClass].positionInTexture.x = xOrigin;
 		m_edgeTextureClasses[texClass].positionInTexture.y = yOrigin;
-		Int classHeight = yOrigin + width*TILE_PIXEL_EXTENT+ TILE_OFFSET/2;
+		Int classHeight = yOrigin + width*TERRAIN_TILE_PIXEL_EXTENT+ TERRAIN_TILE_OFFSET/2;
 		if (maxEdgeHeight < classHeight) maxEdgeHeight = classHeight;
 
 		for (i=0; i<width; i++) {
@@ -1556,8 +1663,8 @@ Int WorldHeightMap::updateTileTexturePositions(Int *edgeHeight)
 				Int baseNdx = m_edgeTextureClasses[texClass].firstTile + i + j*width;
 				// In case we are just checking for room...
 				if (m_edgeTiles[baseNdx] == nullptr) continue;
-				Int x = xOrigin + i*TILE_PIXEL_EXTENT;
-				Int y = yOrigin + (width-j-1)*TILE_PIXEL_EXTENT;
+				Int x = xOrigin + i*TERRAIN_TILE_PIXEL_EXTENT;
+				Int y = yOrigin + (width-j-1)*TERRAIN_TILE_PIXEL_EXTENT;
 				// Use negative offsets to differentiate between tiles & edges.
 				m_edgeTiles[baseNdx]->m_tileLocationInTexture.x = x;
 				m_edgeTiles[baseNdx]->m_tileLocationInTexture.y = y;
@@ -1581,26 +1688,26 @@ void WorldHeightMap::getUVForNdx(Int tileNdx, float *minU, float *minV, float *m
 	ICoord2D pos = m_sourceTiles[baseNdx]->m_tileLocationInTexture;
 	*minU = pos.x;
 	*minV = pos.y;
-	*maxU = *minU+TILE_PIXEL_EXTENT;
-	*maxV = *minV+TILE_PIXEL_EXTENT;
+	*maxU = *minU+TERRAIN_TILE_PIXEL_EXTENT;
+	*maxV = *minV+TERRAIN_TILE_PIXEL_EXTENT;
 #ifdef EVAL_TILING_MODES
 	if (m_tileMode == TILE_8x8) {
-		*maxU = *minU+TILE_PIXEL_EXTENT/2.0f;
-		*maxV = *minV+TILE_PIXEL_EXTENT/2.0f;
+		*maxU = *minU+TERRAIN_TILE_PIXEL_EXTENT/2.0f;
+		*maxV = *minV+TERRAIN_TILE_PIXEL_EXTENT/2.0f;
 	} else if (m_tileMode == TILE_6x6) {
-		*maxU = *minU+2.0f*TILE_PIXEL_EXTENT/3.0f;
-		*maxV = *minV+2.0f*TILE_PIXEL_EXTENT/3.0f;
+		*maxU = *minU+2.0f*TERRAIN_TILE_PIXEL_EXTENT/3.0f;
+		*maxV = *minV+2.0f*TERRAIN_TILE_PIXEL_EXTENT/3.0f;
 	} else {
-		*maxU = *minU+TILE_PIXEL_EXTENT;
-		*maxV = *minV+TILE_PIXEL_EXTENT;
+		*maxU = *minU+TERRAIN_TILE_PIXEL_EXTENT;
+		*maxV = *minV+TERRAIN_TILE_PIXEL_EXTENT;
 	}
 #endif
-	*minU/=TEXTURE_WIDTH;
+	*minU/=TERRAIN_TEXTURE_WIDTH;
 	*minV/=m_terrainTexHeight;
-	*maxU/=TEXTURE_WIDTH;
+	*maxU/=TERRAIN_TEXTURE_WIDTH;
 	*maxV/=m_terrainTexHeight;
 
-	// Tiles are 64x64 pixels, height grids map to 32x32.
+	// Terrain tiles are 256x256 pixels, height grids map to 32x32.
 	// So get the proper quadrant of the tile.
 	Real midX = (*minU+*maxU)/2;
 	Real midY = (*minV+*maxV)/2;
@@ -1622,10 +1729,10 @@ void WorldHeightMap::getUVForBlend(Int edgeClass, Region2D *range)
 {
 	ICoord2D pos = m_edgeTextureClasses[edgeClass].positionInTexture;
 	Int width = m_edgeTextureClasses[edgeClass].width;
-	range->lo.x = (Real)pos.x/TEXTURE_WIDTH;
+	range->lo.x = (Real)pos.x/TERRAIN_TEXTURE_WIDTH;
 	range->lo.y = (Real)pos.y/m_alphaEdgeHeight;
-	range->hi.x = ((Real)pos.x + width*TILE_PIXEL_EXTENT)/TEXTURE_WIDTH;
-	range->hi.y = ((Real)pos.y + width*TILE_PIXEL_EXTENT)/m_alphaEdgeHeight;
+	range->hi.x = ((Real)pos.x + width*TERRAIN_TILE_PIXEL_EXTENT)/TERRAIN_TEXTURE_WIDTH;
+	range->hi.y = ((Real)pos.y + width*TERRAIN_TILE_PIXEL_EXTENT)/m_alphaEdgeHeight;
 }
 
 /// Get whether something is cliff indexed with the offset that HeightMapRenderObjClass uses built in.
@@ -1656,7 +1763,7 @@ Bool WorldHeightMap::getUVData(Int xIndex, Int yIndex, float U[4], float V[4])
 		float k = 48;
 		nU /= k;
 		xU /= k;
-		k = k*m_terrainTexHeight/TEXTURE_WIDTH;
+		k = k*m_terrainTexHeight/TERRAIN_TEXTURE_WIDTH;
 		nV /= k;
 		xV /= k;
 		U[0] = nU; U[1] = xU; U[2] = xU; U[3] = nU;
@@ -1684,7 +1791,7 @@ Bool WorldHeightMap::getUVForTileIndex(Int ndx, Short tileNdx, float U[4], float
 {
 	Real nU, nV, xU, xV;
 	nU=nV=xU=xV = 0.0f;
-	Int tilesPerRow = TEXTURE_WIDTH/(2*TILE_PIXEL_EXTENT+TILE_OFFSET);
+	Int tilesPerRow = TERRAIN_TEXTURE_WIDTH/(2*TERRAIN_TILE_PIXEL_EXTENT+TERRAIN_TILE_OFFSET);
 	tilesPerRow *= 4;
 
 	if ((ndx<m_dataSize) && m_tileNdxes) {
@@ -1712,10 +1819,10 @@ Bool WorldHeightMap::getUVForTileIndex(Int ndx, Short tileNdx, float U[4], float
 			}
 			if (tilesMatch) {
 				Real minU = m_textureClasses[i].positionInTexture.x;
-				Real maxV = m_textureClasses[i].positionInTexture.y + m_textureClasses[i].width*TILE_PIXEL_EXTENT;
-				minU/=TEXTURE_WIDTH;
+				Real maxV = m_textureClasses[i].positionInTexture.y + m_textureClasses[i].width*TERRAIN_TILE_PIXEL_EXTENT;
+				minU/=TERRAIN_TEXTURE_WIDTH;
 				maxV/=m_terrainTexHeight;
-				Real vFactor = TEXTURE_WIDTH/m_terrainTexHeight;
+				Real vFactor = TERRAIN_TEXTURE_WIDTH/m_terrainTexHeight;
 				U[0] = info.u0+minU;
 				U[1] = info.u1+minU;
 				U[2] = info.u2+minU;
@@ -1744,7 +1851,7 @@ Bool WorldHeightMap::getUVForTileIndex(Int ndx, Short tileNdx, float U[4], float
 
 		Real nU, nV, xU, xV;
 		nU=nV=xU=xV = 0.0f;
-		Int tilesPerRow = TEXTURE_WIDTH/(2*TILE_PIXEL_EXTENT+TILE_OFFSET);
+		Int tilesPerRow = TERRAIN_TEXTURE_WIDTH/(2*TERRAIN_TILE_PIXEL_EXTENT+TERRAIN_TILE_OFFSET);
 		tilesPerRow *= 4;
 
 
@@ -1805,11 +1912,11 @@ Bool WorldHeightMap::getUVForTileIndex(Int ndx, Short tileNdx, float U[4], float
 			Real nUb, nVb, xUb, xVb;
 			nUb = m_textureClasses[texClass].positionInTexture.x;
 			nVb = m_textureClasses[texClass].positionInTexture.y;
-			xUb = nUb+m_textureClasses[texClass].width*TILE_PIXEL_EXTENT;
-			xVb = nVb+m_textureClasses[texClass].width*TILE_PIXEL_EXTENT;
-			nUb/=TEXTURE_WIDTH;
+			xUb = nUb+m_textureClasses[texClass].width*TERRAIN_TILE_PIXEL_EXTENT;
+			xVb = nVb+m_textureClasses[texClass].width*TERRAIN_TILE_PIXEL_EXTENT;
+			nUb/=TERRAIN_TEXTURE_WIDTH;
 			nVb/=m_terrainTexHeight;
-			xUb/=TEXTURE_WIDTH;
+			xUb/=TERRAIN_TEXTURE_WIDTH;
 			xVb/=m_terrainTexHeight;
 			// Now covers texture bounds.
 			// too much stretch.
@@ -2467,32 +2574,32 @@ void WorldHeightMap::setupAlphaTiles()
 
 		Int i, j;
 		UnsignedByte *pDest = pTile->getDataPtr();
-		for (j=0; j<TILE_PIXEL_EXTENT; j++) {
-			for (i=0; i<TILE_PIXEL_EXTENT; i++) {
+		for (j=0; j<TILE_CACHE_PIXEL_EXTENT; j++) {
+			for (i=0; i<TILE_CACHE_PIXEL_EXTENT; i++) {
 				Int h = i;
 				Int v = j;
 				Int alpha = 255;  // 0 - 255.
 				if (blendInfo.horiz) {
-					if (!blendInfo.inverted) h = TILE_PIXEL_EXTENT-h-1;
-					alpha = (alpha*h)/(TILE_PIXEL_EXTENT-1);
+					if (!blendInfo.inverted) h = TILE_CACHE_PIXEL_EXTENT-h-1;
+					alpha = (alpha*h)/(TILE_CACHE_PIXEL_EXTENT-1);
 				} else if (blendInfo.vert) {
-					if (!blendInfo.inverted) v = TILE_PIXEL_EXTENT-v-1;
-					alpha = (alpha*v)/(TILE_PIXEL_EXTENT-1);
+					if (!blendInfo.inverted) v = TILE_CACHE_PIXEL_EXTENT-v-1;
+					alpha = (alpha*v)/(TILE_CACHE_PIXEL_EXTENT-1);
 				} else if (blendInfo.rightDiagonal) {
-					h = TILE_PIXEL_EXTENT-h-1;
-					if (!blendInfo.inverted) v = TILE_PIXEL_EXTENT-v-1;
+					h = TILE_CACHE_PIXEL_EXTENT-h-1;
+					if (!blendInfo.inverted) v = TILE_CACHE_PIXEL_EXTENT-v-1;
 					v += h;				// angled
 					if (blendInfo.longDiagonal) {
-						v -= TILE_PIXEL_EXTENT;
+						v -= TILE_CACHE_PIXEL_EXTENT;
 					}
-					alpha = (alpha*v)/(TILE_PIXEL_EXTENT-1);
+					alpha = (alpha*v)/(TILE_CACHE_PIXEL_EXTENT-1);
 				} else if (blendInfo.leftDiagonal) {
-					if (!blendInfo.inverted) v = TILE_PIXEL_EXTENT-v-1;
+					if (!blendInfo.inverted) v = TILE_CACHE_PIXEL_EXTENT-v-1;
 					v += h;				// angled
 					if (blendInfo.longDiagonal) {
-						v -= TILE_PIXEL_EXTENT;
+						v -= TILE_CACHE_PIXEL_EXTENT;
 					}
-					alpha = (alpha*v)/(TILE_PIXEL_EXTENT-1);
+					alpha = (alpha*v)/(TILE_CACHE_PIXEL_EXTENT-1);
 				}
 
 				if (alpha > 255) alpha = 255;
