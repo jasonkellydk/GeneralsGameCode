@@ -27,6 +27,8 @@
 // Author: Michael S. Booth, April 2001
 
 #include "PreRTS.h"	// This must go first in EVERY cpp file in the GameEngine
+#include <SDL3/SDL.h>
+#include "Platform/SDLPlatformWindow.h"
 
 #include "Common/ActionManager.h"
 #include "Common/AudioAffect.h"
@@ -168,7 +170,6 @@ void initSubsystem(
 }
 
 //-------------------------------------------------------------------------------------------------
-extern HINSTANCE ApplicationHInstance;  ///< our application instance
 extern CComModule _Module;
 
 //-------------------------------------------------------------------------------------------------
@@ -234,12 +235,7 @@ static void updateWindowTitle()
 		AsciiString titleA;
 		titleA.translate(title);	//get ASCII version for Win 9x
 
-		extern HWND ApplicationHWnd;  ///< our application window handle
-		if (ApplicationHWnd) {
-			//Set it twice because Win 9x does not support SetWindowTextW.
-			::SetWindowText(ApplicationHWnd, titleA.str());
-			::SetWindowTextW(ApplicationHWnd, title.str());
-		}
+		SDLPlatformWindow::setTitle(titleA.str());
 	}
 }
 
@@ -251,7 +247,7 @@ GameEngine::GameEngine()
 	m_quitting = FALSE;
 	m_isActive = FALSE;
 
-	_Module.Init(nullptr, ApplicationHInstance, nullptr);
+	SDLPlatformWindow::initializeRuntimeModule();
 }
 
 //-------------------------------------------------------------------------------------------------
@@ -930,7 +926,6 @@ void GameEngine::update()
 
 // Horrible reference, but we really, really need to know if we are windowed.
 extern bool DX8Wrapper_IsWindowed;
-extern HWND ApplicationHWnd;
 
 /** -----------------------------------------------------------------------------------------------
  * The "main loop" of the game engine. It will not return until the game exits.
@@ -938,7 +933,7 @@ extern HWND ApplicationHWnd;
 void GameEngine::execute()
 {
 #if defined(RTS_DEBUG)
-	DWORD startTime = timeGetTime() / 1000;
+	Uint64 startTime = SDL_GetTicks() / 1000;
 #endif
 
 	// pretty basic for now
@@ -959,7 +954,7 @@ void GameEngine::execute()
 				// enter only if in benchmark mode
 				if (TheGlobalData->m_benchmarkTimer > 0)
 				{
-					DWORD currentTime = timeGetTime() / 1000;
+					Uint64 currentTime = SDL_GetTicks() / 1000;
 					if (TheGlobalData->m_benchmarkTimer < currentTime - startTime)
 					{
 						if (TheGameLogic->isInGame())

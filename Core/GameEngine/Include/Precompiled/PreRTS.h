@@ -83,11 +83,15 @@ class STLSpecialAlloc;
 #include <wininet.h>
 #include <winreg.h>
 
+#include <SDL3/SDL.h>
+#define timeGetTime SDL_GetTicks
+#define GetTickCount SDL_GetTicks
+#define Sleep SDL_Delay
+
 #ifndef DIRECTINPUT_VERSION
 #	define DIRECTINPUT_VERSION	0x800
 #endif
 
-#include <dinput.h>
 
 //------------------------------------------------------------------------------------ STL Includes
 // srj sez: no, include STLTypesdefs below, instead, thanks

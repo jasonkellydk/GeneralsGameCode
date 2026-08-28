@@ -28,6 +28,7 @@
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 
 #include "PreRTS.h"	// This must go first in EVERY cpp file in the GameEngine
+#include <SDL3/SDL.h>
 
 #include "Common/AudioAffect.h"
 #include "Common/AudioHandleSpecialValues.h"
@@ -2229,7 +2230,7 @@ void GameLogic::tryStartNewGame( Bool loadingSaveGame )
 	{
 		updateLoadProgress(101); // keep greater then 100
 		testTimeOut();
-		Sleep(100);
+	SDL_Delay(100);
 	}
 
 	// if we're in a load game, don't fade yet
@@ -3247,8 +3248,8 @@ static void unitTimings()
 
 	static Int side = 0;
 
-	static __int64 startTime64;
-	static __int64 endTime64,freq64;
+	static Uint64 startTime64;
+	static Uint64 endTime64,freq64;
 	static int drawCallTotal;
 	static enum { LOGIC, NO_PARTICLES, NO_SPAWN, ALL} mode;
 	static double timeAll, timeAllNoAnim, timeNoPart, timeNoSpawn, timeLogic, timeLogicNoAnim;
@@ -3258,8 +3259,8 @@ static void unitTimings()
 		settleFrames--;
 		if (settleFrames>0) return;
 
-		QueryPerformanceCounter((LARGE_INTEGER *)&startTime64);
-		QueryPerformanceFrequency((LARGE_INTEGER *)&freq64);
+		startTime64 = SDL_GetPerformanceCounter();
+		freq64 = SDL_GetPerformanceFrequency();
 		timeFrames = TIME_FRAMES;
 
 		// reset the draw counter
@@ -3271,7 +3272,7 @@ static void unitTimings()
 		timeFrames--;
 		if (timeFrames>0) return;
 
-		QueryPerformanceCounter((LARGE_INTEGER *)&endTime64);
+		endTime64 = SDL_GetPerformanceCounter();
 		double timeToUpdate = ((double)(endTime64-startTime64) / (double)(freq64));
 
 //		Real timeToUpdateMicrosec = timeToUpdate*1E6/(TIME_FRAMES * TOTAL_UNITS);

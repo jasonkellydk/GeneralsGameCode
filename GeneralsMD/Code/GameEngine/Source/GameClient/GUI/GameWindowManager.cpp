@@ -31,6 +31,8 @@
 
 #include "PreRTS.h"	// This must go first in EVERY cpp file in the GameEngine
 
+#include <vector>
+
 #include "Common/Debug.h"
 #include "Common/Language.h"
 #include "GameClient/Display.h"
@@ -71,6 +73,37 @@ UnsignedInt WindowLayoutCurrentVersion = 2;
 // the radar cursor
 //
 static Bool sendMousePosMessages = TRUE;
+
+struct WindowSizeSnapshot
+{
+	GameWindow *window;
+	Int x;
+	Int y;
+	Int width;
+	Int height;
+	GameFont *font;
+};
+
+static Int scaleWindowValue(Int value, Real scale)
+{
+	const Real scaled = static_cast<Real>(value) * scale;
+	return scaled >= 0.0f ? static_cast<Int>(scaled + 0.5f) : static_cast<Int>(scaled - 0.5f);
+}
+
+static void collectWindowSizeSnapshots(GameWindow *window, std::vector<WindowSizeSnapshot> &snapshots)
+{
+	for (GameWindow *current = window; current != nullptr; current = current->winGetNext())
+	{
+		WindowSizeSnapshot snapshot;
+		snapshot.window = current;
+		current->winGetPosition(&snapshot.x, &snapshot.y);
+		current->winGetSize(&snapshot.width, &snapshot.height);
+		snapshot.font = current->winGetFont();
+		snapshots.push_back(snapshot);
+
+		collectWindowSizeSnapshots(current->winGetChild(), snapshots);
+	}
+}
 
 //-------------------------------------------------------------------------------------------------
 /** Process windows waiting to be destroyed */
@@ -685,6 +718,56 @@ GameWindow *GameWindowManager::winGetWindowList()
 
 	return m_windowList;
 
+}
+
+//-------------------------------------------------------------------------------------------------
+/** Scale the active window tree without rebuilding any windows or layouts. */
+//-------------------------------------------------------------------------------------------------
+void GameWindowManager::winScaleToResolution( UnsignedInt oldWidth, UnsignedInt oldHeight,
+	UnsignedInt newWidth, UnsignedInt newHeight )
+{
+	if (oldWidth == 0 || oldHeight == 0 || newWidth == 0 || newHeight == 0 ||
+		(oldWidth == newWidth && oldHeight == newHeight))
+	{
+		return;
+	}
+
+	const Real scaleX = static_cast<Real>(newWidth) / static_cast<Real>(oldWidth);
+	const Real scaleY = static_cast<Real>(newHeight) / static_cast<Real>(oldHeight);
+	std::vector<WindowSizeSnapshot> snapshots;
+	for (GameWindow *window = m_windowList; window != nullptr; window = window->winGetNext())
+		collectWindowSizeSnapshots(window, snapshots);
+
+	// Take the snapshot first. Resize messages from a parent gadget are allowed
+	// to adjust its children, but those children must still end at the scaled
+	// coordinates captured from the pre-resize layout.
+	for (const WindowSizeSnapshot &snapshot : snapshots)
+	{
+		const Int x = scaleWindowValue(snapshot.x, scaleX);
+		const Int y = scaleWindowValue(snapshot.y, scaleY);
+		const Int width = scaleWindowValue(snapshot.width, scaleX);
+		const Int height = scaleWindowValue(snapshot.height, scaleY);
+		snapshot.window->winSetPosition(x, y);
+		snapshot.window->winSetSize(width, height);
+
+		// Fonts are part of the live window state rather than the layout
+		// geometry. Replace the font object so every existing gadget and its
+		// display strings use the new point size without rebuilding the window.
+		if (TheFontLibrary != nullptr && snapshot.font != nullptr && snapshot.font->pointSize > 0)
+		{
+			Int pointSize = scaleWindowValue(snapshot.font->pointSize, scaleY);
+			if (pointSize < 1)
+				pointSize = 1;
+
+			if (pointSize != snapshot.font->pointSize)
+			{
+				GameFont *font = TheFontLibrary->getFont(snapshot.font->nameString,
+					pointSize, snapshot.font->bold);
+				if (font != nullptr)
+					snapshot.window->winSetFont(font);
+			}
+		}
+	}
 }
 
 //-------------------------------------------------------------------------------------------------

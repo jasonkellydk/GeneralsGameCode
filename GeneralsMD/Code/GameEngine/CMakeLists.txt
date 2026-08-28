@@ -781,6 +781,7 @@ set(GAMEENGINE_SRC
 #    Source/GameClient/GUI/GUICallbacks/ReplayControls.cpp
 #    Source/GameClient/GUI/HeaderTemplate.cpp
 #    Source/GameClient/GUI/IMEManager.cpp
+    Source/GameClient/GUI/SDL3IMEManager.cpp
 #    Source/GameClient/GUI/LoadScreen.cpp
 #    Source/GameClient/GUI/ProcessAnimateWindow.cpp
 #    Source/GameClient/GUI/Shell/Shell.cpp
@@ -1150,10 +1151,17 @@ endif()
 
 add_library(z_gameengine STATIC)
 
-target_sources(z_gameengine PRIVATE ${GAMEENGINE_SRC})
+target_sources(z_gameengine PRIVATE
+    ${GAMEENGINE_SRC}
+    ../../../Core/GameEngineDevice/Source/SDL3Device/Common/SDL3GameEngine.cpp
+    ../../../Generals/Code/Main/Platform/SDLPlatformWindow.cpp
+)
 
 target_include_directories(z_gameengine PUBLIC
     Include
+    ../../../Generals/Code/Main
+    ../../../Core/GameEngineDevice/Include
+    ../GameEngineDevice/Include
 )
 
 target_include_directories(z_gameengine PRIVATE
@@ -1163,6 +1171,7 @@ target_include_directories(z_gameengine PRIVATE
 target_link_libraries(z_gameengine PRIVATE
     corei_gameengine_private
     zi_always
+    SDL3::SDL3
 )
 
 target_link_libraries(z_gameengine PUBLIC

@@ -22,7 +22,7 @@
 
 namespace rts
 {
-HANDLE ClientInstance::s_mutexHandle = nullptr;
+SDL_Mutex *ClientInstance::s_mutexHandle = nullptr;
 UnsignedInt ClientInstance::s_instanceIndex = 0;
 
 #if defined(RTS_MULTI_INSTANCE)
@@ -38,50 +38,10 @@ bool ClientInstance::initialize()
 		return true;
 	}
 
-	// Create a mutex with a unique name to Generals in order to determine if our app is already running.
-	// WARNING: DO NOT use this number for any other application except Generals.
-	while (true)
-	{
-		if (isMultiInstance())
-		{
-			std::string guidStr = getFirstInstanceName();
-			if (s_instanceIndex > 0u)
-			{
-				char idStr[33];
-				itoa(s_instanceIndex, idStr, 10);
-				guidStr.push_back('-');
-				guidStr.append(idStr);
-			}
-			s_mutexHandle = CreateMutex(nullptr, FALSE, guidStr.c_str());
-			if (GetLastError() == ERROR_ALREADY_EXISTS)
-			{
-				if (s_mutexHandle != nullptr)
-				{
-					CloseHandle(s_mutexHandle);
-					s_mutexHandle = nullptr;
-				}
-				// Try again with a new instance.
-				++s_instanceIndex;
-				continue;
-			}
-		}
-		else
-		{
-			s_mutexHandle = CreateMutex(nullptr, FALSE, getFirstInstanceName());
-			if (GetLastError() == ERROR_ALREADY_EXISTS)
-			{
-				if (s_mutexHandle != nullptr)
-				{
-					CloseHandle(s_mutexHandle);
-					s_mutexHandle = nullptr;
-				}
-				return false;
-			}
-		}
-		break;
-	}
-
-	return true;
+	// SDL mutexes are process-local; multi-instance behavior is delegated to
+	// SDLPlatformWindow's native-instance restoration boundary when required.
+	s_mutexHandle = SDL_CreateMutex();
+	return s_mutexHandle != nullptr;
 }
 
 bool ClientInstance::isInitialized()

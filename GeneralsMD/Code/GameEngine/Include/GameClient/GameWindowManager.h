@@ -217,6 +217,11 @@ public:
 	virtual Int winDestroyAll();  ///< destroy all windows in the system
 	virtual GameWindow *winGetWindowList();  ///< get head of master list
 
+	/// Scale the existing window tree after the drawable resolution changes.
+	/// This keeps window state and callbacks alive while updating layout geometry.
+	virtual void winScaleToResolution( UnsignedInt oldWidth, UnsignedInt oldHeight,
+		UnsignedInt newWidth, UnsignedInt newHeight );
+
 	/// hide all windows in a certain range of id's (inclusive );
 	virtual void hideWindowsInRange( GameWindow *baseWindow, Int first, Int last,
 																	 Bool hideFlag );

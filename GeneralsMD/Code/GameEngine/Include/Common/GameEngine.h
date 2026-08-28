@@ -71,7 +71,7 @@ public:
 	virtual Bool getQuitting();						///< is app getting ready to quit.
 
 	virtual Bool isMultiplayerSession();
-	virtual void serviceWindowsOS() {};		///< service the native OS
+	virtual void serviceSDL3() {};
 	virtual Bool isActive() {return m_isActive;}	///< returns whether app has OS focus.
 	virtual void setIsActive(Bool isActive) { m_isActive = isActive; };
 

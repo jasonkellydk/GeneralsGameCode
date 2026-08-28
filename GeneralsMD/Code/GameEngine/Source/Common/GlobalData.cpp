@@ -845,7 +845,7 @@ GlobalData::GlobalData()
 
 	m_particleEdit = FALSE;
 
-	m_viewportHeightScale = 0.80f; // Default value for the original Control Bar.
+	m_viewportHeightScale = 1.0f; // SDL3 uses the full tactical viewport; an explicit ViewportHeightScale can still override it.
 
 	m_cameraPitch = 0.0f;
 	m_cameraYaw = 0.0f;

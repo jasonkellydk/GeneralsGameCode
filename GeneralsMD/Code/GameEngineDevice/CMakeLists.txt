@@ -78,14 +78,6 @@ set(GAMEENGINEDEVICE_SRC
     Include/W3DDevice/GameLogic/W3DGameLogic.h
     Include/W3DDevice/GameLogic/W3DGhostObject.h
     Include/W3DDevice/GameLogic/W3DTerrainLogic.h
-#    Include/Win32Device/Common/Win32BIGFile.h
-#    Include/Win32Device/Common/Win32BIGFileSystem.h
-#    Include/Win32Device/Common/Win32GameEngine.h
-#    Include/Win32Device/Common/Win32LocalFile.h
-#    Include/Win32Device/Common/Win32LocalFileSystem.h
-#    Include/Win32Device/GameClient/Win32DIKeyboard.h
-#    Include/Win32Device/GameClient/Win32DIMouse.h
-#    Include/Win32Device/GameClient/Win32Mouse.h
 #    Source/W3DDevice/Common/System/W3DFunctionLexicon.cpp
 #    Source/W3DDevice/Common/System/W3DRadar.cpp
 #    Source/W3DDevice/Common/Thing/W3DModuleFactory.cpp
@@ -175,23 +167,17 @@ set(GAMEENGINEDEVICE_SRC
     Source/W3DDevice/GameLogic/W3DGameLogic.cpp
     Source/W3DDevice/GameLogic/W3DGhostObject.cpp
     Source/W3DDevice/GameLogic/W3DTerrainLogic.cpp
-#    Source/Win32Device/Common/Win32BIGFile.cpp
-#    Source/Win32Device/Common/Win32BIGFileSystem.cpp
-#    Source/Win32Device/Common/Win32GameEngine.cpp
-#    Source/Win32Device/Common/Win32LocalFile.cpp
-#    Source/Win32Device/Common/Win32LocalFileSystem.cpp
-#    Source/Win32Device/Common/Win32OSDisplay.cpp
-#    Source/Win32Device/GameClient/Win32DIKeyboard.cpp
-#    #Source/Win32Device/GameClient/Win32DIMouse.cpp
-#    Source/Win32Device/GameClient/Win32Mouse.cpp
 )
 
 add_library(z_gameenginedevice STATIC)
 
-target_sources(z_gameenginedevice PRIVATE ${GAMEENGINEDEVICE_SRC})
+target_sources(z_gameenginedevice PRIVATE
+    ${GAMEENGINEDEVICE_SRC}
+)
 
 target_include_directories(z_gameenginedevice PUBLIC
     Include
+    ../../../Generals/Code/Main
 )
 
 target_precompile_headers(z_gameenginedevice PRIVATE
@@ -200,7 +186,6 @@ target_precompile_headers(z_gameenginedevice PRIVATE
     [["Common/SubsystemInterface.h"]]
     [["WWLib/INI.h"]]
     [["WWLib/WWCommon.h"]]
-    <windows.h>
 )
 
 target_link_libraries(z_gameenginedevice PRIVATE
@@ -208,6 +193,7 @@ target_link_libraries(z_gameenginedevice PRIVATE
     zi_always
     zi_main
     stb
+    SDL3::SDL3
 )
 
 target_link_libraries(z_gameenginedevice PUBLIC

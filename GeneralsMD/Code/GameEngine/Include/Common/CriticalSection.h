@@ -29,6 +29,7 @@
 #pragma once
 
 #include "Common/PerfTimer.h"
+#include <mutex>
 
 #ifdef PERF_TIMERS
 extern PerfGather TheCritSecPerfGather;
@@ -36,7 +37,7 @@ extern PerfGather TheCritSecPerfGather;
 
 class CriticalSection
 {
-	CRITICAL_SECTION m_windowsCriticalSection;
+	std::recursive_mutex m_sdl3Mutex;
 
 	public:
 		CriticalSection()
@@ -44,7 +45,7 @@ class CriticalSection
 			#ifdef PERF_TIMERS
 			AutoPerfGather a(TheCritSecPerfGather);
 			#endif
-			InitializeCriticalSection( &m_windowsCriticalSection );
+			// std::recursive_mutex matches the legacy critical-section reentrancy.
 		}
 
 		virtual ~CriticalSection()
@@ -52,7 +53,6 @@ class CriticalSection
 			#ifdef PERF_TIMERS
 			AutoPerfGather a(TheCritSecPerfGather);
 			#endif
-			DeleteCriticalSection( &m_windowsCriticalSection );
 		}
 
 	public:	// Use these when entering/exiting a critical section.
@@ -61,7 +61,7 @@ class CriticalSection
 			#ifdef PERF_TIMERS
 			AutoPerfGather a(TheCritSecPerfGather);
 			#endif
-			EnterCriticalSection( &m_windowsCriticalSection );
+			m_sdl3Mutex.lock();
 		}
 
 		void exit()
@@ -69,7 +69,7 @@ class CriticalSection
 			#ifdef PERF_TIMERS
 			AutoPerfGather a(TheCritSecPerfGather);
 			#endif
-			LeaveCriticalSection( &m_windowsCriticalSection );
+			m_sdl3Mutex.unlock();
 		}
 };
 

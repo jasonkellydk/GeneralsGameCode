@@ -1073,8 +1073,7 @@ void WaterTracksRenderSystem::loadTracks()
 /**@todo: this is a quick hack for adding/removing/testing breaking waves inside the client.
 Will need to move this code to an external editor at some pont. */
 #include "GameClient/Display.h"
-
-extern HWND ApplicationHWnd;
+#include <SDL3/SDL.h>
 
 //TODO: Fix editor so it actually draws the wave segment instead of line while editing
 //Could freeze all the water while editing?  Or keep setting elapsed time on current segment.
@@ -1116,7 +1115,8 @@ void TestWaterUpdate()
 //		track->init(1.5f,8.0f,Vector2(139.0f,66.0f),Vector2(138.8f,67.6f),"wave2.tga");
 	}
 
-	if (GetAsyncKeyState(VK_F5) & 0x8001)	//check if F5 pressed since last call
+	const bool *keyboardState = SDL_GetKeyboardState(nullptr);
+	if (keyboardState[SDL_SCANCODE_F5])
 	{
 		if (trackEditModeReset)
 		{
@@ -1152,11 +1152,14 @@ void TestWaterUpdate()
 	if (trackEditMode)
 	{   //we are in wave edit mode
 
-		if (GetCursorPos(&screenPoint))	//read mouse position
+		if (SDL_GetMouseState(nullptr, nullptr) >= 0)	//read mouse position
 		{
-			ScreenToClient( ApplicationHWnd, &screenPoint);
+			float mouseX = 0.0f, mouseY = 0.0f;
+			SDL_GetMouseState(&mouseX, &mouseY);
+			screenPoint.x = static_cast<LONG>(mouseX);
+			screenPoint.y = static_cast<LONG>(mouseY);
 
-			if (GetAsyncKeyState(VK_F6) & 0x8001)
+			if (keyboardState[SDL_SCANCODE_F6])
 			{
 				if (addPointReset)
 				{
@@ -1216,7 +1219,7 @@ void TestWaterUpdate()
 			else
 				addPointReset=1;
 
-			if (GetAsyncKeyState(VK_DELETE) & 0x8001)
+			if (keyboardState[SDL_SCANCODE_DELETE])
 			{	//delete last segment added
 				if (deleteTrackReset && track)
 				{	deleteTrackReset=0;
@@ -1232,7 +1235,7 @@ void TestWaterUpdate()
 			else
 				deleteTrackReset=1;
 
-			if (GetAsyncKeyState(VK_INSERT) & 0x8001)
+			if (keyboardState[SDL_SCANCODE_INSERT])
 			{	//change current wave type
 				if (changeTypeReset)
 				{	changeTypeReset=0;
@@ -1248,7 +1251,7 @@ void TestWaterUpdate()
 			else
 				changeTypeReset=1;
 
-			if (GetAsyncKeyState(VK_F7) & 0x8001)
+			if (keyboardState[SDL_SCANCODE_F7])
 			{	//save all segments added
 				if (saveTracksReset)
 				{	saveTracksReset=0;
@@ -1265,7 +1268,7 @@ void TestWaterUpdate()
 			else
 				saveTracksReset=1;
 
-			if (GetAsyncKeyState(VK_F8) & 0x8001)
+			if (keyboardState[SDL_SCANCODE_F8])
 			{	//load tracks for map
 				if (loadTracksReset)
 				{	loadTracksReset=0;

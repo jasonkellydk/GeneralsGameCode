@@ -709,6 +709,11 @@ public:
 	void setFullViewportHeight();
 	void setScaledViewportHeight();
 
+	/// Update the live control bar after the drawable display resolution changes.
+	/// Existing windows and the current selection/context remain intact.
+	void onDisplaySizeChanged( UnsignedInt oldWidth, UnsignedInt oldHeight,
+		UnsignedInt newWidth, UnsignedInt newHeight );
+
 	/// set the control bar to the proper scheme based off a player template that's passed in
 	ControlBarSchemeManager *getControlBarSchemeManager() { return m_controlBarSchemeManager; }
 	void setControlBarSchemeByPlayer(Player *p);

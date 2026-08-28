@@ -66,6 +66,7 @@
 #include "GameClient/GameText.h"
 #include "GameClient/Keyboard.h"
 #include "GameClient/Mouse.h"
+#include "Platform/SDLPlatformWindow.h"
 #if defined(DEBUG_STACKTRACE) || defined(IG_DEBUG_STACKTRACE)
 	#include "Common/StackDump.h"
 #endif
@@ -75,7 +76,6 @@
 
 // Horrible reference, but we really, really need to know if we are windowed.
 extern bool DX8Wrapper_IsWindowed;
-extern HWND ApplicationHWnd;
 
 extern const char *gAppPrefix; /// So WB can have a different log file name.
 
@@ -164,17 +164,13 @@ inline Bool ignoringAsserts()
 }
 
 // ----------------------------------------------------------------------------
-inline HWND getThreadHWND()
-{
-	return (theMainThreadID == GetCurrentThreadId())?ApplicationHWnd:nullptr;
-}
-
-// ----------------------------------------------------------------------------
-
 int MessageBoxWrapper( LPCSTR lpText, LPCSTR lpCaption, UINT uType )
 {
-	HWND threadHWND = getThreadHWND();
-	return ::MessageBox(threadHWND, lpText, lpCaption, uType);
+	if ((uType & MB_YESNO) == MB_YESNO)
+		return SDLPlatformWindow::showMessageBox(lpText, lpCaption, 2);
+	if ((uType & MB_ABORTRETRYIGNORE) == MB_ABORTRETRYIGNORE)
+		return SDLPlatformWindow::showMessageBox(lpText, lpCaption, 3);
+	return SDLPlatformWindow::showMessageBox(lpText, lpCaption, 1);
 }
 
 // ----------------------------------------------------------------------------
@@ -750,9 +746,7 @@ void ReleaseCrash(const char *reason)
 	/// do additional reporting on the crash, if possible
 
 	if (!DX8Wrapper_IsWindowed) {
-		if (ApplicationHWnd) {
-			ShowWindow(ApplicationHWnd, SW_HIDE);
-		}
+		SDLPlatformWindow::hide();
 	}
 
 	TriggerMiniDump();
@@ -800,9 +794,7 @@ void ReleaseCrash(const char *reason)
 	}
 
 	if (!DX8Wrapper_IsWindowed) {
-		if (ApplicationHWnd) {
-			ShowWindow(ApplicationHWnd, SW_HIDE);
-		}
+		SDLPlatformWindow::hide();
 	}
 
 #if defined(RTS_DEBUG)
@@ -810,7 +802,7 @@ void ReleaseCrash(const char *reason)
 	snprintf(buff, 8192, "Sorry, a serious error occurred. (%s)", reason);
 	if (!(TheGlobalData && TheGlobalData->m_headless))
 	{
-		::MessageBox(nullptr, buff, "Technical Difficulties...", MB_OK|MB_SYSTEMMODAL|MB_ICONERROR);
+		MessageBoxWrapper(buff, "Technical Difficulties...", MB_OK|MB_SYSTEMMODAL|MB_ICONERROR);
 	}
 #else
 // crash error messaged changed 3/6/03 BGC
@@ -820,7 +812,7 @@ void ReleaseCrash(const char *reason)
 // crash error message changed again 8/22/03 M Lorenzen... made this message box modal to the system so it will appear on top of any task-modal windows, splash-screen, etc.
 	if (!(TheGlobalData && TheGlobalData->m_headless))
 	{
-		::MessageBox(nullptr, "You have encountered a serious error.  Serious errors can be caused by many things including viruses, overheated hardware and hardware that does not meet the minimum specifications for the game. Please visit the forums at www.generals.ea.com for suggested courses of action or consult your manual for Technical Support contact information.",
+		MessageBoxWrapper("You have encountered a serious error.  Serious errors can be caused by many things including viruses, overheated hardware and hardware that does not meet the minimum specifications for the game. Please visit the forums at www.generals.ea.com for suggested courses of action or consult your manual for Technical Support contact information.",
 			"Technical Difficulties...",
 			MB_OK|MB_SYSTEMMODAL|MB_ICONERROR);
 	}
@@ -848,14 +840,16 @@ void ReleaseCrashLocalized(const AsciiString& p, const AsciiString& m)
 	/// do additional reporting on the crash, if possible
 
 	if (!DX8Wrapper_IsWindowed) {
-		if (ApplicationHWnd) {
-			ShowWindow(ApplicationHWnd, SW_HIDE);
-		}
+		SDLPlatformWindow::hide();
 	}
 
 	if (!(TheGlobalData && TheGlobalData->m_headless))
 	{
-		::MessageBoxW(nullptr, mesg.str(), prompt.str(), MB_OK | MB_SYSTEMMODAL | MB_ICONERROR);
+		AsciiString messageA;
+		messageA.translate(mesg);
+		AsciiString promptA;
+		promptA.translate(prompt);
+		MessageBoxWrapper(messageA.str(), promptA.str(), MB_OK | MB_SYSTEMMODAL | MB_ICONERROR);
 	}
 
 	char prevbuf[ _MAX_PATH ];

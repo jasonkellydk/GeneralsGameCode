@@ -36,7 +36,8 @@ static void drawFramerateBar();
 // SYSTEM INCLUDES ////////////////////////////////////////////////////////////
 #include <numeric>
 #include <stdlib.h>
-#include <windows.h>
+#include "Platform/SDLPlatformWindow.h"
+#include <SDL3/SDL.h>
 #include <io.h>
 #include <time.h>
 
@@ -109,7 +110,6 @@ static void drawFramerateBar();
 #include "GameLogic/PartitionManager.h"
 #endif
 
-#include "WinMain.h"
 
 
 // DEFINE AND ENUMS ///////////////////////////////////////////////////////////
@@ -147,14 +147,10 @@ protected:
 //=============================================================================
 StatDumpClass::StatDumpClass( const char *fname )
 {
-	char buffer[ _MAX_PATH ];
-	GetModuleFileName( nullptr, buffer, sizeof( buffer ) );
-	if (char *pEnd = strrchr(buffer, '\\'))
-	{
-		*pEnd = 0;
-	}
+	const char *basePath = SDL_GetBasePath();
+	const char *path = basePath != nullptr ? basePath : "";
 	// TheSuperHackers @fix Caball009 03/06/2025 Don't use AsciiString here anymore because its memory allocator may not have been initialized yet.
-	const std::string fullPath = std::string(buffer) + "\\" + fname;
+	const std::string fullPath = std::string(path) + fname;
 	m_fp = fopen(fullPath.c_str(), "wt");
 }
 
@@ -551,6 +547,35 @@ void W3DDisplay::setGamma(Real gamma, Real bright, Real contrast, Bool calibrate
 	DX8Wrapper::Set_Gamma(gamma,bright,contrast,calibrate, false);
 }
 
+static void resizeSDLWindow(UnsignedInt xres, UnsignedInt yres, Bool windowed)
+{
+	SDL_Window *window = static_cast<SDL_Window *>(SDLPlatformWindow::window());
+	if (window == nullptr || !windowed ||
+		(SDL_GetWindowFlags(window) & SDL_WINDOW_FULLSCREEN) != 0)
+		return;
+
+	int pixelWidth = 0;
+	int pixelHeight = 0;
+	if (!SDL_GetWindowSizeInPixels(window, &pixelWidth, &pixelHeight))
+		return;
+
+	if (pixelWidth == static_cast<int>(xres) && pixelHeight == static_cast<int>(yres))
+		return;
+
+	// SDL window coordinates are logical points. The renderer resolution is in
+	// drawable pixels, so convert before asking SDL to resize a high-DPI window.
+	float displayScale = SDL_GetWindowDisplayScale(window);
+	if (displayScale <= 0.0f)
+		displayScale = 1.0f;
+	const int windowWidth = static_cast<int>(static_cast<float>(xres) / displayScale + 0.5f);
+	const int windowHeight = static_cast<int>(static_cast<float>(yres) / displayScale + 0.5f);
+	if (windowWidth <= 0 || windowHeight <= 0)
+		return;
+
+	if (SDL_SetWindowSize(window, windowWidth, windowHeight))
+		SDL_SyncWindow(window);
+}
+
 /** Set resolution of display */
 //=============================================================================
 Bool W3DDisplay::setDisplayMode( UnsignedInt xres, UnsignedInt yres, UnsignedInt bitdepth, Bool windowed )
@@ -559,8 +584,17 @@ Bool W3DDisplay::setDisplayMode( UnsignedInt xres, UnsignedInt yres, UnsignedInt
 	const UnsignedInt oldHeight = getHeight();
 	const UnsignedInt oldBitDepth = getBitDepth();
 	const Bool oldWindowed = getWindowed();
+	SDL_Window *window = static_cast<SDL_Window *>(SDLPlatformWindow::window());
+	const Bool actualWindowed = window != nullptr ?
+		((SDL_GetWindowFlags(window) & SDL_WINDOW_FULLSCREEN) == 0 ? TRUE : FALSE) : oldWindowed;
 
-	if (WW3D_ERROR_OK == WW3D::Set_Device_Resolution(xres,yres,bitdepth,windowed,true))
+	// SDL owns the native window size. Resize it in logical coordinates first,
+	// then reset only the D3D back buffer. Passing resize_window=true here would
+	// invoke the legacy renderer's native SetWindowPos path and could undo SDL's
+	// fullscreen/windowed style transition.
+	resizeSDLWindow(xres, yres, windowed);
+	if (WW3D_ERROR_OK == WW3D::Set_Render_Device(
+		WW3D::Get_Render_Device(), xres, yres, bitdepth, windowed, false, true, true))
 	{
 		Render2DClass::Set_Screen_Resolution(RectClass(0, 0, xres, yres));
 		Display::setDisplayMode(xres, yres, bitdepth, windowed);
@@ -568,9 +602,12 @@ Bool W3DDisplay::setDisplayMode( UnsignedInt xres, UnsignedInt yres, UnsignedInt
 	}
 
 	//set back to the original mode.
-	WW3D::Set_Device_Resolution(oldWidth, oldHeight, oldBitDepth, oldWindowed, true);
+	resizeSDLWindow(oldWidth, oldHeight, actualWindowed);
+	WW3D::Set_Render_Device(
+		WW3D::Get_Render_Device(), oldWidth, oldHeight, oldBitDepth, actualWindowed,
+		false, true, true);
 	Render2DClass::Set_Screen_Resolution(RectClass(0, 0, oldWidth, oldHeight));
-	Display::setDisplayMode(oldWidth, oldHeight, oldBitDepth, oldWindowed);
+	Display::setDisplayMode(oldWidth, oldHeight, oldBitDepth, actualWindowed);
 	return FALSE;	//did not change to a new mode.
 }
 
@@ -818,7 +855,7 @@ void W3DDisplay::init()
 		{
 			SortingRendererClass::SetMinVertexBufferSize(1);
 		}
-		if (WW3D::Init( ApplicationHWnd ) != WW3D_ERROR_OK)
+		if (WW3D::Init( SDLPlatformWindow::nativeHandle() ) != WW3D_ERROR_OK)
 			throw ERROR_INVALID_D3D;	//failed to initialize.  User probably doesn't have DX 8.1
 
 		WW3D::Set_Prelit_Mode( WW3D::PRELIT_MODE_LIGHTMAP_MULTI_PASS );
@@ -883,13 +920,14 @@ void W3DDisplay::init()
 			// TheSuperHackers @feature Mauller 13/03/2026 Add native MSAA support, must be set before creating render device
 			WW3D::Set_MSAA_Mode((WW3D::MultiSampleModeEnum)TheWritableGlobalData->m_antiAliasLevel);
 
+			resizeSDLWindow(getWidth(), getHeight(), getWindowed());
 			renderDeviceError = WW3D::Set_Render_Device(
 				0,
 				getWidth(),
 				getHeight(),
 				getBitDepth(),
 				getWindowed(),
-				true );
+				false );
 
 			// TheSuperHackers @info Update the MSAA mode that was set as some GPU's may not support certain levels
 			// Texture filtering must also be updated after render device initialization
@@ -1796,8 +1834,7 @@ void W3DDisplay::draw()
 {
 	//USE_PERF_TIMER(W3DDisplay_draw)
 
-	extern HWND ApplicationHWnd;
-	if (ApplicationHWnd && ::IsIconic(ApplicationHWnd)) {
+	if (SDLPlatformWindow::isMinimized()) {
 		return;
 	}
 
