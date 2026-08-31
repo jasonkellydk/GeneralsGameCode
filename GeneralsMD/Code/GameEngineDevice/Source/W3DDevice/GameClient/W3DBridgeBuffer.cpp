@@ -49,7 +49,7 @@
 #include "W3DDevice/GameClient/W3DBridgeBuffer.h"
 
 #include "W3DDevice/GameClient/W3DAssetManager.h"
-#include <WW3D2/texture.h>
+#include <WW3D2/Texture.h>
 #include "Common/GlobalData.h"
 #include "Common/RandomValue.h"
 #include "Common/ThingFactory.h"
@@ -64,13 +64,15 @@
 #include "W3DDevice/GameClient/Module/W3DModelDraw.h"
 #include "W3DDevice/GameClient/W3DShaderManager.h"
 #include "W3DDevice/GameClient/W3DShroud.h"
-#include "WW3D2/camera.h"
-#include "WW3D2/dx8wrapper.h"
-#include "WW3D2/ww3d.h"
-#include "WW3D2/dx8renderer.h"
-#include "WW3D2/mesh.h"
-#include "WW3D2/meshmdl.h"
-#include "WW3D2/scene.h"
+#include "WW3D2/Camera.h"
+#include "WW3D2/VertexFormat.h"
+#include "WW3D2/WW3D.h"
+#include "WW3D2/Backend/IRenderBackend.h"
+#include "WW3D2/Mesh.h"
+#include "WW3D2/MeshMdl.h"
+#include "WW3D2/Scene.h"
+#include "WW3D2/StringUtilities.h"
+#include <string>
 
 
 //-----------------------------------------------------------------------------
@@ -132,9 +134,14 @@ are already set.  */
 void W3DBridge::renderBridge(Bool wireframe)
 {
 	if (m_visible && m_numPolygons && m_numVertex) {
-		if (!wireframe) WW3D::Get_Render_Backend()->Set_Texture(0,m_bridgeTexture);
+		IRenderBackend *backend = WW3D::Get_Render_Backend();
+		if (backend == nullptr) {
+			return;
+		}
+		if (!wireframe) backend->Set_Texture(0,m_bridgeTexture);
 		// Draw all the bridges.
-		WW3D::Get_Render_Backend()->Draw_Triangles(	m_firstIndex, m_numPolygons, m_firstVertex,	m_numVertex);
+		backend->Draw_Indexed_Primitives(RenderBackendPrimitiveType::TriangleList,
+			0, m_firstVertex, m_numVertex, m_firstIndex, m_numPolygons);
 	}
 }
 
@@ -197,8 +204,8 @@ Bool W3DBridge::load(BodyDamageType curDamageState)
 	REF_PTR_RELEASE(m_rightMesh);
 
 	Real scale, width, length;
-	char textureFile[_MAX_PATH] = "No Texture";
-	char modelName[_MAX_PATH] = "BRIDGESECTIONAL";
+	std::string textureFile = "No Texture";
+	std::string modelName = "BRIDGESECTIONAL";
 
 	/// @todo, should these be defaults in INI??? CBD
 	scale = 0.7f;
@@ -214,60 +221,50 @@ Bool W3DBridge::load(BodyDamageType curDamageState)
 		default: return false;
 
 		case 	BODY_PRISTINE:
-			strlcpy(textureFile, bridge->getTexture().str(), ARRAY_SIZE(textureFile));
-			strlcpy(modelName, bridge->getBridgeModel().str(), ARRAY_SIZE(modelName));
+			textureFile = bridge->getTexture().str();
+			modelName = bridge->getBridgeModel().str();
 			break;
 		case BODY_DAMAGED:
-			strlcpy(textureFile, bridge->getTextureDamaged().str(), ARRAY_SIZE(textureFile));
-			strlcpy(modelName, bridge->getBridgeModelNameDamaged().str(), ARRAY_SIZE(modelName));
+			textureFile = bridge->getTextureDamaged().str();
+			modelName = bridge->getBridgeModelNameDamaged().str();
 			break;
 		case BODY_REALLYDAMAGED:
-			strlcpy(textureFile, bridge->getTextureReallyDamaged().str(), ARRAY_SIZE(textureFile));
-			strlcpy(modelName, bridge->getBridgeModelNameReallyDamaged().str(), ARRAY_SIZE(modelName));
+			textureFile = bridge->getTextureReallyDamaged().str();
+			modelName = bridge->getBridgeModelNameReallyDamaged().str();
 			break;
 		case BODY_RUBBLE:
-			strlcpy(textureFile, bridge->getTextureBroken().str(), ARRAY_SIZE(textureFile));
-			strlcpy(modelName, bridge->getBridgeModelNameBroken().str(), ARRAY_SIZE(modelName));
+			textureFile = bridge->getTextureBroken().str();
+			modelName = bridge->getBridgeModelNameBroken().str();
 			break;
 	}
 
 	WW3DAssetManager *pMgr = W3DAssetManager::Get_Instance();
-	char left[_MAX_PATH];
-	char section[_MAX_PATH];
-	char right[_MAX_PATH];
+	std::string left = modelName + ".BRIDGE_LEFT";
+	std::string section = modelName + ".BRIDGE_SPAN";
+	std::string right = modelName + ".BRIDGE_RIGHT";
 
-	static_assert(ARRAY_SIZE(left) >= ARRAY_SIZE(modelName), "Incorrect array size");
-	static_assert(ARRAY_SIZE(section) >= ARRAY_SIZE(modelName), "Incorrect array size");
-	static_assert(ARRAY_SIZE(right) >= ARRAY_SIZE(modelName), "Incorrect array size");
-	strcpy(left, modelName);
-	strlcat(left, ".BRIDGE_LEFT", ARRAY_SIZE(left));
-	strcpy(section, modelName);
-	strlcat(section, ".BRIDGE_SPAN", ARRAY_SIZE(section));
-	strcpy(right, modelName);
-	strlcat(right, ".BRIDGE_RIGHT", ARRAY_SIZE(right));
-
-	m_bridgeTexture = pMgr->Get_Texture(textureFile,  MIP_LEVELS_3);
+	m_bridgeTexture = pMgr->Get_Texture(textureFile.c_str(),  MIP_LEVELS_3);
 	m_leftMtx.Make_Identity();
 	m_rightMtx.Make_Identity();
 	m_sectionMtx.Make_Identity();
 
-	RenderObjClass *pObj = pMgr->Create_Render_Obj(modelName );
+	RenderObjClass *pObj = pMgr->Create_Render_Obj(modelName.c_str());
 	if (!pObj) return false;
 	Int i;
 	for (i=0; i<pObj->Get_Num_Sub_Objects(); i++) {
 		RenderObjClass *pSub = pObj->Get_Sub_Object(i);
 		Matrix3D mtx = pSub->Get_Transform();
-		if (0==strnicmp(left, pSub->Get_Name(), strlen(left))) {
+		if (0==WW3DString::Compare_No_Case_N(left.c_str(), pSub->Get_Name(), left.size())) {
 			m_leftMtx = mtx;
-			strlcpy(left, pSub->Get_Name(), ARRAY_SIZE(left));
+			left = pSub->Get_Name();
 		}
-		if (0==strnicmp(section, pSub->Get_Name(), strlen(section))) {
+		if (0==WW3DString::Compare_No_Case_N(section.c_str(), pSub->Get_Name(), section.size())) {
 			m_sectionMtx = mtx;
-			strlcpy(section, pSub->Get_Name(), ARRAY_SIZE(section));
+			section = pSub->Get_Name();
 		}
-		if (0==strnicmp(right, pSub->Get_Name(), strlen(right))) {
+		if (0==WW3DString::Compare_No_Case_N(right.c_str(), pSub->Get_Name(), right.size())) {
 			m_rightMtx = mtx;
-			strlcpy(right, pSub->Get_Name(), ARRAY_SIZE(right));
+			right = pSub->Get_Name();
 		}
 		REF_PTR_RELEASE(pSub);
 		//DEBUG_LOG(("Sub obj name %s", pSub->Get_Name()));
@@ -275,9 +272,9 @@ Bool W3DBridge::load(BodyDamageType curDamageState)
 
 	REF_PTR_RELEASE(pObj);
 
-	m_leftMesh = (MeshClass*)pMgr->Create_Render_Obj(left );
-	m_sectionMesh = (MeshClass*)pMgr->Create_Render_Obj(section);
-	m_rightMesh = (MeshClass*)pMgr->Create_Render_Obj(right);
+	m_leftMesh = (MeshClass*)pMgr->Create_Render_Obj(left.c_str());
+	m_sectionMesh = (MeshClass*)pMgr->Create_Render_Obj(section.c_str());
+	m_rightMesh = (MeshClass*)pMgr->Create_Render_Obj(right.c_str());
 	m_scale = scale;
 
 
@@ -694,10 +691,16 @@ void W3DBridgeBuffer::loadBridgesInVertexAndIndexBuffers(RefRenderObjListIterato
 	VertexFormatXYZNDUV1 *vb;
 	UnsignedShort *ib;
 	// Lock the buffers.
-	DX8IndexBufferClass::WriteLockClass lockIdxBuffer(m_indexBridge, D3DLOCK_DISCARD);
-	DX8VertexBufferClass::WriteLockClass lockVtxBuffer(m_vertexBridge, D3DLOCK_DISCARD);
-	vb=(VertexFormatXYZNDUV1*)lockVtxBuffer.Get_Vertex_Array();
-	ib = lockIdxBuffer.Get_Index_Array();
+	IRenderBackend *backend = WW3D::Get_Render_Backend();
+	RenderBackendIndexBufferLock lockIdxBuffer(backend, m_indexBridge, 0, 0,
+		RenderBackendBufferLockMode::Discard);
+	RenderBackendVertexBufferLock lockVtxBuffer(backend, m_vertexBridge, 0, 0,
+		RenderBackendBufferLockMode::Discard);
+	if (!lockIdxBuffer.Is_Locked() || !lockVtxBuffer.Is_Locked()) {
+		return;
+	}
+	vb=(VertexFormatXYZNDUV1*)lockVtxBuffer.Get_Data();
+	ib = (UnsignedShort*)lockIdxBuffer.Get_Data();
 
 //	UnsignedShort *curIb = ib;
 
@@ -753,8 +756,9 @@ W3DBridgeBuffer::W3DBridgeBuffer()
 //=============================================================================
 void W3DBridgeBuffer::freeBridgeBuffers()
 {
-	REF_PTR_RELEASE(m_vertexBridge);
-	REF_PTR_RELEASE(m_indexBridge);
+	IRenderBackend *backend = WW3D::Get_Render_Backend();
+	RenderBackend_Release_Vertex_Buffer(backend, m_vertexBridge);
+	RenderBackend_Release_Index_Buffer(backend, m_indexBridge);
 	REF_PTR_RELEASE(m_vertexMaterial);
 }
 
@@ -767,8 +771,15 @@ void W3DBridgeBuffer::allocateBridgeBuffers()
 {
 	if (TheGlobalData->m_headless)
 		return;
-	m_vertexBridge=NEW_REF(DX8VertexBufferClass,(DX8_FVF_XYZNDUV1,MAX_BRIDGE_VERTEX+4,DX8VertexBufferClass::USAGE_DYNAMIC));
-	m_indexBridge=NEW_REF(DX8IndexBufferClass,(MAX_BRIDGE_INDEX+4, DX8IndexBufferClass::USAGE_DYNAMIC));
+	IRenderBackend *backend = WW3D::Get_Render_Backend();
+	if (backend == nullptr) {
+		return;
+	}
+	m_vertexBridge=backend->Create_Vertex_Buffer(
+		static_cast<unsigned>(MAX_BRIDGE_VERTEX + 4) * sizeof(VertexFormatXYZNDUV1),
+		RenderBackendVertexFormat::PositionNormalDiffuseTexture, true);
+	m_indexBridge=backend->Create_Index_Buffer(
+		static_cast<unsigned>(MAX_BRIDGE_INDEX + 4) * sizeof(UnsignedShort), true);
 	m_vertexMaterial=VertexMaterialClass::Get_Preset(VertexMaterialClass::PRELIT_DIFFUSE);
 #ifdef USE_BRIDGE_NORMALS
 	m_vertexMaterial= NEW VertexMaterialClass();
@@ -1155,14 +1166,19 @@ void W3DBridgeBuffer::drawBridges(CameraClass * camera, Bool wireframe, TextureC
 
 	WW3D::Get_Render_Backend()->Set_Material(m_vertexMaterial);
 	// Setup the vertex buffer, shader & texture.
-	WW3D::Get_Render_Backend()->Set_Index_Buffer(m_indexBridge,0);
-	WW3D::Get_Render_Backend()->Set_Vertex_Buffer(m_vertexBridge);
-	WW3D::Get_Render_Backend()->Set_Shader(detailAlphaShader);
+	IRenderBackend *backend = WW3D::Get_Render_Backend();
+	if (backend == nullptr) {
+		return;
+	}
+	backend->Set_Index_Buffer(m_indexBridge);
+	backend->Set_Vertex_Buffer(m_vertexBridge, 0, sizeof(VertexFormatXYZNDUV1));
+	backend->Set_Vertex_Format(RenderBackendVertexFormat::PositionNormalDiffuseTexture);
+	backend->Set_Shader(detailAlphaShader);
 #ifdef RTS_DEBUG
-	//DX8Wrapper::Set_Shader(detailShader); // shows alpha clipping.
+	// The backend applies the detail shader through the neutral render interface.
 #endif
 
-	WW3D::Get_Render_Backend()->Apply_Render_State_Changes();
+	backend->Apply_Render_State_Changes();
 
 	if (!wireframe && cloudTexture)
 	{	//Force a cloud texture projection into stage 1
@@ -1184,12 +1200,13 @@ void W3DBridgeBuffer::drawBridges(CameraClass * camera, Bool wireframe, TextureC
 	if (!wireframe && TheTerrainRenderObject->getShroud())
 	{
 		//Reset to a known shader.
-		WW3D::Get_Render_Backend()->Invalidate_Cached_Render_States();
-		WW3D::Get_Render_Backend()->Set_Shader(ShaderClass::_PresetOpaqueShader);
-		WW3D::Get_Render_Backend()->Set_Material(m_vertexMaterial);
-		WW3D::Get_Render_Backend()->Set_Index_Buffer(m_indexBridge,0);
-		WW3D::Get_Render_Backend()->Set_Vertex_Buffer(m_vertexBridge);
-		WW3D::Get_Render_Backend()->Apply_Render_State_Changes();
+		backend->Invalidate_Cached_Render_States();
+		backend->Set_Shader(ShaderClass::_PresetOpaqueShader);
+		backend->Set_Material(m_vertexMaterial);
+		backend->Set_Index_Buffer(m_indexBridge);
+		backend->Set_Vertex_Buffer(m_vertexBridge, 0, sizeof(VertexFormatXYZNDUV1));
+		backend->Set_Vertex_Format(RenderBackendVertexFormat::PositionNormalDiffuseTexture);
+		backend->Apply_Render_State_Changes();
 		//Apply custom shroud projection shader.
 		W3DShaderManager::setTexture(0,TheTerrainRenderObject->getShroud()->getShroudTexture());
 		W3DShaderManager::setShader(W3DShaderManager::ST_SHROUD_TEXTURE, 0);

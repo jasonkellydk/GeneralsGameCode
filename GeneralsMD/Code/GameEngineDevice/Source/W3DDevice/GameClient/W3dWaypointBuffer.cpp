@@ -54,8 +54,8 @@
 
 #include "W3DDevice/GameClient/W3DWaypointBuffer.h"
 
-#include <WW3D2/assetmgr.h>
-#include <WW3D2/texture.h>
+#include <WW3D2/AssetMgr.h>
+#include <WW3D2/Texture.h>
 
 #include "Common/GameUtility.h"
 #include "Common/GlobalData.h"
@@ -75,12 +75,10 @@
 #include "W3DDevice/GameClient/TerrainTex.h"
 #include "W3DDevice/GameClient/HeightMap.h"
 
-#include "WW3D2/camera.h"
-#include "WW3D2/dx8wrapper.h"
-#include "WW3D2/dx8renderer.h"
-#include "WW3D2/mesh.h"
-#include "WW3D2/meshmdl.h"
-#include "WW3D2/segline.h"
+#include "WW3D2/Camera.h"
+#include "WW3D2/Mesh.h"
+#include "WW3D2/MeshMdl.h"
+#include "WW3D2/SegLine.h"
 
 
 #define MAX_DISPLAY_NODES 512

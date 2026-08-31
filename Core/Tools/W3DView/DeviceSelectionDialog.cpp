@@ -23,11 +23,11 @@
 
 #include "W3DView.h"
 #include "DeviceSelectionDialog.h"
-#include "WW3D2/ww3d.h"
+#include "WW3D2/WW3D.h"
 #include "resource.h"
 #include "Globals.h"
 #include "Utils.h"
-#include "WW3D2/rddesc.h"
+#include "WW3D2/RDDesc.h"
 
 #ifdef RTS_DEBUG
 #define new DEBUG_NEW

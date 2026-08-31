@@ -51,8 +51,9 @@
 #include "Common/GlobalData.h"
 #include "GameLogic/GameLogic.h"
 #include "Common/MapObject.h"
-#include "WW3D2/dx8wrapper.h"
-#include "WW3D2/ww3d.h"
+#include "WW3D2/VertexFormat.h"
+#include "WW3D2/Shader.h"
+#include "WW3D2/WW3D.h"
 
 #if defined(RTS_DEBUG)
 
@@ -216,14 +217,16 @@ void W3DDebugIcons::Render(RenderInfoClass & rinfo)
 	//
 	Bool anyVanished = false;
 	if (m_numDebugIcons==0) return;
-	WW3D::Get_Render_Backend()->Apply_Render_State_Changes();
+	IRenderBackend *backend = WW3D::Get_Render_Backend();
+	if (backend == nullptr) return;
+	backend->Apply_Render_State_Changes();
 
-	WW3D::Get_Render_Backend()->Set_Material(m_vertexMaterialClass);
-	WW3D::Get_Render_Backend()->Set_Texture(0, nullptr);
-	WW3D::Get_Render_Backend()->Apply_Render_State_Changes();
+	backend->Set_Material(m_vertexMaterialClass);
+	backend->Set_Texture(0, nullptr);
+	backend->Apply_Render_State_Changes();
 
 	Matrix3D tm(Transform);
-	WW3D::Get_Render_Backend()->Set_Transform(RenderBackendTransform::World,tm);
+	backend->Set_Transform(RenderBackendTransform::World,tm);
 
 	Int numRect = m_numDebugIcons;
 	static Real offset = 30;
@@ -234,15 +237,28 @@ void W3DDebugIcons::Render(RenderInfoClass & rinfo)
 	for (k=0; k<m_numDebugIcons;) {
 		Int curIndex = 0;
 		Int	numVertex = 0;
-		DynamicVBAccessClass vb_access(BUFFER_TYPE_DYNAMIC_DX8,DX8_FVF_XYZNDUV2,numRect*4);
-		DynamicIBAccessClass ib_access(BUFFER_TYPE_DYNAMIC_DX8,numRect*6);
+		RenderBackendVertexBuffer *vertex_buffer = backend->Create_Vertex_Buffer(
+			static_cast<unsigned>(numRect * 4) * sizeof(VertexFormatXYZNDUV2),
+			RenderBackendVertexFormat::PositionNormalDiffuseTexture2, true);
+		RenderBackendIndexBuffer *index_buffer = backend->Create_Index_Buffer(
+			static_cast<unsigned>(numRect * 6) * sizeof(UnsignedShort), true);
+		if (vertex_buffer == nullptr || index_buffer == nullptr) {
+			RenderBackend_Release_Vertex_Buffer(backend, vertex_buffer);
+			RenderBackend_Release_Index_Buffer(backend, index_buffer);
+			break;
+		}
+		bool buffers_locked = false;
 		{
-		DynamicVBAccessClass::WriteLockClass lock(&vb_access);
-		VertexFormatXYZNDUV2* vb= lock.Get_Formatted_Vertex_Array();
-		DynamicIBAccessClass::WriteLockClass lockib(&ib_access);
-		if (!vb) return;
+		RenderBackendVertexBufferLock vertex_lock(backend, vertex_buffer, 0, 0,
+			RenderBackendBufferLockMode::Discard);
+		RenderBackendIndexBufferLock index_lock(backend, index_buffer, 0, 0,
+			RenderBackendBufferLockMode::Discard);
+		VertexFormatXYZNDUV2 *vb = vertex_lock.Is_Locked() ?
+			(VertexFormatXYZNDUV2*)vertex_lock.Get_Data() : nullptr;
+		buffers_locked = vb != nullptr && index_lock.Is_Locked();
+		if (buffers_locked) {
 
-		UnsignedShort *ib=lockib.Get_Index_Array();
+		UnsignedShort *ib=(UnsignedShort*)index_lock.Get_Data();
 		UnsignedShort *curIb = ib;
 
 //		VertexFormatXYZNDUV2 *curVb = vb;
@@ -303,11 +319,20 @@ void W3DDebugIcons::Render(RenderInfoClass & rinfo)
 			numVertex += 4;
 		}
 		}
-		if (numVertex == 0) break;
-		WW3D::Get_Render_Backend()->Set_Shader(ShaderClass(SC_ALPHA));
-		WW3D::Get_Render_Backend()->Set_Index_Buffer(ib_access,0);
-		WW3D::Get_Render_Backend()->Set_Vertex_Buffer(vb_access);
-		WW3D::Get_Render_Backend()->Draw_Triangles(	0,curIndex/3, 0,	numVertex);	//draw a quad, 2 triangles, 4 verts
+		}
+		if (!buffers_locked || numVertex == 0) {
+			RenderBackend_Release_Vertex_Buffer(backend, vertex_buffer);
+			RenderBackend_Release_Index_Buffer(backend, index_buffer);
+			break;
+		}
+		backend->Set_Shader(ShaderClass(SC_ALPHA));
+		backend->Set_Index_Buffer(index_buffer);
+		backend->Set_Vertex_Buffer(vertex_buffer, 0, sizeof(VertexFormatXYZNDUV2));
+		backend->Set_Vertex_Format(RenderBackendVertexFormat::PositionNormalDiffuseTexture2);
+		backend->Draw_Indexed_Primitives(RenderBackendPrimitiveType::TriangleList,
+			0, 0, numVertex, 0, curIndex/3);	//draw a quad, 2 triangles, 4 verts
+		RenderBackend_Release_Vertex_Buffer(backend, vertex_buffer);
+		RenderBackend_Release_Index_Buffer(backend, index_buffer);
 	}
 
 	if (anyVanished) {

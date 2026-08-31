@@ -28,16 +28,17 @@
 
 #include <cstdint>
 
-static_assert(sizeof(uintptr_t) == sizeof(void*), "uintptr_t must hold Win64 shader pointers");
+static_assert(sizeof(uintptr_t) == sizeof(void*), "uintptr_t must hold opaque shader handles");
 
 #include "WWLib/always.h"
-#include "WW3D2/rendobj.h"
-#include "WW3D2/w3d_file.h"
-#include "WW3D2/dx8vertexbuffer.h"
-#include "WW3D2/dx8indexbuffer.h"
-#include "WW3D2/shader.h"
-#include "WW3D2/vertmaterial.h"
-#include "WW3D2/light.h"
+#include "WW3D2/RendObj.h"
+#include "WW3D2/Backend/IRenderBackend.h"
+#include "WW3D2/W3DFile.h"
+#include "WW3D2/VertexBuffer.h"
+#include "WW3D2/IndexBuffer.h"
+#include "WW3D2/Shader.h"
+#include "WW3D2/VertMaterial.h"
+#include "WW3D2/Light.h"
 #include "Lib/BaseType.h"
 #include "Common/GameType.h"
 #include "Common/Snapshot.h"
@@ -109,7 +110,7 @@ public:
 	void setTimeOfDay(TimeOfDay tod); ///<change sky/water for time of day
 	void toggleCloudLayer(Bool state)	{	m_useCloudLayer=state;}	///<enables/disables the cloud layer
 	void updateRenderTargetTextures(CameraClass *cam);	///< renders into any required textures.
-	void ReleaseResources();	///< Release all dx8 resources so the device can be reset.
+	void ReleaseResources();	///< Release all backend resources so the device can be reset.
 	void ReAcquireResources();  ///< Reacquire all resources after device reset.
 	Real getWaterHeight(Real x, Real y);	///<return water height at given point - for use by WB.
 	void setGridHeightClamps(Real minz, Real maxz);	///<set min/max height values alllowed in grid
@@ -129,7 +130,7 @@ public:
 	void replaceSkyboxTexture(const AsciiString& oldTexName, const AsciiString& newTextName);
 
 protected:
-	DX8IndexBufferClass			*m_indexBuffer;	///<indices defining quad
+	IndexBufferClass			*m_indexBuffer;	///<indices defining quad
 	SceneClass							*m_parentScene;	///<scene to be reflected
 	ShaderClass m_shaderClass; ///<shader or rendering state for heightmap
 	VertexMaterialClass	  		*m_vertexMaterialClass;	///<vertex lighting material
@@ -150,25 +151,22 @@ protected:
 	WaterType	m_waterType;		///<type of water being used
 	Int			m_sortLevel;		///<sort order after main scene is rendered
 
-	//Data used in GeForce3 bump-mapped water (uses direct D3D resources for better
-	//performance and compatibility (most of these featues are not supported by W3D).
-	struct SEA_PATCH_VERTEX	//vertex structure passed to D3D
+	RenderBackendVertexBuffer *m_vertexBuffer;		///<backend vertex buffer
+	RenderBackendIndexBuffer *m_gridIndexBuffer;		///<backend index buffer
+	Int						m_vertexBufferOffset;			///<vertex offset for dynamic writes
+	struct SEA_PATCH_VERTEX
 	{
 		float x,y,z;
 		unsigned int c;
 		float tu, tv;
 	};
 
-	LPDIRECT3DDEVICE9 m_pDev;						///<pointer to D3D Device
-	LPDIRECT3DVERTEXBUFFER9 m_vertexBufferD3D;		///<D3D vertex buffer
-	LPDIRECT3DINDEXBUFFER9	m_indexBufferD3D;	///<D3D index buffer
-	Int						m_vertexBufferD3DOffset;	///<location to start writing vertices
-	uintptr_t				m_dwWavePixelShader;	///<handle to D3D pixel shader
-	uintptr_t				m_dwWaveVertexShader;	///<handle to D3D vertex shader
-	Int	m_numVertices;				///<number of vertices in D3D vertex buffer
-	Int m_numIndices;				///<number of indices in D3D index buffer
-	LPDIRECT3DTEXTURE9 m_pBumpTexture[NUM_BUMP_FRAMES]; ///<animation frames
-	LPDIRECT3DTEXTURE9 m_pBumpTexture2[NUM_BUMP_FRAMES]; ///<animation frames
+	uintptr_t				m_wavePixelShader;			///<opaque pixel shader handle
+	uintptr_t				m_waveVertexShader;			///<opaque vertex shader handle
+	Int	m_numVertices;				///<number of vertices in the vertex buffer
+	Int m_numIndices;				///<number of indices in the index buffer
+	RenderBackendTextureHandle m_bumpTexture[NUM_BUMP_FRAMES]; ///<animation frames
+	RenderBackendTextureHandle m_bumpTexture2[NUM_BUMP_FRAMES]; ///<animation frames
 	Real				m_fBumpFrame;	///<current animation frame
 	Real				m_fBumpScale;	///<scales bump map uv perturbation
 	TextureClass * m_pReflectionTexture;	///<render target for reflection
@@ -211,9 +209,9 @@ protected:
 	TextureClass *m_riverTexture;
 	TextureClass *m_whiteTexture;		///< a texture containing only white used for null pixel shader stages.
 	TextureClass *m_waterNoiseTexture;
-	uintptr_t	m_waterPixelShader;		///<D3D handle to pixel shader.
-	uintptr_t	m_riverWaterPixelShader;		///<D3D handle to pixel shader.
-	uintptr_t	m_trapezoidWaterPixelShader;	///<handle to D3D vertex shader
+	uintptr_t	m_waterPixelShader;		///<opaque pixel shader handle
+	uintptr_t	m_riverWaterPixelShader;		///<opaque pixel shader handle
+	uintptr_t	m_trapezoidWaterPixelShader;	///<opaque pixel shader handle
 	TextureClass *m_waterSparklesTexture;
 	Real m_riverXOffset;
 	Real m_riverYOffset;
@@ -229,12 +227,12 @@ protected:
 		TextureClass	*waterTexture;
 		Int				waterRepeatCount;
 		Real			skyTexelsPerUnit;	//texel density of sky plane (higher value repeats texture more).
-		DWORD			vertex00Diffuse;
-		DWORD			vertex10Diffuse;
-		DWORD			vertex11Diffuse;
-		DWORD			vertex01Diffuse;
-		DWORD			waterDiffuse;
-		DWORD			transparentWaterDiffuse;
+		std::uint32_t		vertex00Diffuse;
+		std::uint32_t		vertex10Diffuse;
+		std::uint32_t		vertex11Diffuse;
+		std::uint32_t		vertex01Diffuse;
+		std::uint32_t		waterDiffuse;
+		std::uint32_t		transparentWaterDiffuse;
 		Real			uScrollPerMs;
 		Real			vScrollPerMs;
 	};
@@ -247,7 +245,7 @@ protected:
 	void testCurvedWater();	///<draw the sky layer (clouds, stars, etc.)
 	void renderSkyBody(Matrix3D *mat);	///<draw the sky body (sun, moon, etc.)
 	void renderWaterMesh(void);			///<draw the water surface mesh (deformed 3d mesh).
-	HRESULT initBumpMap(LPDIRECT3DTEXTURE9 *pTex, TextureClass *pBumpSource);	///<copies data into bump-map format.
+	bool initBumpMap(RenderBackendTextureHandle *texture, TextureClass *bump_source);	///<copies data into a backend bump-map resource.
 	void renderMirror(CameraClass *cam);	///< Draw reflected scene into texture
 	void drawSea(RenderInfoClass & rinfo);	///< Draw the surface of the water
 	///bounding box of frustum clipped polygon plane
@@ -257,9 +255,9 @@ protected:
 	void setupJbaWaterShader();
 	void cleanupJbaWaterShader();
 
-	//Methods used for GeForce3 specific water
-	HRESULT generateIndexBuffer(int sizeX, int sizeY);	///<Generate static index buufer
-	HRESULT generateVertexBuffer( Int sizeX, Int sizeY, Int vertexSize, Bool doFill);///<Generate static vertex buffer
+	// Methods used for the optional shader-based water path.
+	bool generateIndexBuffer(int sizeX, int sizeY);	///<Generate the grid index buffer
+	bool generateVertexBuffer( Int sizeX, Int sizeY, Int vertexSize, Bool doFill);///<Generate the grid vertex buffer
 
 	// snapshot methods for save/load
 	virtual void crc( Xfer *xfer ) override;

@@ -48,17 +48,16 @@
 
 #include "W3DDevice/GameClient/W3DPropBuffer.h"
 
-#include <WW3D2/assetmgr.h>
+#include <WW3D2/AssetMgr.h>
 #include "Common/GameUtility.h"
 #include "Common/Geometry.h"
 #include "Common/PerfTimer.h"
 #include "Common/Player.h"
 #include "Common/PlayerList.h"
-#include "WW3D2/camera.h"
-#include "WW3D2/rinfo.h"
-#include "WW3D2/light.h"
-#include "WW3D2/dx8wrapper.h"
-#include "WW3D2/dx8renderer.h"
+#include "WW3D2/Camera.h"
+#include "WW3D2/RInfo.h"
+#include "WW3D2/Light.h"
+#include "WW3D2/LightEnvironment.h"
 #include "W3DDevice/GameClient/Module/W3DPropDraw.h"
 #include "W3DDevice/GameClient/W3DShroud.h"
 #include "W3DDevice/GameClient/BaseHeightMap.h"

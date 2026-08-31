@@ -33,14 +33,14 @@
 #include "StdAfx.h"
 #include "W3DView.h"
 #include "EmitterPropertySheet.h"
-#include "WW3D2/part_emt.h"
-#include "WW3D2/part_ldr.h"
-#include "WW3D2/assetmgr.h"
+#include "WW3D2/PartEmt.h"
+#include "WW3D2/PartLdr.h"
+#include "WW3D2/AssetMgr.h"
 #include "W3DViewDoc.h"
 #include "Utils.h"
 #include "DataTreeView.h"
 #include "AssetInfo.h"
-#include "WW3D2/texture.h"
+#include "WW3D2/Texture.h"
 #include "EmitterInstanceList.h"
 
 #ifdef RTS_DEBUG

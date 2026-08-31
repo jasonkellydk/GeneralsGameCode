@@ -33,7 +33,7 @@
 #pragma once
 
 #include "resource.h"
-#include "WW3D2/rendobj.h"
+#include "WW3D2/RendObj.h"
 #include "WWMath/Vector3i.h"
 
 // Forward declarations

@@ -54,18 +54,16 @@
 #include "W3DDevice/GameClient/W3DStatusCircle.h"
 #include "W3DDevice/GameClient/W3DCustomScene.h"
 #include "W3DDevice/GameClient/W3DShroud.h"
-#include "WW3D2/camera.h"
-#include "WW3D2/dx8renderer.h"
-#include "WW3D2/sortingrenderer.h"
-#include "WW3D2/dx8wrapper.h"
-#include "WW3D2/ww3d.h"
-#include "WW3D2/light.h"
-#include "WW3D2/matpass.h"
-#include "WW3D2/shader.h"
-#include "WW3D2/dx8caps.h"
-#include "WW3D2/colorspace.h"
+#include "WW3D2/Camera.h"
+#include "WW3D2/SortingRenderer.h"
+#include "WW3D2/Backend/IRenderBackend.h"
+#include "WW3D2/WW3D.h"
+#include "WW3D2/Light.h"
+#include "WW3D2/MatPass.h"
+#include "WW3D2/Shader.h"
+#include "WW3D2/ColorSpace.h"
 
-#include "WW3D2/shdlib.h"
+#include "WW3D2/ShdLib.h"
 
 ///////////////////////////////////////////////////////////////////////////////
 // DEFINITIONS ////////////////////////////////////////////////////////////////
@@ -854,7 +852,7 @@ void RTS3DScene::Flush(RenderInfoClass & rinfo)
 	if (m_customPassMode == SCENE_PASS_DEFAULT && Get_Extra_Pass_Polygon_Mode() == EXTRA_PASS_DISABLE)
 		DoShadows(rinfo, false);	//draw all non-stencil shadows (decals) since they fall under other objects.
 
-	TheDX8MeshRenderer.Flush();	//draw all non-translucent objects.
+	WW3D::Get_Render_Backend()->Flush_Mesh_Renderer();	//draw all non-translucent objects.
 
 	//draw all non-translucent objects which were separated because they are hidden and need custom rendering.
 #ifdef USE_NON_STENCIL_OCCLUSION
@@ -886,9 +884,9 @@ void RTS3DScene::Flush(RenderInfoClass & rinfo)
 		if (m_customPassMode == SCENE_PASS_DEFAULT && Get_Extra_Pass_Polygon_Mode() == EXTRA_PASS_DISABLE)
 			DoParticles(rinfo);	//queue up particles for rendering.
 
-		SortingRendererClass::Flush();	//draw sorted translucent polygons like particles.
+		WW3D::Get_Render_Backend()->Flush_Sorting_Renderer();	//draw sorted translucent polygons like particles.
 	}
-	TheDX8MeshRenderer.Clear_Pending_Delete_Lists();
+	WW3D::Get_Render_Backend()->Clear_Mesh_Renderer_Delete_Lists();
 }
 
 /**Generate a predefined light environment(s) that will be applied to many objects.  Useful for things like totally fogged
@@ -1044,7 +1042,7 @@ void RTS3DScene::Render(RenderInfoClass & rinfo)
 			rinfo.Camera.Set_Zbuffer_Range(nearZ, farZ-ZBias);
 			rinfo.Camera.Apply();
 
-//			DX8Wrapper::Set_DX8_Render_State (D3DRS_ZBIAS, 4);
+			// Optional depth bias is handled by the render backend.
 			Customized_Render(rinfo);	//render wireframe where z-test passes
 			Flush(rinfo);
 			WW3D::Get_Render_Backend()->Set_Fill_Mode(RenderBackendFillMode::Solid);
@@ -1052,7 +1050,7 @@ void RTS3DScene::Render(RenderInfoClass & rinfo)
 			rinfo.Camera.Set_Zbuffer_Range(nearZ, farZ);
 			rinfo.Camera.Apply();
 
-//			DX8Wrapper::Set_DX8_Render_State (D3DRS_ZBIAS, 0);
+			// Restore depth bias through the render backend when enabled.
 			WW3D::Enable_Texturing(old_enable);
 			WW3D::Enable_Coloring(0);
 
@@ -1166,7 +1164,7 @@ void RTS3DScene::Customized_Render( RenderInfoClass &rinfo )
 		return;
 	}
 #ifdef EXTENDED_STATS
-	if (DX8Wrapper::stats.m_disableObjects) {
+	if (WW3D::Get_Render_Backend()->Get_Debug_Settings().m_disableObjects) {
 		return;
 	}
 #endif
@@ -1247,7 +1245,7 @@ void renderStenciledPlayerColor( UnsignedInt color, UnsignedInt stencilRef, Bool
 {
 	struct _TRANSLITVERTEX {
 	    Vector4 p;
-		DWORD color;   // diffuse color
+		unsigned int color;   // diffuse color
 	} v[4];
 
 	Int xpos, ypos, width, height;
@@ -1444,13 +1442,13 @@ void RTS3DScene::flushOccludedObjectsIntoStencil(RenderInfoClass & rinfo)
 					if (drawInfo->m_flags & DrawableInfo::ERF_IS_TRANSLUCENT)
 					{
 						// TheSuperHackers @info This only draws the occlusion of translucent objects.
-						TheDX8MeshRenderer.Flush();	//render all the submitted meshes using current stencil function
+						WW3D::Get_Render_Backend()->Flush_Mesh_Renderer();	//render all the submitted meshes using current stencil function
 						SHD_FLUSH;
 						//Disable writing to color buffer since translucent objects are rendered at end of frame.
 						WW3D::Get_Render_Backend()->Set_Stencil_Function(RenderBackendCompareFunction::Never);	//never allow frame buffer writes.
 						WW3D::Get_Render_Backend()->Set_Stencil_Fail_Operation(RenderBackendStencilOperation::Replace);	//always replace existing stencil value
 						renderOneObject(rinfo, (*renderList), localPlayerIndex);
-						TheDX8MeshRenderer.Flush();	//render all the submitted meshes using current stencil function
+						WW3D::Get_Render_Backend()->Flush_Mesh_Renderer();	//render all the submitted meshes using current stencil function
 						SHD_FLUSH;
 						WW3D::Get_Render_Backend()->Set_Stencil_Fail_Operation(RenderBackendStencilOperation::Keep);
 						WW3D::Get_Render_Backend()->Set_Stencil_Function(RenderBackendCompareFunction::Always);
@@ -1462,7 +1460,7 @@ void RTS3DScene::flushOccludedObjectsIntoStencil(RenderInfoClass & rinfo)
 					renderList++;	//advance to next object
 				}
 
-				TheDX8MeshRenderer.Flush();	//render all the submitted meshes using current stencil function
+				WW3D::Get_Render_Backend()->Flush_Mesh_Renderer();	//render all the submitted meshes using current stencil function
 			}
 		}
 		//Stencil buffer is now filled with color indices of potentially occluded objects.  We now draw
@@ -1475,7 +1473,7 @@ void RTS3DScene::flushOccludedObjectsIntoStencil(RenderInfoClass & rinfo)
 			renderOneObject(rinfo, (*nonOccluderOrOccludeeList), localPlayerIndex);
 			nonOccluderOrOccludeeList++;	//advance to next one
 		}
-		TheDX8MeshRenderer.Flush();	//render all the submitted meshes using current stencil function
+		WW3D::Get_Render_Backend()->Flush_Mesh_Renderer();	//render all the submitted meshes using current stencil function
 
 		//Stencil buffer is now filled with color indices of potentially occluded objects.  We now draw
 		//occluder objects so they cover up and modify stencil MSB wherever they are in front of other objects.
@@ -1497,7 +1495,7 @@ void RTS3DScene::flushOccludedObjectsIntoStencil(RenderInfoClass & rinfo)
 			occluderList++;	//advance to next one
 		}
 
-		TheDX8MeshRenderer.Flush();	//render all the submitted meshes using current stencil function
+		WW3D::Get_Render_Backend()->Flush_Mesh_Renderer();	//render all the submitted meshes using current stencil function
 
 		//We now have a stencil buffer where pixels that are occluded have a bit pattern of 1INDX000.
 		//INDX contains the occluded player's color index.  We walk through all the player colors and
@@ -1557,7 +1555,7 @@ void RTS3DScene::flushOccludedObjectsIntoStencil(RenderInfoClass & rinfo)
 			renderOneObject(rinfo, (*nonOccluderOrOccludeeList), localPlayerIndex);
 			nonOccluderOrOccludeeList++;	//advance to next one
 		}
-		TheDX8MeshRenderer.Flush();	//render all the submitted meshes using current stencil function
+		WW3D::Get_Render_Backend()->Flush_Mesh_Renderer();	//render all the submitted meshes using current stencil function
 	}
 
 	//Reset scene ambient because we sometimes mess around with it to make objects
@@ -1610,7 +1608,7 @@ void RTS3DScene::flushOccludedObjects(RenderInfoClass & rinfo)
 			rinfo.Pop_Material_Pass();
 		}
 		rinfo.Pop_Override_Flags();
-		TheDX8MeshRenderer.Flush();
+		WW3D::Get_Render_Backend()->Flush_Mesh_Renderer();
 
 		//Now draw the normal models so they cover up the colored models on any pixels that
 
@@ -1627,7 +1625,7 @@ void RTS3DScene::flushOccludedObjects(RenderInfoClass & rinfo)
 		}
 
 		//Flush all the submitted translucent objects.
-		TheDX8MeshRenderer.Flush();
+		WW3D::Get_Render_Backend()->Flush_Mesh_Renderer();
 		m_occludedObjectsCount = 0;
 		WW3D::Get_Render_Backend()->Set_Stencil_Enabled(false);
 		TheW3DShadowManager->setStencilShadowMask(0x80808080);	//upper MSB always contains flag indicating occluded player color.
@@ -1659,7 +1657,7 @@ void RTS3DScene::flushTranslucentObjects(RenderInfoClass & rinfo)
 		}
 
 		//Flush all the submitted translucent objects.
-		TheDX8MeshRenderer.Flush();
+		WW3D::Get_Render_Backend()->Flush_Mesh_Renderer();
 		WW3D::Render_And_Clear_Static_Sort_Lists(rinfo);	//draws things like water
 		rinfo.alphaOverride = 1.0f;	//disable forced alpha
 		m_translucentObjectsCount = 0;

@@ -48,19 +48,19 @@
 
 #include "W3DDevice/GameClient/W3DBibBuffer.h"
 
-#include <WW3D2/assetmgr.h>
-#include <WW3D2/texture.h>
+#include <WW3D2/AssetMgr.h>
+#include <WW3D2/Texture.h>
 #include "Common/GlobalData.h"
 #include "Common/RandomValue.h"
 #include "W3DDevice/GameClient/TerrainTex.h"
 #include "W3DDevice/GameClient/HeightMap.h"
 #include "W3DDevice/GameClient/W3DDynamicLight.h"
-#include "WW3D2/camera.h"
-#include "WW3D2/dx8wrapper.h"
-#include "WW3D2/ww3d.h"
-#include "WW3D2/dx8renderer.h"
-#include "WW3D2/mesh.h"
-#include "WW3D2/meshmdl.h"
+#include "WW3D2/Camera.h"
+#include "WW3D2/VertexFormat.h"
+#include "WW3D2/WW3D.h"
+#include "WW3D2/Backend/IRenderBackend.h"
+#include "WW3D2/Mesh.h"
+#include "WW3D2/MeshMdl.h"
 
 //-----------------------------------------------------------------------------
 //         Private Data
@@ -105,10 +105,16 @@ void W3DBibBuffer::loadBibsInVertexAndIndexBuffers()
 	VertexFormatXYZDUV1 *vb;
 	UnsignedShort *ib;
 	// Lock the buffers.
-	DX8IndexBufferClass::WriteLockClass lockIdxBuffer(m_indexBib, D3DLOCK_DISCARD);
-	DX8VertexBufferClass::WriteLockClass lockVtxBuffer(m_vertexBib, D3DLOCK_DISCARD);
-	vb=(VertexFormatXYZDUV1*)lockVtxBuffer.Get_Vertex_Array();
-	ib = lockIdxBuffer.Get_Index_Array();
+	IRenderBackend *backend = WW3D::Get_Render_Backend();
+	RenderBackendIndexBufferLock lockIdxBuffer(backend, m_indexBib, 0, 0,
+		RenderBackendBufferLockMode::Discard);
+	RenderBackendVertexBufferLock lockVtxBuffer(backend, m_vertexBib, 0, 0,
+		RenderBackendBufferLockMode::Discard);
+	if (!lockIdxBuffer.Is_Locked() || !lockVtxBuffer.Is_Locked()) {
+		return;
+	}
+	vb=(VertexFormatXYZDUV1*)lockVtxBuffer.Get_Data();
+	ib = (UnsignedShort*)lockIdxBuffer.Get_Data();
 	// Add to the index buffer & vertex buffer.
 	UnsignedShort *curIb = ib;
 
@@ -249,8 +255,9 @@ W3DBibBuffer::W3DBibBuffer()
 //=============================================================================
 void W3DBibBuffer::freeBibBuffers()
 {
-	REF_PTR_RELEASE(m_vertexBib);
-	REF_PTR_RELEASE(m_indexBib);
+	IRenderBackend *backend = WW3D::Get_Render_Backend();
+	RenderBackend_Release_Vertex_Buffer(backend, m_vertexBib);
+	RenderBackend_Release_Index_Buffer(backend, m_indexBib);
 }
 
 //=============================================================================
@@ -260,8 +267,15 @@ void W3DBibBuffer::freeBibBuffers()
 //=============================================================================
 void W3DBibBuffer::allocateBibBuffers()
 {
-	m_vertexBib=NEW_REF(DX8VertexBufferClass,(DX8_FVF_XYZDUV1,m_vertexBibSize+4,DX8VertexBufferClass::USAGE_DYNAMIC));
-	m_indexBib=NEW_REF(DX8IndexBufferClass,(m_indexBibSize+4, DX8IndexBufferClass::USAGE_DYNAMIC));
+	IRenderBackend *backend = WW3D::Get_Render_Backend();
+	if (backend == nullptr) {
+		return;
+	}
+	m_vertexBib=backend->Create_Vertex_Buffer(
+		static_cast<unsigned>(m_vertexBibSize + 4) * sizeof(VertexFormatXYZDUV1),
+		RenderBackendVertexFormat::PositionDiffuseTexture, true);
+	m_indexBib=backend->Create_Index_Buffer(
+		static_cast<unsigned>(m_indexBibSize + 4) * sizeof(UnsignedShort), true);
 	m_curNumBibVertices=0;
 	m_curNumBibIndices=0;
 }
@@ -425,17 +439,24 @@ void W3DBibBuffer::renderBibs()
 		return;
 	}
 	// Setup the vertex buffer, shader & texture.
-	WW3D::Get_Render_Backend()->Set_Index_Buffer(m_indexBib,0);
-	WW3D::Get_Render_Backend()->Set_Vertex_Buffer(m_vertexBib);
-	WW3D::Get_Render_Backend()->Set_Shader(detailAlphaShader);
+	IRenderBackend *backend = WW3D::Get_Render_Backend();
+	if (backend == nullptr) {
+		return;
+	}
+	backend->Set_Index_Buffer(m_indexBib);
+	backend->Set_Vertex_Buffer(m_vertexBib, 0, sizeof(VertexFormatXYZDUV1));
+	backend->Set_Vertex_Format(RenderBackendVertexFormat::PositionDiffuseTexture);
+	backend->Set_Shader(detailAlphaShader);
 	if (m_curNumNormalBibIndices) {
-		WW3D::Get_Render_Backend()->Set_Texture(0,m_bibTexture);
-		WW3D::Get_Render_Backend()->Draw_Triangles(	0, m_curNumNormalBibIndices/3, 0,	m_curNumNormalBibVertex);
+		backend->Set_Texture(0,m_bibTexture);
+		backend->Draw_Indexed_Primitives(RenderBackendPrimitiveType::TriangleList,
+			0, 0, m_curNumNormalBibVertex, 0, m_curNumNormalBibIndices/3);
 	}
 	if (m_curNumBibIndices>m_curNumNormalBibIndices) {
-		WW3D::Get_Render_Backend()->Set_Texture(0,m_highlightBibTexture);
-		WW3D::Get_Render_Backend()->Draw_Triangles(	m_curNumNormalBibIndices, (m_curNumBibIndices-m_curNumNormalBibIndices)/3,
-						m_curNumNormalBibVertex,	m_curNumBibVertices-m_curNumNormalBibVertex);
+		backend->Set_Texture(0,m_highlightBibTexture);
+		backend->Draw_Indexed_Primitives(RenderBackendPrimitiveType::TriangleList,
+			0, m_curNumNormalBibVertex, m_curNumBibVertices-m_curNumNormalBibVertex,
+			m_curNumNormalBibIndices, (m_curNumBibIndices-m_curNumNormalBibIndices)/3);
 	}
 }
 

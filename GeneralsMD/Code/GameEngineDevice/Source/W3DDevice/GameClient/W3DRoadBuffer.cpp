@@ -48,8 +48,8 @@
 
 #include "W3DDevice/GameClient/W3DRoadBuffer.h"
 
-#include <WW3D2/assetmgr.h>
-#include <WW3D2/texture.h>
+#include <WW3D2/AssetMgr.h>
+#include <WW3D2/Texture.h>
 #include "Common/GlobalData.h"
 #include "Common/RandomValue.h"
 //#include "Common/GameFileSystem.h"
@@ -61,12 +61,12 @@
 #include "W3DDevice/GameClient/W3DDynamicLight.h"
 #include "W3DDevice/GameClient/WorldHeightMap.h"
 #include "W3DDevice/GameClient/W3DShaderManager.h"
-#include "WW3D2/camera.h"
-#include "WW3D2/dx8wrapper.h"
-#include "WW3D2/ww3d.h"
-#include "WW3D2/dx8renderer.h"
-#include "WW3D2/mesh.h"
-#include "WW3D2/meshmdl.h"
+#include "WW3D2/Camera.h"
+#include "WW3D2/VertexFormat.h"
+#include "WW3D2/WW3D.h"
+#include "WW3D2/Backend/IRenderBackend.h"
+#include "WW3D2/Mesh.h"
+#include "WW3D2/MeshMdl.h"
 
 static const Real TEE_WIDTH_ADJUSTMENT = 1.03f;
 
@@ -148,8 +148,9 @@ m_uniqueID(-1)
 RoadType::~RoadType()
 {
 	REF_PTR_RELEASE(m_roadTexture);
-	REF_PTR_RELEASE(m_vertexRoad);
-	REF_PTR_RELEASE(m_indexRoad);
+	IRenderBackend *backend = WW3D::Get_Render_Backend();
+	RenderBackend_Release_Vertex_Buffer(backend, m_vertexRoad);
+	RenderBackend_Release_Index_Buffer(backend, m_indexRoad);
 }
 
 //=============================================================================
@@ -159,9 +160,14 @@ RoadType::~RoadType()
 //=============================================================================
 void RoadType::applyTexture()
 {
+	IRenderBackend *backend = WW3D::Get_Render_Backend();
+	if (backend == nullptr) {
+		return;
+	}
  	W3DShaderManager::setTexture(0,m_roadTexture);
-	WW3D::Get_Render_Backend()->Set_Index_Buffer(m_indexRoad,0);
-	WW3D::Get_Render_Backend()->Set_Vertex_Buffer(m_vertexRoad);
+	backend->Set_Index_Buffer(m_indexRoad);
+	backend->Set_Vertex_Buffer(m_vertexRoad, 0, sizeof(VertexFormatXYZDUV1));
+	backend->Set_Vertex_Format(RenderBackendVertexFormat::PositionDiffuseTexture);
 }
 
 
@@ -184,8 +190,15 @@ void RoadType::loadTexture(AsciiString path, Int ID)
 	m_roadTexture->Get_Filter().Set_U_Addr_Mode(TextureFilterClass::TEXTURE_ADDRESS_REPEAT);
 	m_roadTexture->Get_Filter().Set_V_Addr_Mode(TextureFilterClass::TEXTURE_ADDRESS_REPEAT);
 
-	m_vertexRoad=NEW_REF(DX8VertexBufferClass,(DX8_FVF_XYZDUV1,TheGlobalData->m_maxRoadVertex+4, (s_dynamic?DX8VertexBufferClass::USAGE_DYNAMIC:DX8VertexBufferClass::USAGE_DEFAULT)));
-	m_indexRoad=NEW_REF(DX8IndexBufferClass,(TheGlobalData->m_maxRoadIndex+4, (s_dynamic?DX8IndexBufferClass::USAGE_DYNAMIC:DX8IndexBufferClass::USAGE_DEFAULT)));
+	IRenderBackend *backend = WW3D::Get_Render_Backend();
+	if (backend == nullptr) {
+		return;
+	}
+	m_vertexRoad=backend->Create_Vertex_Buffer(
+		static_cast<unsigned>(TheGlobalData->m_maxRoadVertex + 4) * sizeof(VertexFormatXYZDUV1),
+		RenderBackendVertexFormat::PositionDiffuseTexture, s_dynamic);
+	m_indexRoad=backend->Create_Index_Buffer(
+		static_cast<unsigned>(TheGlobalData->m_maxRoadIndex + 4) * sizeof(UnsignedShort), s_dynamic);
 	m_numRoadVertices=0;
 	m_numRoadIndices=0;
 
@@ -1237,10 +1250,16 @@ void W3DRoadBuffer::loadRoadsInVertexAndIndexBuffers()
 		this->m_roadTypes[m_curRoadType].setNumIndices(0);
 		return;
 	}
-	DX8IndexBufferClass::WriteLockClass lockIdxBuffer(m_roadTypes[m_curRoadType].getIB(), s_dynamic?D3DLOCK_DISCARD:0);
-	DX8VertexBufferClass::WriteLockClass lockVtxBuffer(m_roadTypes[m_curRoadType].getVB(), s_dynamic?D3DLOCK_DISCARD:0);
-	vb=(VertexFormatXYZDUV1*)lockVtxBuffer.Get_Vertex_Array();
-	ib = lockIdxBuffer.Get_Index_Array();
+	IRenderBackend *backend = WW3D::Get_Render_Backend();
+	RenderBackendBufferLockMode lockMode = s_dynamic ?
+		RenderBackendBufferLockMode::Discard : RenderBackendBufferLockMode::Normal;
+	RenderBackendIndexBufferLock lockIdxBuffer(backend, m_roadTypes[m_curRoadType].getIB(), 0, 0, lockMode);
+	RenderBackendVertexBufferLock lockVtxBuffer(backend, m_roadTypes[m_curRoadType].getVB(), 0, 0, lockMode);
+	if (!lockIdxBuffer.Is_Locked() || !lockVtxBuffer.Is_Locked()) {
+		return;
+	}
+	vb=(VertexFormatXYZDUV1*)lockVtxBuffer.Get_Data();
+	ib = (UnsignedShort*)lockIdxBuffer.Get_Data();
 	// Add to the index buffer & vertex buffer.
 
 	Int curRoad;
@@ -1316,10 +1335,16 @@ void W3DRoadBuffer::loadLitRoadsInVertexAndIndexBuffers(RefRenderObjListIterator
 	VertexFormatXYZDUV1 *vb;
 	UnsignedShort *ib;
 	// Lock the buffers.
-	DX8IndexBufferClass::WriteLockClass lockIdxBuffer(m_roadTypes[m_curRoadType].getIB());
-	DX8VertexBufferClass::WriteLockClass lockVtxBuffer(m_roadTypes[m_curRoadType].getVB());
-	vb=(VertexFormatXYZDUV1*)lockVtxBuffer.Get_Vertex_Array();
-	ib = lockIdxBuffer.Get_Index_Array();
+	IRenderBackend *backend = WW3D::Get_Render_Backend();
+	RenderBackendIndexBufferLock lockIdxBuffer(backend, m_roadTypes[m_curRoadType].getIB(), 0, 0,
+		RenderBackendBufferLockMode::Normal);
+	RenderBackendVertexBufferLock lockVtxBuffer(backend, m_roadTypes[m_curRoadType].getVB(), 0, 0,
+		RenderBackendBufferLockMode::Normal);
+	if (!lockIdxBuffer.Is_Locked() || !lockVtxBuffer.Is_Locked()) {
+		return;
+	}
+	vb=(VertexFormatXYZDUV1*)lockVtxBuffer.Get_Data();
+	ib = (UnsignedShort*)lockIdxBuffer.Get_Data();
 	// Add to the index buffer & vertex buffer.
 
 	Int curRoad;
@@ -1427,9 +1452,6 @@ void W3DRoadBuffer::checkLinkBefore(Int ndx)
 			endOfCurSeg++;
 		} else if (m_roads[checkNdx].m_pt2.loc == loc2) {
 #ifdef RTS_DEBUG
-			if (m_roads[checkNdx].m_pt2.count!=1) {
-				::OutputDebugString("fooey.\n");
-			}
 			DEBUG_ASSERTLOG(m_roads[checkNdx].m_pt2.count==1, ("Bad count"));
 #endif
 			flipTheRoad(&m_roads[checkNdx]);
@@ -1480,9 +1502,6 @@ void W3DRoadBuffer::checkLinkAfter(Int ndx)
 		} else if (m_roads[checkNdx].m_pt1.loc == loc1) {
 #ifdef RTS_DEBUG
 			DEBUG_ASSERTLOG(m_roads[checkNdx].m_pt1.count==1, ("Wrong m_pt1.count."));
-			if ( m_roads[checkNdx].m_pt1.count!=1) {
-				::OutputDebugString("Wrong m_pt1.count.\n");
-			}
 #endif
 			flipTheRoad(&m_roads[checkNdx]);
 			ndx++;
@@ -3198,7 +3217,7 @@ void W3DRoadBuffer::loadRoads()
 	}
 	// Free any existing road segments.
 	clearAllRoads();
-	//Int ticks = ::GetTickCount();
+	//Int ticks = SDL_GetTicks();
 	addMapObjects();
 	updateCountsAndFlags();
 	insertTeeIntersections();
@@ -3206,10 +3225,10 @@ void W3DRoadBuffer::loadRoads()
 	insertCrossTypeJoins();
 	preloadRoadsInVertexAndIndexBuffers();
 	m_updateBuffers = true;
-	//ticks = ::GetTickCount() - ticks;
+	//ticks = SDL_GetTicks() - ticks;
 	//char buf[256];
 	//sprintf(buf, "%d road segs, %d milisec.\n", m_numRoads, ticks);
-	//::OutputDebugString(buf);
+	//SDL_Log("%s", buf);
 }
 
 //=============================================================================
@@ -3339,14 +3358,19 @@ void W3DRoadBuffer::drawRoads(CameraClass * camera, TextureClass *cloudTexture, 
 				m_roadTypes[i].applyTexture();
 			}
 	#ifdef RTS_DEBUG
-			//DX8Wrapper::Set_Shader(detailShader); // shows clipping.
+			// The backend applies the detail shader through the neutral render interface.
 	#endif
 			for (Int pass=0; pass < devicePasses; pass++)
 			{
 				if (!wireframe)
 		 			W3DShaderManager::setShader(st, pass);
 				//Draw all this road type.
-				WW3D::Get_Render_Backend()->Draw_Triangles(	0, m_roadTypes[i].getNumIndices()/3, 0,	m_roadTypes[i].getNumVertices());
+				IRenderBackend *backend = WW3D::Get_Render_Backend();
+				if (backend != nullptr) {
+					backend->Draw_Indexed_Primitives(RenderBackendPrimitiveType::TriangleList,
+						0, 0, m_roadTypes[i].getNumVertices(), 0,
+						m_roadTypes[i].getNumIndices()/3);
+				}
 #ifdef LOG_STATS
 				polys += m_roadTypes[i].getNumIndices()/3;
 #endif

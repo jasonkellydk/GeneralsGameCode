@@ -39,14 +39,15 @@
 #include "GameClient/FXList.h"
 #include "GameLogic/TerrainLogic.h"
 
-#include "WW3D2/hanim.h"
-#include "WW3D2/hlod.h"
-#include "WW3D2/rendobj.h"
+#include "WW3D2/HAnim.h"
+#include "WW3D2/HLOD.h"
+#include "WW3D2/RendObj.h"
 #include "W3DDevice/GameClient/Module/W3DDebrisDraw.h"
 #include "W3DDevice/GameClient/W3DAssetManager.h"
 #include "W3DDevice/GameClient/W3DDisplay.h"
 #include "W3DDevice/GameClient/W3DScene.h"
 #include "W3DDevice/GameClient/W3DShadow.h"
+#include "WW3D2/StringUtilities.h"
 
 //-------------------------------------------------------------------------------------------------
 //-------------------------------------------------------------------------------------------------
@@ -159,7 +160,7 @@ void W3DDebrisDraw::setAnimNames(AsciiString initial, AsciiString flying, AsciiS
 
 	m_anims[INITIAL] = initial.isEmpty() ? nullptr : W3DDisplay::m_assetManager->Get_HAnim(initial.str());
 	m_anims[FLYING] = flying.isEmpty() ? nullptr : W3DDisplay::m_assetManager->Get_HAnim(flying.str());
-	if (stricmp(finalAnim.str(), "STOP") == 0)
+	if (WW3DString::Compare_No_Case(finalAnim.str(), "STOP") == 0)
 	{
 		m_finalStop = true;
 		finalAnim = flying;

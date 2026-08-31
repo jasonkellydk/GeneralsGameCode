@@ -34,7 +34,7 @@
 #pragma once
 
 #include "GameClient/Display.h"
-#include "WW3D2/lightenvironment.h"
+#include "WW3D2/LightEnvironment.h"
 #include "W3DDevice/GameClient/W3DProfilerFrameCapture.h"
 
 class VideoBuffer;

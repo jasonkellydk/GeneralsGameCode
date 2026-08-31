@@ -34,6 +34,7 @@
 #pragma once
 
 #include "GameClient/Shadow.h"
+#include "WW3D2/LightEnvironment.h"
 
 class W3DShadowTexture;	//forward reference
 class W3DShadowTextureManager;	//forward reference

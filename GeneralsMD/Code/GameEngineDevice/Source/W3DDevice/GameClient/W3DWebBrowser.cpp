@@ -26,15 +26,13 @@
 // July 2002 Bryan Cleveland
 
 #include "W3DDevice/GameClient/W3DWebBrowser.h"
-#include "WW3D2/texture.h"
-#include "WW3D2/textureloader.h"
-#include "WW3D2/surfaceclass.h"
+#include "WW3D2/Texture.h"
+#include "WW3D2/TextureLoader.h"
+#include "WW3D2/SurfaceClass.h"
 #include "GameClient/Image.h"
 #include "GameClient/GameWindow.h"
 #include "WWMath/vector2i.h"
-#include <d3dx9.h>
-#include "WW3D2/dx8wrapper.h"
-#include "WW3D2/dx8webbrowser.h"
+#include "WW3D2/WW3D.h"
 
 W3DWebBrowser::W3DWebBrowser() : WebBrowser() {
 }
@@ -67,12 +65,16 @@ Bool W3DWebBrowser::createBrowserWindow(const char *tag, GameWindow *win)
 		return FALSE;
 	}
 
-	DX8WebBrowser::CreateBrowser(windowName.str(), url->m_url.str(), x, y, w, h, 0, BROWSEROPTION_SCROLLBARS | BROWSEROPTION_3DBORDER, (LPDISPATCH)this);
+	WW3D::Get_Render_Backend()->Create_Browser(windowName.str(), url->m_url.str(),
+		x, y, w, h, 0,
+		RenderBackendBrowserOptionScrollbars | RenderBackendBrowserOption3DBorder,
+		this);
 
 	return TRUE;
 }
 
 void W3DWebBrowser::closeBrowserWindow(GameWindow *win)
 {
-	DX8WebBrowser::DestroyBrowser(win->winGetInstanceData()->m_decoratedNameString.str());
+	WW3D::Get_Render_Backend()->Destroy_Browser(
+		win->winGetInstanceData()->m_decoratedNameString.str());
 }

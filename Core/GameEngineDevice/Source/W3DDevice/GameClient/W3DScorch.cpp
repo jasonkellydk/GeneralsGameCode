@@ -24,9 +24,11 @@
 #include "Common/MapObject.h"
 #include "W3DDevice/GameClient/TerrainTex.h"
 #include "W3DDevice/GameClient/WorldHeightMap.h"
-#include "WW3D2/dx8wrapper.h"
-#include "WW3D2/IRenderBackend.h"
-#include "WW3D2/ww3d.h"
+#include "WW3D2/Backend/IRenderBackend.h"
+#include "WW3D2/IndexBuffer.h"
+#include "WW3D2/Shader.h"
+#include "WW3D2/VertexBuffer.h"
+#include "WW3D2/WW3D.h"
 
 W3DScorch::W3DScorch(bool deduplicateScorches)
   : m_vertexScorch(nullptr)
@@ -43,8 +45,8 @@ W3DScorch::~W3DScorch() { freeBuffers(); }
 void W3DScorch::allocateBuffers()
 {
 	freeBuffers();
-	m_vertexScorch = NEW_REF(DX8VertexBufferClass, (DX8_FVF_XYZDUV1, MAX_SCORCH_VERTEX, DX8VertexBufferClass::USAGE_DEFAULT));
-	m_indexScorch = NEW_REF(DX8IndexBufferClass, (MAX_SCORCH_INDEX));
+	m_vertexScorch = NEW_REF(VertexBufferClass, (RenderBackendVertexFormat::PositionDiffuseTexture, MAX_SCORCH_VERTEX, VertexBufferClass::USAGE_DEFAULT));
+	m_indexScorch = NEW_REF(IndexBufferClass, (MAX_SCORCH_INDEX));
 	m_scorchTexture = NEW ScorchTextureClass;
 	invalidateBuffers();
 }
@@ -150,10 +152,10 @@ void W3DScorch::updateScorches(WorldHeightMap& map)
 	m_curNumScorchVertices = 0;
 	m_curNumScorchIndices = 0;
 
-	DX8IndexBufferClass::WriteLockClass lockIdxBuffer(m_indexScorch);
+	IndexBufferClass::WriteLockClass lockIdxBuffer(m_indexScorch);
 	UnsignedShort* ib = lockIdxBuffer.Get_Index_Array();
 
-	DX8VertexBufferClass::WriteLockClass lockVtxBuffer(m_vertexScorch);
+	VertexBufferClass::WriteLockClass lockVtxBuffer(m_vertexScorch);
 	VertexFormatXYZDUV1* vb = (VertexFormatXYZDUV1*)lockVtxBuffer.Get_Vertex_Array();
 
 	Real shadeR = (TheGlobalData->m_terrainAmbient[0].red + TheGlobalData->m_terrainDiffuse[0].red) / 2.0f;

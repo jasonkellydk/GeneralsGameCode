@@ -28,8 +28,9 @@
 
 #define INSTANTIATE_WELL_KNOWN_KEYS
 
-#include "windows.h"
-#include "stdlib.h"
+#include <cstdlib>
+#include <cstring>
+#include <string>
 #include "Common/STLTypedefs.h"
 
 #include "Common/DataChunk.h"
@@ -375,6 +376,20 @@ TileData *WorldHeightMap::m_alphaTiles[NUM_ALPHA_TILES]={0};
 //
 WorldHeightMap::~WorldHeightMap()
 {
+	// Terrain textures keep a weak pointer back to this map so they can repopulate
+	// a resource after a failed backend allocation. Clear it before the map storage
+	// is destroyed, because a texture can outlive the height map through a render
+	// object or a terrain background.
+	if (m_terrainTex != nullptr) {
+		m_terrainTex->Clear_Source_Height_Map();
+	}
+	if (m_alphaEdgeTex != nullptr) {
+		m_alphaEdgeTex->Clear_Source_Height_Map();
+	}
+	REF_PTR_RELEASE(m_alphaTerrainTex);
+	REF_PTR_RELEASE(m_alphaEdgeTex);
+	REF_PTR_RELEASE(m_terrainTex);
+
 	delete[](m_data);
 	m_data = nullptr;
 
@@ -410,9 +425,6 @@ WorldHeightMap::~WorldHeightMap()
 	for (i=0; i<NUM_ALPHA_TILES; i++) {
 		REF_PTR_RELEASE(m_alphaTiles[i]);
 	}
-	REF_PTR_RELEASE(m_terrainTex);
-	REF_PTR_RELEASE(m_alphaTerrainTex);
-	REF_PTR_RELEASE(m_alphaEdgeTex);
 }
 
 void WorldHeightMap::freeListOfMapObjects()
@@ -437,12 +449,13 @@ WorldHeightMap::WorldHeightMap():
 	m_numTextureClasses(0),
 	m_drawWidthX(NORMAL_DRAW_WIDTH), m_drawHeightY(NORMAL_DRAW_HEIGHT),
 	m_tileNdxes(nullptr), m_blendTileNdxes(nullptr), m_extraBlendTileNdxes(nullptr), m_cliffInfoNdxes(nullptr),
-	m_terrainTexHeight(1), m_alphaTexHeight(1),	m_cellCliffState(nullptr),
+	m_cellCliffState(nullptr),
 #ifdef EVAL_TILING_MODES
 	m_tileMode(TILE_4x4),
 #endif
 	m_numCliffInfo(1),
-	m_terrainTex(nullptr), m_alphaTerrainTex(nullptr), m_numBitmapTiles(0), m_numBlendedTiles(1)
+	m_terrainTex(nullptr), m_terrainTexHeight(1), m_alphaTerrainTex(nullptr), m_alphaTexHeight(1),
+	m_alphaEdgeTex(nullptr), m_alphaEdgeHeight(1), m_numBitmapTiles(0), m_numBlendedTiles(1)
 {
 	Int i;
 	for (i=0; i<NUM_SOURCE_TILES; i++) {
@@ -476,12 +489,12 @@ WorldHeightMap::WorldHeightMap(ChunkInputStream *pStrm, Bool logicalDataOnly):
 	m_numTextureClasses(0),
 	m_drawWidthX(NORMAL_DRAW_WIDTH), m_drawHeightY(NORMAL_DRAW_HEIGHT),
 	m_tileNdxes(nullptr), m_blendTileNdxes(nullptr), m_extraBlendTileNdxes(nullptr), m_cliffInfoNdxes(nullptr),
-	m_terrainTexHeight(1), m_alphaTexHeight(1),
+	m_terrainTexHeight(1), m_alphaTexHeight(1), m_alphaEdgeHeight(1),
 #ifdef EVAL_TILING_MODES
 	m_tileMode(TILE_4x4),
 #endif
 	m_numCliffInfo(1),
-	m_terrainTex(nullptr), m_alphaTerrainTex(nullptr), m_numBitmapTiles(0), m_numBlendedTiles(1)
+	m_terrainTex(nullptr), m_alphaTerrainTex(nullptr), m_alphaEdgeTex(nullptr), m_numBitmapTiles(0), m_numBlendedTiles(1)
 {
 
 	int i;
@@ -984,13 +997,11 @@ Bool WorldHeightMap::ParseBlendTileDataChunk(DataChunkInput &file, DataChunkInfo
 /** Function to read in the tiles for a texture class. */
 void WorldHeightMap::readTexClass(TXTextureClass *texClass, TileData **tileData)
 {
-	char path[_MAX_PATH];
-	path[0] = 0;
 	File *theFile = nullptr;
 
 	// get the file from the description in TheTerrainTypes
 	TerrainType *terrain = TheTerrainTypes->findTerrain( texClass->name );
-	char texturePath[ _MAX_PATH ];
+	std::string texturePath;
 	if (terrain==nullptr)
 	{
 #ifdef LOAD_TEST_ASSETS
@@ -999,8 +1010,8 @@ void WorldHeightMap::readTexClass(TXTextureClass *texClass, TileData **tileData)
 	}
 	else
 	{
-		snprintf( texturePath, ARRAY_SIZE(texturePath), "%s%s", TERRAIN_TGA_DIR_PATH, terrain->getTexture().str() );
-		theFile = TheFileSystem->openFile( texturePath, File::READ|File::BINARY);
+		texturePath = std::string(TERRAIN_TGA_DIR_PATH) + terrain->getTexture().str();
+		theFile = TheFileSystem->openFile( texturePath.c_str(), File::READ|File::BINARY);
 	}
 
 	if (theFile != nullptr) {
@@ -2231,6 +2242,9 @@ TextureClass *WorldHeightMap::getTerrainTexture()
 		REF_PTR_RELEASE(m_terrainTex);
 		m_terrainTex = MSGNEW("WorldHeightMap_getTerrainTexture") TerrainTextureClass(pow2Height);
 		m_terrainTexHeight = m_terrainTex->update(this);
+		if (m_terrainTexHeight == 0 && m_terrainTex->Ensure_Render_Backend_Texture()) {
+			m_terrainTexHeight = m_terrainTex->Get_Height();
+		}
 		char buf[64];
 		sprintf(buf, "Base tex height %d", pow2Height);
 		DEBUG_LOG((buf));
@@ -2244,6 +2258,9 @@ TextureClass *WorldHeightMap::getTerrainTexture()
 		REF_PTR_RELEASE(m_alphaEdgeTex);
 		m_alphaEdgeTex = MSGNEW("WorldHeightMap_getTerrainTexture") AlphaEdgeTextureClass(pow2Height);
 		m_alphaEdgeHeight = m_alphaEdgeTex->update(this);
+		if (m_alphaEdgeHeight == 0 && m_alphaEdgeTex->Ensure_Render_Backend_Texture()) {
+			m_alphaEdgeHeight = m_alphaEdgeTex->Get_Height();
+		}
 
 		//Generate lookup table for determining triangle order in each terrain cell.
 		//Not the best place to put this but getAlphaUVData() requires a valid terrain
@@ -2260,7 +2277,26 @@ TextureClass *WorldHeightMap::getTerrainTexture()
 
 				m_cellFlipState[y*m_flipStateWidth+(x>>3)] |= flipForBlend << (x & 0x7);
 				DEBUG_ASSERTCRASH ((y*m_flipStateWidth+(x>>3)) < (m_flipStateWidth * m_height), ("Bad range"));
+		}
+	}
+	else {
+		// Procedural terrain textures are normally kept resident, but a failed
+		// allocation can leave one without a backend resource. Let the texture
+		// recreate and repopulate itself once memory becomes available.
+		if (m_terrainTexHeight <= 0 || m_terrainTex->Peek_Render_Backend_Texture() == 0) {
+			if (m_terrainTex->Ensure_Render_Backend_Texture()) {
+				m_terrainTexHeight = m_terrainTex->Get_Height();
 			}
+		}
+		if (m_alphaTerrainTex != nullptr) {
+			m_alphaTerrainTex->Ensure_Render_Backend_Texture();
+		}
+		if (m_alphaEdgeTex != nullptr &&
+			(m_alphaEdgeHeight <= 0 || m_alphaEdgeTex->Peek_Render_Backend_Texture() == 0)) {
+			if (m_alphaEdgeTex->Ensure_Render_Backend_Texture()) {
+				m_alphaEdgeHeight = m_alphaEdgeTex->Get_Height();
+			}
+		}
 	}
 
 	return m_terrainTex;
@@ -2297,6 +2333,7 @@ TerrainTextureClass *WorldHeightMap::getFlatTexture(Int xCell, Int yCell, Int ce
 	}
 	TerrainTextureClass *newTexture = MSGNEW("WorldHeightMap_getTerrainTexture") TerrainTextureClass(pow2Height, pow2Height);
 	newTexture->updateFlat(this, xCell, yCell, cellWidth, pixelsPerCell);
+	newTexture->Ensure_Render_Backend_Texture();
 	return newTexture;
 }
 

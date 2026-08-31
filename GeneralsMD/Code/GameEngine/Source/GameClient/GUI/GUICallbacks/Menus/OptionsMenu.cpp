@@ -74,8 +74,8 @@
 #include "WWDownload/Registry.h"
 #include "GameClient/MessageBox.h"
 
-#include "WW3D2/ww3d.h"
-#include "WW3D2/texturefilter.h"
+#include "WW3D2/WW3D.h"
+#include "WW3D2/TextureFilter.h"
 
 // This is for non-RC builds only!!!
 #define VERBOSE_VERSION L"Release"

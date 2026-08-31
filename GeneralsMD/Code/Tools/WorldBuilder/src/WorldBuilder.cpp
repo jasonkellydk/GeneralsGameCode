@@ -24,7 +24,7 @@
 #include "MainFrm.h"
 #include "OpenMap.h"
 #include "SplashScreen.h"
-#include "WW3D2/textureloader.h"
+#include "WW3D2/TextureLoader.h"
 #include "WorldBuilderDoc.h"
 #include "WorldBuilderView.h"
 #include "WBFrameWnd.h"
@@ -69,7 +69,7 @@
 #include "GameClient/Water.h"
 #include "GameClient/TerrainRoads.h"
 #include "GameClient/FXList.h"
-#include "GameClient/VideoPlayer.h"
+#include "GameClient/VideoPLayer.h"
 #include "GameLogic/Locomotor.h"
 
 #include "W3DDevice/Common/W3DModuleFactory.h"

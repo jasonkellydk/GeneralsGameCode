@@ -34,7 +34,7 @@
 
 #define NO_DEBUG_CRC
 
-#include <windows.h>
+#include <SDL3/SDL.h>
 
 #include "Common/crc.h"
 #include "Common/CRCDebug.h"
@@ -61,12 +61,13 @@
 #include "W3DDevice/GameClient/W3DShadow.h"
 #include "W3DDevice/GameClient/W3DTerrainTracks.h"
 #include "W3DDevice/GameClient/WorldHeightMap.h"
-#include "WW3D2/hanim.h"
-#include "WW3D2/hlod.h"
-#include "WW3D2/rendobj.h"
-#include "WW3D2/mesh.h"
-#include "WW3D2/meshmdl.h"
+#include "WW3D2/HAnim.h"
+#include "WW3D2/HLOD.h"
+#include "WW3D2/RendObj.h"
+#include "WW3D2/Mesh.h"
+#include "WW3D2/MeshMdl.h"
 #include "Common/BitFlagsIO.h"
+#include "WW3D2/StringUtilities.h"
 
 
 //-------------------------------------------------------------------------------------------------
@@ -97,14 +98,10 @@ protected:
 
 LogClass::LogClass(const char *fname)
 {
-	char buffer[ _MAX_PATH ];
-	GetModuleFileName( nullptr, buffer, sizeof( buffer ) );
-	if (char *pEnd = strrchr(buffer, '\\'))
-	{
-		*pEnd = 0;
-	}
+	const char *basePath = SDL_GetBasePath();
+	const char *path = basePath != nullptr ? basePath : "";
 	// TheSuperHackers @fix Caball009 03/06/2025 Don't use AsciiString here anymore because its memory allocator may not have been initialized yet.
-	const std::string fullPath = std::string(buffer) + "\\" + fname;
+	const std::string fullPath = std::string(path) + fname;
 	m_fp = fopen(fullPath.c_str(), "wt");
 }
 
@@ -1286,7 +1283,7 @@ static void parseShowHideSubObject(INI* ini, void *instance, void *store, const 
 		Bool found = false;
 		for (std::vector<ModelConditionInfo::HideShowSubObjInfo>::iterator it = vec->begin(); it != vec->end(); ++it)
 		{
-			if (stricmp(it->subObjName.str(), subObjName.str()) == 0)
+			if (WW3DString::Compare_No_Case(it->subObjName.str(), subObjName.str()) == 0)
 			{
 				it->hide = (userData != nullptr);
 				found = true;
@@ -1313,7 +1310,7 @@ void W3DModelDraw::showSubObject( const AsciiString& name, Bool show )
 		Bool found = false;
 		for( std::vector<ModelConditionInfo::HideShowSubObjInfo>::iterator it = m_subObjectVec.begin(); it != m_subObjectVec.end(); ++it )
 		{
-			if( stricmp( it->subObjName.str(), name.str() ) == 0 )
+			if( WW3DString::Compare_No_Case( it->subObjName.str(), name.str() ) == 0 )
 			{
 				it->hide = !show;
 				found = true;

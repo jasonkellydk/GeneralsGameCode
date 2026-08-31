@@ -50,13 +50,13 @@
 //           Includes
 //-----------------------------------------------------------------------------
 #include "WWLib/always.h"
-#include "WW3D2/rendobj.h"
-#include "WW3D2/w3d_file.h"
-#include "WW3D2/texture.h"
-#include "WW3D2/dx8vertexbuffer.h"
-#include "WW3D2/dx8indexbuffer.h"
-#include "WW3D2/shader.h"
-#include "WW3D2/vertmaterial.h"
+#include "WW3D2/RendObj.h"
+#include "WW3D2/W3DFile.h"
+#include "WW3D2/Texture.h"
+#include "WW3D2/VertexBuffer.h"
+#include "WW3D2/IndexBuffer.h"
+#include "WW3D2/Shader.h"
+#include "WW3D2/VertMaterial.h"
 #include "Lib/BaseType.h"
 #include "Common/GameType.h"
 #include "Common/AsciiString.h"
@@ -222,8 +222,8 @@ private:
 				MAX_BUFFERS = 1,
 				SORT_ITERATIONS_PER_FRAME=10};
 	enum {PARTITION_WIDTH_HEIGHT = 100};
-	DX8VertexBufferClass	*m_vertexTree[MAX_BUFFERS];	///<Tree vertex buffer.
-	DX8IndexBufferClass			*m_indexTree[MAX_BUFFERS];	///<indices defining a triangles for the tree drawing.
+	VertexBufferClass	*m_vertexTree[MAX_BUFFERS];	///<Tree vertex buffer.
+	IndexBufferClass			*m_indexTree[MAX_BUFFERS];	///<indices defining a triangles for the tree drawing.
 	uintptr_t				m_dwTreePixelShader;	///<handle to D3D pixel shader
 	uintptr_t				m_dwTreeVertexShader;	///<handle to D3D vertex shader
 

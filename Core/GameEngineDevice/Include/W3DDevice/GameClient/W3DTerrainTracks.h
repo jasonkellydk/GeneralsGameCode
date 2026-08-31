@@ -25,12 +25,12 @@
 #pragma once
 
 #include "WWLib/always.h"
-#include "WW3D2/rendobj.h"
-#include "WW3D2/w3d_file.h"
-#include "WW3D2/dx8vertexbuffer.h"
-#include "WW3D2/dx8indexbuffer.h"
-#include "WW3D2/shader.h"
-#include "WW3D2/vertmaterial.h"
+#include "WW3D2/RendObj.h"
+#include "WW3D2/W3DFile.h"
+#include "WW3D2/VertexBuffer.h"
+#include "WW3D2/IndexBuffer.h"
+#include "WW3D2/Shader.h"
+#include "WW3D2/VertMaterial.h"
 #include "Lib/BaseType.h"
 
 #define MAX_TRACK_EDGE_COUNT	100	//maximum number of edges or divisions in track mark
@@ -116,7 +116,7 @@ public:
 	TerrainTracksRenderObjClassSystem();
 	~TerrainTracksRenderObjClassSystem();
 
-	void ReleaseResources();	///< Release all dx8 resources so the device can be reset.
+	void ReleaseResources();	///< Release all dx9 resources so the device can be reset.
 	void ReAcquireResources();  ///< Reacquire all resources after device reset.
 
 	void setDetail();
@@ -132,8 +132,8 @@ public:
 	void unbindTrack( TerrainTracksRenderObjClass *mod );	///<releases control of track object
 
 protected:
-	DX8VertexBufferClass		*m_vertexBuffer;	///<vertex buffer used to draw all tracks
-	DX8IndexBufferClass			*m_indexBuffer;	///<indices defining triangles in maximum length track
+	VertexBufferClass		*m_vertexBuffer;	///<vertex buffer used to draw all tracks
+	IndexBufferClass			*m_indexBuffer;	///<indices defining triangles in maximum length track
 	VertexMaterialClass	  	  *m_vertexMaterialClass;	///< vertex lighting material
 	ShaderClass m_shaderClass; ///<shader or rendering state for heightmap
 

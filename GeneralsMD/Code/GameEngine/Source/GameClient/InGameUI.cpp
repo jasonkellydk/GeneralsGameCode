@@ -28,6 +28,8 @@
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 
 #include "PreRTS.h"	// This must go first in EVERY cpp file in the GameEngine
+#include "Common/GameDateTime.h"
+#include <SDL3/SDL.h>
 
 #define DEFINE_SHADOW_NAMES
 
@@ -6201,7 +6203,7 @@ void InGameUI::drawRenderFps(Int &x, Int &y)
 {
 	if (m_renderFpsRefreshMs > 0u)
 	{
-		const UnsignedInt nowMs = timeGetTime();
+		const UnsignedInt nowMs = static_cast<UnsignedInt>(SDL_GetTicks());
 		const UnsignedInt deltaMs = nowMs - m_lastRenderFpsUpdateMs;
 		if (deltaMs >= m_renderFpsRefreshMs)
 		{
@@ -6251,11 +6253,11 @@ void InGameUI::drawRenderFps(Int &x, Int &y)
 void InGameUI::drawSystemTime(Int &x, Int &y)
 {
 	// current system time
-	SYSTEMTIME systemTime;
-	GetLocalTime( &systemTime );
+	GameDateTime GameDateTime;
+	Get_Local_Game_Date_Time(&GameDateTime);
 
 	UnicodeString TimeString;
-	TimeString.format(L"%2.2d:%2.2d:%2.2d", systemTime.wHour, systemTime.wMinute, systemTime.wSecond);
+	TimeString.format(L"%2.2d:%2.2d:%2.2d", GameDateTime.wHour, GameDateTime.wMinute, GameDateTime.wSecond);
 	m_systemTimeString->setText(TimeString);
 
 	// TheSuperHackers @info at the HUD anchor this draws inline and advances x otherwise uses configured position

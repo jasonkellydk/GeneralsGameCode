@@ -33,8 +33,8 @@
 #include "WorldBuilder.h"
 #include "DrawObject.h"
 #include "wbview3d.h"
-#include "WW3D2/mesh.h"
-#include "WW3D2/meshmdl.h"
+#include "WW3D2/Mesh.h"
+#include "WW3D2/MeshMdl.h"
 #include "W3DDevice/GameClient/HeightMap.h"
 //
 // MeshMoldTool class.

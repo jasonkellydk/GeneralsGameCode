@@ -45,7 +45,8 @@
 #include "GameClient/ParticleSys.h"
 #include "W3DDevice/GameClient/W3DGameClient.h"
 #include "W3DDevice/GameClient/Module/W3DTankTruckDraw.h"
-#include "WW3D2/matinfo.h"
+#include "WW3D2/MatInfo.h"
+#include "WW3D2/StringUtilities.h"
 
 // TheSuperHackers @info Is disabled by default and therefore compatible with the Retail INI setups.
 #define SHOW_DEFAULT_TANK_DEBRIS (0)
@@ -429,7 +430,7 @@ void W3DTankTruckDraw::updateTreadObjects()
 			//Check if subobject name starts with "TREADS".
 			if (subObj && subObj->Class_ID() == RenderObjClass::CLASSID_MESH && subObj->Get_Name()
 				&& ( (meshName=strchr(subObj->Get_Name(),'.') ) != nullptr && *(meshName++))
-				&&_strnicmp(meshName,"TREADS", 6) == 0)
+				&&WW3DString::Compare_No_Case_N(meshName,"TREADS", 6) == 0)
 			{	//check if sub-object has the correct material to do texture scrolling.
 				MaterialInfoClass *mat=subObj->Get_Material_Info();
 				if (mat)

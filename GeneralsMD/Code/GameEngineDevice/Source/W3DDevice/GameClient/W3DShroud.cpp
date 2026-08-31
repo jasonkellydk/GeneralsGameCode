@@ -28,19 +28,20 @@
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 
 #include "Lib/BaseType.h"
-#include "WW3D2/camera.h"
+#include <SDL3/SDL.h>
+#include "WW3D2/Camera.h"
 #include "WWLib/simplevec.h"
-#include "WW3D2/dx8wrapper.h"
-#include "WW3D2/ww3d.h"
-#include "WW3D2/surfaceclass.h"
+#include "WW3D2/Backend/IRenderBackend.h"
+#include "WW3D2/WW3D.h"
+#include "WW3D2/SurfaceClass.h"
 #include "Common/MapObject.h"
 #include "Common/PerfTimer.h"
 #include "W3DDevice/GameClient/HeightMap.h"
 #include "W3DDevice/GameClient/W3DPoly.h"
 #include "W3DDevice/GameClient/W3DShaderManager.h"
-#include "WW3D2/assetmgr.h"
+#include "WW3D2/AssetMgr.h"
 #include "W3DDevice/GameClient/W3DShroud.h"
-#include "WW3D2/textureloader.h"
+#include "WW3D2/TextureLoader.h"
 #include "Common/GlobalData.h"
 #include "GameLogic/PartitionManager.h"
 
@@ -733,9 +734,9 @@ void W3DShroud::render(CameraClass *cam)
 //-----------------------------------------------------------------------------
 void W3DShroud::interpolateFogLevels(RenderBackendRect *rect)
 {
-	static UnsignedInt prevTime = timeGetTime();
+	static UnsignedInt prevTime = static_cast<UnsignedInt>(SDL_GetTicks());
 
-	UnsignedInt timeDiff=timeGetTime()-prevTime;
+	UnsignedInt timeDiff=static_cast<UnsignedInt>(SDL_GetTicks())-prevTime;
 
 	if (!timeDiff)
 		return;	//no time has elapsed

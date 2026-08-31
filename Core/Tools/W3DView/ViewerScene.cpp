@@ -37,13 +37,13 @@
 
 #include "StdAfx.h"
 #include "ViewerScene.h"
-#include "WW3D2/camera.h"
-#include "WW3D2/ww3d.h"
+#include "WW3D2/Camera.h"
+#include "WW3D2/WW3D.h"
 
-#include "WW3D2/rendobj.h"
-#include "WW3D2/assetmgr.h"
-#include "WW3D2/rinfo.h"
-#include "WW3D2/lightenvironment.h"
+#include "WW3D2/RendObj.h"
+#include "WW3D2/AssetMgr.h"
+#include "WW3D2/RInfo.h"
+#include "WW3D2/LightEnvironment.h"
 
 /*
 ** ViewerSceneIterator

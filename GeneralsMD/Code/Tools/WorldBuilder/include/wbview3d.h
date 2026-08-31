@@ -27,13 +27,13 @@
 //
 
 #include "Lib/BaseType.h"
-#include "WW3D2/rendobj.h"
-#include "WW3D2/robjlist.h"
+#include "WW3D2/RendObj.h"
+#include "WW3D2/RObjList.h"
 #include "wbview.h"
 #include "Common/GameType.h"
 #include "Common/GlobalData.h"
 #include "Common/ModelState.h"
-#include "WW3D2/dx8wrapper.h"
+#include "WW3D2/Backend/IRenderBackend.h"
 
 //#include "GameLogic/Module/BodyModule.h" -- Yikes... not necessary to include this! (KM)
 enum BodyDamageType CPP_11(: Int); //Ahhhh much better!
@@ -51,12 +51,11 @@ class DrawObject;
 class CWorldBuilderView;
 class BuildListInfo;
 class TransRenderObj;
-struct ID3DXFont;
 
 /////////////////////////////////////////////////////////////////////////////
 // WbView3d view
 
-class WbView3d : public WbView, public DX8_CleanupHook
+class WbView3d : public WbView, public RenderBackendCleanupHook
 {
 protected:
 	WbView3d();           // protected constructor used by dynamic creation
@@ -65,8 +64,8 @@ protected:
 // Attributes
 public:
 
-	// DX8_CleanupHook methods
-	virtual void ReleaseResources() override;	///< Release all dx8 resources so the device can be reset.
+	// RenderBackendCleanupHook methods
+	virtual void ReleaseResources() override;	///< Release all render resources so the device can be reset.
 	virtual void ReAcquireResources() override;  ///< Reacquire all resources after device reset.
 
 // Operations
@@ -212,7 +211,7 @@ private:
 	Bool										m_showLetterbox;
 
 
-	ID3DXFont*							m3DFont;
+	RenderBackendFont*						m3DFont;
 	Int											m_pickPixels;
 	Int											m_partialMapSize;
 

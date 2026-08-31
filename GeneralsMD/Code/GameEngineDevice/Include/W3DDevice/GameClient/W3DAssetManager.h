@@ -44,7 +44,7 @@
 
 #pragma once
 
-#include "WW3D2/assetmgr.h"
+#include "WW3D2/AssetMgr.h"
 #include "Lib/BaseType.h"
 
 class Vector3;

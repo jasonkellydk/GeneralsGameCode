@@ -34,7 +34,7 @@
 #include "W3DDevice/GameClient/HeightMap.h"
 #include "W3DDevice/GameClient/W3DSmudge.h"
 #include "W3DDevice/GameClient/W3DSnow.h"
-#include "WW3D2/camera.h"
+#include "WW3D2/Camera.h"
 
 
 //------------------------------------------------------------------------------ Performance Timers

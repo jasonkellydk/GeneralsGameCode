@@ -46,10 +46,10 @@
 #include "W3DDevice/GameClient/W3DDisplay.h"
 #include "W3DDevice/GameClient/W3DScene.h"
 #include "W3DDevice/GameLogic/W3DGhostObject.h"
-#include "WW3D2/rendobj.h"
-#include "WW3D2/hlod.h"
-#include "WW3D2/scene.h"
-#include "WW3D2/matinfo.h"
+#include "WW3D2/RendObj.h"
+#include "WW3D2/HLOD.h"
+#include "WW3D2/Scene.h"
+#include "WW3D2/MatInfo.h"
 
 
 

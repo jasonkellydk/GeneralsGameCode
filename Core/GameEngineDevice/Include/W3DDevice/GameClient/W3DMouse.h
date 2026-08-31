@@ -34,7 +34,7 @@
 //
 // Project:    RTS3
 //
-// File name:  Win32Mouse.h
+// File name:  W3DMouse.h
 //
 // Created:    Mark Wilczynski, Jan 2002
 //
@@ -57,7 +57,7 @@ class SurfaceClass;
 // TYPE DEFINES ///////////////////////////////////////////////////////////////
 
 // W3DMouse -----------------------------------------------------------------
-/** Mouse interface for when using only the Win32 messages and W3D for cursor */
+/** Mouse interface for rendering the cursor through W3D. */
 //-----------------------------------------------------------------------------
 class W3DMouse : public SDL3Mouse
 {
@@ -75,21 +75,21 @@ public:
 	virtual void setRedrawMode(RedrawMode mode) override;	///<set cursor drawing method.
 
 private:
-	MouseCursor m_currentD3DCursor;	///< keep track of last cursor image sent to D3D.
-	SurfaceClass *m_currentD3DSurface[MAX_2D_CURSOR_ANIM_FRAMES];
+	MouseCursor m_currentHardwareCursor;	///< keep track of last cursor image sent to the backend.
+	SurfaceClass *m_currentBackendSurface[MAX_2D_CURSOR_ANIM_FRAMES];
 	ICoord2D m_currentHotSpot;
 	Int	m_currentFrames;	///< total number of frames in current 2D cursor animation.
 	Real m_currentAnimFrame;///< current frame of 2D cursor animation.
-	Int m_currentD3DFrame;	///< current frame actually sent to the hardware.
+	Int m_currentBackendFrame;	///< current frame actually sent to the hardware.
 	Int m_directionFrame;	///< selected frame for oriented cursors.
 	Int m_lastAnimTime;		///< ms at last animation update.
 	Real m_currentFMS;		///< frames per ms.
 	Bool m_drawing;			///< flag to indicate mouse cursor is currently in the act of drawing.
 ///@todo: remove the textures if we only need surfaces
-	void initD3DAssets();		///< load textures for mouse cursors, etc.
-	void freeD3DAssets();		///< unload textures used by mouse cursors.
-	Bool loadD3DCursorTextures(MouseCursor cursor);	///<load the textures/animation for given cursor.
-	Bool releaseD3DCursorTextures(MouseCursor cursor);	///<release loaded textures for cursor.
+	void initBackendAssets();		///< load textures for mouse cursors, etc.
+	void freeBackendAssets();		///< unload textures used by mouse cursors.
+	Bool loadBackendCursorTextures(MouseCursor cursor);	///<load the textures/animation for given cursor.
+	Bool releaseBackendCursorTextures(MouseCursor cursor);	///<release loaded textures for cursor.
 
 	// W3D animated model cursor
 	CameraClass *m_camera;								///< our camera

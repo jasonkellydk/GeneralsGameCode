@@ -30,8 +30,7 @@
 #pragma once
 
 #include "Lib/BaseType.h"
-#include "WW3D2/dx8vertexbuffer.h"
-#include "WW3D2/dx8indexbuffer.h"
+#include "WW3D2/Backend/IRenderBackend.h"
 
 // TheSuperHackers @info The max sizes correspond to a number of vertices and indices of a mesh casting shadows
 // in the scene. The more vertices the meshes are supposed to have, the higher these limits need to be.
@@ -106,7 +105,7 @@ public:
 		Int	m_startFreeIndex;				///<index of vertex at start of unallocated memory.
 		Int m_size;							///<number of vertices allowed in VB.
 		W3DVertexBuffer *m_nextVB;			///<next vertex buffer of same type.
-		DX8VertexBufferClass *m_DX8VertexBuffer;	///<actual DX8 vertex buffer interface
+		RenderBackendVertexBuffer *m_vertexBuffer;	///<actual vertex buffer owned by the active render backend
 		W3DRenderTask	*m_renderTaskList;	///<used to help app sort its D3D access by VB.
 	};
 
@@ -127,7 +126,7 @@ public:
 		Int	m_startFreeIndex;				///<index of index at start of unallocated memory.
 		Int m_size;							///<number of vertices allowed in VB.
 		W3DIndexBuffer *m_nextIB;			///<next index buffer of same type.
-		DX8IndexBufferClass *m_DX8IndexBuffer;	///<actual DX8 index buffer interface
+		RenderBackendIndexBuffer *m_indexBuffer;	///<actual index buffer owned by the active render backend
 	};
 
 	W3DBufferManager();
@@ -150,7 +149,7 @@ public:
 		return pVb->m_nextVB;
 	};
 
-	static Int getDX8Format(VBM_FVF_TYPES format);	///<translates our vertex format into D3D equivalent
+	static RenderBackendVertexFormat getRenderBackendFormat(VBM_FVF_TYPES format);	///<translates our vertex format into the backend's neutral format
 
 protected:
 

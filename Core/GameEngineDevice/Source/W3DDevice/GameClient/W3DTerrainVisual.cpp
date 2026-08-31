@@ -28,7 +28,6 @@
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 
 #include <stdlib.h>
-#include <windows.h>
 
 #include "Common/GameState.h"
 #include "Common/GlobalData.h"
@@ -59,11 +58,11 @@
 #include "W3DDevice/GameClient/FlatHeightMap.h"
 #include "W3DDevice/GameClient/W3DSmudge.h"
 #include "W3DDevice/GameClient/Module/W3DModelDraw.h"
-#include "WW3D2/light.h"
-#include "WW3D2/rendobj.h"
-#include "WW3D2/coltype.h"
-#include "WW3D2/coltest.h"
-#include "WW3D2/assetmgr.h"
+#include "WW3D2/Light.h"
+#include "WW3D2/RendObj.h"
+#include "WW3D2/ColType.h"
+#include "WW3D2/ColTest.h"
+#include "WW3D2/AssetMgr.h"
 
 
 

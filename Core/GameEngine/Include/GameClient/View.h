@@ -33,8 +33,8 @@
 #include "Common/GameType.h"
 #include "Common/Snapshot.h"
 #include "Lib/BaseType.h"
-#include "WW3D2/camera.h"
-#include "WW3D2/coltype.h"			///< we don't generally do this, but we need the W3D collision types
+#include "WW3D2/Camera.h"
+#include "WW3D2/ColType.h"			///< we don't generally do this, but we need the W3D collision types
 #include "WWMath/plane.h"
 #include "WWMath/wwmath.h"
 

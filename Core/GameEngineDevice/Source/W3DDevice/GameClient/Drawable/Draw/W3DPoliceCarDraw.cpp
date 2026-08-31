@@ -38,7 +38,7 @@
 #include "W3DDevice/GameClient/Module/W3DPoliceCarDraw.h"
 #include "W3DDevice/GameClient/W3DDisplay.h"
 #include "Common/RandomValue.h"
-#include "WW3D2/hanim.h"
+#include "WW3D2/HAnim.h"
 #include "W3DDevice/GameClient/W3DScene.h"
 
 // PRIVATE FUNCTIONS //////////////////////////////////////////////////////////////////////////////

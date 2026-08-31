@@ -47,8 +47,8 @@
 #include "W3DDevice/GameClient/W3DDisplay.h"
 #include "W3DDevice/GameClient/W3DScene.h"
 #include "W3DDevice/Common/W3DConvert.h"
-#include "WW3D2/ww3d.h"
-#include "WW3D2/hanim.h"
+#include "WW3D2/WW3D.h"
+#include "WW3D2/HAnim.h"
 
 #include "Common/UnitTimings.h" //Contains the DO_UNIT_TIMINGS define jba.
 
@@ -56,9 +56,8 @@
 
 #ifdef RTS_DEBUG
 #include "W3DDevice/GameClient/HeightMap.h"
-#include "WW3D2/dx8indexbuffer.h"
-#include "WW3D2/dx8vertexbuffer.h"
-#include "WW3D2/vertmaterial.h"
+#include "WW3D2/VertexFormat.h"
+#include "WW3D2/VertMaterial.h"
 class DebugHintObject : public RenderObjClass
 {
 
@@ -87,10 +86,10 @@ protected:
 	Int m_myColor;	// argb
 	Int m_mySize;
 
-	DX8IndexBufferClass				*m_indexBuffer;
+	RenderBackendIndexBuffer				*m_indexBuffer;
 	ShaderClass								m_shaderClass; //shader or rendering state for heightmap
 	VertexMaterialClass	  	  *m_vertexMaterialClass;
-	DX8VertexBufferClass			*m_vertexBufferTile;	//First vertex buffer.
+	RenderBackendVertexBuffer			*m_vertexBufferTile;	//First vertex buffer.
 
 	void initData();
 };
@@ -161,8 +160,9 @@ RenderObjClass * DebugHintObject::Clone() const
 
 void DebugHintObject::freeMapResources()
 {
-	REF_PTR_RELEASE(m_indexBuffer);
-	REF_PTR_RELEASE(m_vertexBufferTile);
+	IRenderBackend *backend = WW3D::Get_Render_Backend();
+	RenderBackend_Release_Index_Buffer(backend, m_indexBuffer);
+	RenderBackend_Release_Vertex_Buffer(backend, m_vertexBufferTile);
 	REF_PTR_RELEASE(m_vertexMaterialClass);
 }
 
@@ -172,18 +172,28 @@ void DebugHintObject::initData()
 {
 	freeMapResources();	//free old data and ib/vb
 
-	m_indexBuffer = NEW_REF(DX8IndexBufferClass,(3));
+	IRenderBackend *backend = WW3D::Get_Render_Backend();
+	if (backend == nullptr) {
+		return;
+	}
+	m_indexBuffer = backend->Create_Index_Buffer(3 * sizeof(UnsignedShort), false);
 
 	// Fill up the IB
 	{
-		DX8IndexBufferClass::WriteLockClass lockIdxBuffer(m_indexBuffer);
-		UnsignedShort *ib=lockIdxBuffer.Get_Index_Array();
+		RenderBackendIndexBufferLock lockIdxBuffer(backend, m_indexBuffer, 0, 0,
+			RenderBackendBufferLockMode::Normal);
+		if (!lockIdxBuffer.Is_Locked()) {
+			return;
+		}
+		UnsignedShort *ib=(UnsignedShort*)lockIdxBuffer.Get_Data();
 		ib[0]=0;
 		ib[1]=1;
 		ib[2]=2;
 	}
 
-	m_vertexBufferTile = NEW_REF(DX8VertexBufferClass,(DX8_FVF_XYZDUV1,3,DX8VertexBufferClass::USAGE_DEFAULT));
+	m_vertexBufferTile = backend->Create_Vertex_Buffer(
+		3 * sizeof(VertexFormatXYZDUV1),
+		RenderBackendVertexFormat::PositionDiffuseTexture, false);
 
 	//go with a preset material for now.
 	m_vertexMaterialClass = VertexMaterialClass::Get_Preset(VertexMaterialClass::PRELIT_DIFFUSE);
@@ -205,8 +215,13 @@ void DebugHintObject::setLocAndColorAndSize(const Coord3D *loc, Int argb, Int si
 
 	if (m_vertexBufferTile)
 	{
-		DX8VertexBufferClass::WriteLockClass lockVtxBuffer(m_vertexBufferTile);
-		VertexFormatXYZDUV1 *vb = (VertexFormatXYZDUV1*)lockVtxBuffer.Get_Vertex_Array();
+		IRenderBackend *backend = WW3D::Get_Render_Backend();
+		RenderBackendVertexBufferLock lockVtxBuffer(backend, m_vertexBufferTile, 0, 0,
+			RenderBackendBufferLockMode::Normal);
+		if (!lockVtxBuffer.Is_Locked()) {
+			return;
+		}
+		VertexFormatXYZDUV1 *vb = (VertexFormatXYZDUV1*)lockVtxBuffer.Get_Data();
 
 		Real x1 = m_mySize * 0.866;	// cos(30)
 		Real y1 = m_mySize * 0.5;		// sin(30)
@@ -240,18 +255,24 @@ void DebugHintObject::Render(RenderInfoClass & rinfo)
 	SphereClass bounds(Vector3(m_myLoc.x, m_myLoc.y, m_myLoc.z), m_mySize);
 	if (!rinfo.Camera.Cull_Sphere(bounds))
 	{
-		WW3D::Get_Render_Backend()->Set_Material(m_vertexMaterialClass);
-		WW3D::Get_Render_Backend()->Set_Shader(m_shaderClass);
-		WW3D::Get_Render_Backend()->Set_Texture(0, nullptr);
-		WW3D::Get_Render_Backend()->Set_Index_Buffer(m_indexBuffer,0);
-		WW3D::Get_Render_Backend()->Set_Vertex_Buffer(m_vertexBufferTile);
+		IRenderBackend *backend = WW3D::Get_Render_Backend();
+		if (backend == nullptr) {
+			return;
+		}
+		backend->Set_Material(m_vertexMaterialClass);
+		backend->Set_Shader(m_shaderClass);
+		backend->Set_Texture(0, nullptr);
+		backend->Set_Index_Buffer(m_indexBuffer);
+		backend->Set_Vertex_Buffer(m_vertexBufferTile, 0, sizeof(VertexFormatXYZDUV1));
+		backend->Set_Vertex_Format(RenderBackendVertexFormat::PositionDiffuseTexture);
 
 		Matrix3D tm(Transform);
 		Vector3 vec(m_myLoc.x, m_myLoc.y, m_myLoc.z);
 		tm.Set_Translation(vec);
-		WW3D::Get_Render_Backend()->Set_Transform(RenderBackendTransform::World, tm);
+		backend->Set_Transform(RenderBackendTransform::World, tm);
 
-		WW3D::Get_Render_Backend()->Draw_Triangles(	0, 1, 0, 3);
+		backend->Draw_Indexed_Primitives(RenderBackendPrimitiveType::TriangleList,
+			0, 0, 3, 0, 1);
 	}
 }
 #endif // RTS_DEBUG
@@ -421,7 +442,7 @@ void W3DInGameUI::draw()
 	// repaint all our windows
 
 #ifdef EXTENDED_STATS
-	if (!DX8Wrapper::stats.m_disableConsole) {
+	if (!WW3D::Get_Render_Backend()->Get_Debug_Settings().m_disableConsole) {
 #endif
 
 #ifdef DO_UNIT_TIMINGS

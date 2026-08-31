@@ -45,30 +45,32 @@
 
 #include <WWLib/always.h>
 #include "W3DDevice/GameClient/W3DAssetManager.h"
-#include "WW3D2/proto.h"
-#include "WW3D2/rendobj.h"
+#include "WW3D2/Proto.h"
+#include "WW3D2/RendObj.h"
 #include <WWMath/vector3.h>
-#include "WW3D2/mesh.h"
-#include "WW3D2/hlod.h"
-#include "WW3D2/matinfo.h"
-#include "WW3D2/meshmdl.h"
-#include "WW3D2/part_emt.h"
-#include "WW3D2/vertmaterial.h"
-#include "WW3D2/dx8wrapper.h"
-#include "WW3D2/texture.h"
-#include "WW3D2/ww3d.h"
-#include "WW3D2/surfaceclass.h"
-#include "WW3D2/textureloader.h"
-#include "WW3D2/ww3dformat.h"
-#include "WW3D2/colorspace.h"
+#include "WW3D2/Mesh.h"
+#include "WW3D2/HLOD.h"
+#include "WW3D2/MatInfo.h"
+#include "WW3D2/MeshMdl.h"
+#include "WW3D2/PartEmt.h"
+#include "WW3D2/VertMaterial.h"
+#include "WW3D2/Texture.h"
+#include "WW3D2/WW3D.h"
+#include "WW3D2/SurfaceClass.h"
+#include "WW3D2/TextureLoader.h"
+#include "WW3D2/WW3DFormat.h"
+#include "WW3D2/ColorSpace.h"
 #include <WWDebug/wwprofile.h>
 #include "WWDebug/wwmemlog.h"
 #include "WWLib/ffactory.h"
-#include "WW3D2/font3d.h"
-#include "WW3D2/render2dsentence.h"
+#include "WW3D2/Font3D.h"
+#include "WW3D2/Render2DSentence.h"
 #include "Common/PerfTimer.h"
 #include "Common/GlobalData.h"
 #include "Common/GameCommon.h"
+#include <cctype>
+#include <string>
+#include "WW3D2/StringUtilities.h"
 
 
 //---------------------------------------------------------------------
@@ -81,6 +83,15 @@ const Vector3 ident_HSV(0,0,0);
 const float H_epsilon(1.0f);
 const float S_epsilon(0.01f);
 const float V_epsilon(0.01f);
+
+static inline void Lowercase_String(char *value)
+{
+	if (value == nullptr)
+		return;
+
+	for (char *character = value; *character != '\0'; ++character)
+		*character = static_cast<char>(std::tolower(static_cast<unsigned char>(*character)));
+}
 
 //---------------------------------------------------------------------
 // Externs defined somewhere in W3D.
@@ -169,7 +180,7 @@ TextureClass *	W3DAssetManager::Get_Texture
 	//Just call the base implementation after adjusting reduction to deal
 	//with our special types.
 
-	if (filename && *filename && _strnicmp(filename,"ZHC",3) == 0)
+	if (filename && *filename && WW3DString::Compare_No_Case_N(filename,"ZHC",3) == 0)
 		allow_reduction = false;	//don't allow reduction on our infantry textures.
 
 	return WW3DAssetManager::Get_Texture(	filename,
@@ -210,7 +221,7 @@ TextureClass *W3DAssetManager::Get_Texture(
 	}
 
 	StringClass lower_case_name(filename,true);
-	_strlwr(lower_case_name.str());
+	Lowercase_String(lower_case_name.str());
 
 	/*
 	** See if the texture has already been loaded.
@@ -272,7 +283,7 @@ static inline void Munge_Render_Obj_Name(char *newname, size_t newname_size, con
 {
 	char lower_case_name[255];
 	strlcpy(lower_case_name, oldname, ARRAY_SIZE(lower_case_name));
-	_strlwr(lower_case_name);
+	Lowercase_String(lower_case_name);
 
 	if (!textureName)
 		textureName = "";
@@ -285,7 +296,7 @@ static inline void Munge_Texture_Name(char *newname, size_t newname_size, const 
 {
 	char lower_case_name[255];
 	strlcpy(lower_case_name, oldname, ARRAY_SIZE(lower_case_name));
-	_strlwr(lower_case_name);
+	Lowercase_String(lower_case_name);
 	snprintf(newname, newname_size, "#%d#%s", color, lower_case_name);
 }
 
@@ -768,20 +779,20 @@ RenderObjClass * W3DAssetManager::Create_Render_Obj(
 	if (WW3D_Load_On_Demand && proto == nullptr)
 	{
 		// If we didn't find one, try to load on demand
-		char filename [MAX_PATH];
+		std::string filename;
 		const char *mesh_name = strchr (name, '.');
 		if (mesh_name != nullptr)
 		{
-			lstrcpyn(filename, name, ((int)mesh_name) - ((int)name) + 1);
-			lstrcat(filename, ".w3d");
+			filename.assign(name, static_cast<size_t>(mesh_name - name));
+			filename += ".w3d";
 		} else {
-			snprintf( filename, ARRAY_SIZE(filename), "%s.w3d", name);
+			filename = std::string(name) + ".w3d";
 		}
 
 		// If we can't find it, try the parent directory
-		if ( Load_3D_Assets( filename ) == false )
+		if ( Load_3D_Assets( filename.c_str() ) == false )
 		{
-			StringClass	new_filename = StringClass("..\\") + filename;
+			StringClass	new_filename = StringClass("..\\") + filename.c_str();
 			Load_3D_Assets(new_filename);
 		}
 
@@ -882,7 +893,7 @@ int W3DAssetManager::Recolor_Mesh(RenderObjClass *robj, const int color)
 
 	// recolor vertex material (assuming mesh is housecolor)
 	if ( (( (meshName=strchr(mesh->Get_Name(),'.') ) != nullptr && *(meshName++)) || ( (meshName=mesh->Get_Name()) != nullptr)) &&
-		_strnicmp(meshName,"HOUSECOLOR", 10) == 0)
+		WW3DString::Compare_No_Case_N(meshName,"HOUSECOLOR", 10) == 0)
 	{	for (i=0; i<material->Vertex_Material_Count(); i++)
 			Recolor_Vertex_Material(material->Peek_Vertex_Material(i),color);
 		didRecolor=1;
@@ -893,7 +904,7 @@ int W3DAssetManager::Recolor_Mesh(RenderObjClass *robj, const int color)
 	for (i=0; i<material->Texture_Count(); i++)
 	{
 		oldtex=material->Peek_Texture(i);
-		if (_strnicmp(oldtex->Get_Texture_Name(),"ZHC", 3) == 0)
+		if (WW3DString::Compare_No_Case_N(oldtex->Get_Texture_Name(),"ZHC", 3) == 0)
 		{	//This texture needs to be adjusted for housecolor
 			newtex=Recolor_Texture(oldtex,color);
 			if (newtex)
@@ -1003,7 +1014,7 @@ bool W3DAssetManager::Load_3D_Assets( const char * filename )
 		if (logfile)
 		{
 			StringClass lower_case_name(filename,true);
-			_strlwr(lower_case_name.Peek_Buffer());
+			Lowercase_String(lower_case_name.Peek_Buffer());
 			fprintf(logfile,"3D: %s\n",lower_case_name.str());
 			fclose(logfile);
 		}
@@ -1091,7 +1102,7 @@ static Bool getMeshColorMethods(MeshClass *mesh, Bool &vertexColor, Bool &textur
 	MaterialInfoClass *material = mesh->Get_Material_Info();
 	if (material)
 	{	for (int j=0; j<material->Texture_Count(); j++)
-			if (_strnicmp(material->Peek_Texture(j)->Get_Texture_Name(),"ZHC",3) == 0)
+			if (WW3DString::Compare_No_Case_N(material->Peek_Texture(j)->Get_Texture_Name(),"ZHC",3) == 0)
 			{	textureColor = true;
 				break;
 			}
@@ -1104,7 +1115,7 @@ static Bool getMeshColorMethods(MeshClass *mesh, Bool &vertexColor, Bool &textur
 	const char *meshName;
 	if ( ( (meshName=strchr(mesh->Get_Name(),'.') ) != nullptr && *(meshName++)) || ( (meshName=mesh->Get_Name()) != nullptr) )
 	{	//Check if this object has housecolors on mesh
-		if ( _strnicmp(meshName,"HOUSECOLOR", 10) == 0)
+		if ( WW3DString::Compare_No_Case_N(meshName,"HOUSECOLOR", 10) == 0)
 			vertexColor = true;
 	}
 
@@ -1316,7 +1327,7 @@ static inline void Munge_Render_Obj_Name(char *newname, const char *oldname, flo
 {
 	char lower_case_name[255];
 	strlcpy(lower_case_name, oldname, ARRAY_SIZE(lower_case_name));
-	_strlwr(lower_case_name);
+	Lowercase_String(lower_case_name);
 	sprintf(newname,"#%s!%gH%gS%gV%g", lower_case_name, scale, hsv_shift.X, hsv_shift.Y, hsv_shift.Z);
 }
 
@@ -1324,7 +1335,7 @@ static inline void Munge_Texture_Name(char *newname, const char *oldname, const 
 {
 	char lower_case_name[255];
 	strlcpy(lower_case_name, oldname, ARRAY_SIZE(lower_case_name));
-	_strlwr(lower_case_name);
+	Lowercase_String(lower_case_name);
 	sprintf(newname,"#%s!H%gS%gV%g", lower_case_name, hsv_shift.X, hsv_shift.Y, hsv_shift.Z);
 }
 
@@ -1369,26 +1380,24 @@ RenderObjClass * W3DAssetManager::Create_Render_Obj(const char * name,float scal
 
 	Set_WW3D_Load_On_Demand(true); // Auto Load.
 	if (WW3D_Load_On_Demand && proto == nullptr) {	// If we didn't find one, try to load on demand
-		char filename [MAX_PATH];
-		char *mesh_name = ::strchr (name, '.');
+		std::string filename;
+		const char *mesh_name = ::strchr (name, '.');
 		if (mesh_name != nullptr) {
-			::lstrcpyn (filename, name, ((int)mesh_name) - ((int)name) + 1);
-			if (isGranny)
-				::lstrcat (filename, ".gr2");
-			else
-				::lstrcat (filename, ".w3d");
+			filename.assign(name, static_cast<size_t>(mesh_name - name));
+			filename += isGranny ? ".gr2" : ".w3d";
 		} else {
-			sprintf( filename, "%s.w3d", name);
+			filename = std::string(name) + ".w3d";
 		}
 
 		// If we can't find it, try the parent directory
-		if ( Load_3D_Assets( filename ) == false ) {
-			StringClass	new_filename = StringClass("..\\") + filename;
+		if ( Load_3D_Assets( filename.c_str() ) == false ) {
+			StringClass	new_filename = StringClass("..\\") + filename.c_str();
 			if (Load_3D_Assets( new_filename ) == false)
 			{
-				char *mesh_name = ::strchr (filename, '.');
-				::lstrcpyn (mesh_name, ".gr2",5);
-				Load_3D_Assets( filename );
+				const size_t extension = filename.find('.');
+				if (extension != std::string::npos)
+					filename.replace(extension, std::string::npos, ".gr2");
+				Load_3D_Assets( filename.c_str() );
 				isGranny=true;
 			}
 		}
@@ -1453,7 +1462,7 @@ TextureClass * W3DAssetManager::Get_Texture_With_HSV_Shift(const char * filename
 			// No cached texture - need to create
 			char lower_case_name[255];
 			strlcpy(lower_case_name, filename, ARRAY_SIZE(lower_case_name));
-			_strlwr(lower_case_name);
+			Lowercase_String(lower_case_name);
 			TextureClass *oldtex = TextureHash.Get(lower_case_name);
 			if (!oldtex) {
 				oldtex = NEW_REF(TextureClass,(lower_case_name, nullptr, mip_level_count));

@@ -38,7 +38,8 @@ static void drawFramerateBar();
 #include <stdlib.h>
 #include "Platform/SDLPlatformWindow.h"
 #include <SDL3/SDL.h>
-#include <io.h>
+#include <filesystem>
+#include <string>
 #include <time.h>
 
 // USER INCLUDES //////////////////////////////////////////////////////////////
@@ -85,23 +86,22 @@ static void drawFramerateBar();
 #include "W3DDevice/GameClient/W3DScreenshot.h"
 #include "W3DDevice/GameClient/W3DShroud.h"
 #include "WWMath/wwmath.h"
-#include "WWLib/registry.h"
-#include "WW3D2/ww3d.h"
-#include "WW3D2/predlod.h"
-#include "WW3D2/part_emt.h"
-#include "WW3D2/part_ldr.h"
-#include "WW3D2/dx8caps.h"
-#include "WW3D2/ww3dformat.h"
-#include "WW3D2/agg_def.h"
-#include "WW3D2/render2dsentence.h"
-#include "WW3D2/sortingrenderer.h"
-#include "WW3D2/textureloader.h"
-#include "WW3D2/dx8webbrowser.h"
-#include "WW3D2/mesh.h"
-#include "WW3D2/hlod.h"
-#include "WW3D2/meshmatdesc.h"
-#include "WW3D2/meshmdl.h"
-#include "WW3D2/rddesc.h"
+#include "WW3D2/WW3D.h"
+#include "WW3D2/PredLod.h"
+#include "WW3D2/PartEmt.h"
+#include "WW3D2/PartLdr.h"
+#include "WW3D2/Backend/IRenderBackend.h"
+#include "WW3D2/WW3DFormat.h"
+#include "WW3D2/AggDef.h"
+#include "WW3D2/Render2DSentence.h"
+#include "WW3D2/SortingRenderer.h"
+#include "WW3D2/Statistics.h"
+#include "WW3D2/TextureLoader.h"
+#include "WW3D2/Mesh.h"
+#include "WW3D2/HLOD.h"
+#include "WW3D2/MeshMatDesc.h"
+#include "WW3D2/MeshMdl.h"
+#include "WW3D2/RDDesc.h"
 #include "WWLib/TARGA.h"
 
 #include "GameLogic/ScriptEngine.h"		// For TheScriptEngine - jkmcd
@@ -211,8 +211,8 @@ void StatDumpClass::dumpStats( Bool brief, Bool flagSpikes )
 
 	//Rendering stats
 	fprintf( m_fp, "Draws: %d \nSkins: %d \nSortedPolys: %d \nSkinPolys: %d\n",(Int)Debug_Statistics::Get_Draw_Calls(),
-		(Int)Debug_Statistics::Get_DX8_Skin_Renders(),
-		(Int)Debug_Statistics::Get_Sorting_Polygons(), (Int)Debug_Statistics::Get_DX8_Skin_Polygons());
+		(Int)Debug_Statistics::Get_Skin_Renders(),
+		(Int)Debug_Statistics::Get_Sorting_Polygons(), (Int)Debug_Statistics::Get_Skin_Polygons());
 
 	Int onScreenParticleCount = TheParticleSystemManager->getOnScreenParticleCount();
 
@@ -222,7 +222,7 @@ void StatDumpClass::dumpStats( Bool brief, Bool flagSpikes )
   	  fprintf( m_fp, "                                                                      DRAWS OUT OF TOLERANCE(2000)\n" );
     if ( Debug_Statistics::Get_Sorting_Polygons() > (onScreenParticleCount*2) + 300 )
   	  fprintf( m_fp, "                                                                      NON-PARTICLE-SORTS OUT OF TOLERANCE(300)\n" );
-    if ( Debug_Statistics::Get_DX8_Skin_Renders()>100 )
+    if ( Debug_Statistics::Get_Skin_Renders()>100 )
   	  fprintf( m_fp, "                                                                      SKINS OUT OF TOLERANCE(100)\n" );
   }
 
@@ -286,12 +286,12 @@ void StatDumpClass::dumpStats( Bool brief, Bool flagSpikes )
 
 
 	// polygons this frame
-	Int polyPerFrame = Debug_Statistics::Get_DX8_Polygons();
+	Int polyPerFrame = Debug_Statistics::Get_Polygons();
 	Int polyPerSecond = (Int)(polyPerFrame * fps);
 	fprintf( m_fp, "  Polygons: %d per frame (%d per second)\n", polyPerFrame, polyPerSecond );
 
 	// vertices this frame
-	fprintf( m_fp, "  Vertices: %d\n", Debug_Statistics::Get_DX8_Vertices() );
+	fprintf( m_fp, "  Vertices: %d\n", Debug_Statistics::Get_Vertices() );
 
 	//
 	// I'm adjusting the texture memory usage counter by subtracting
@@ -470,7 +470,7 @@ W3DDisplay::~W3DDisplay()
 		WW3D::Shutdown();
 	WWMath::Shutdown();
 	if (!TheGlobalData->m_headless)
-		DX8WebBrowser::Shutdown();
+		WW3D::Get_Render_Backend()->Shutdown_Browser();
 	delete TheW3DFileSystem;
 	TheW3DFileSystem = nullptr;
 
@@ -547,11 +547,19 @@ void W3DDisplay::setGamma(Real gamma, Real bright, Real contrast, Bool calibrate
 	WW3D::Get_Render_Backend()->Set_Gamma(gamma,bright,contrast,calibrate, false);
 }
 
+static Bool setSDLWindowed(Bool windowed)
+{
+	if (SDLPlatformWindow::window() == nullptr)
+		return TRUE;
+
+	return SDLPlatformWindow::setFullscreen(windowed ? false : true) ? TRUE : FALSE;
+}
+
 static void resizeSDLWindow(UnsignedInt xres, UnsignedInt yres, Bool windowed)
 {
 	SDL_Window *window = static_cast<SDL_Window *>(SDLPlatformWindow::window());
 	if (window == nullptr || !windowed ||
-		(SDL_GetWindowFlags(window) & SDL_WINDOW_FULLSCREEN) != 0)
+		SDLPlatformWindow::isFullscreen())
 		return;
 
 	int pixelWidth = 0;
@@ -584,14 +592,13 @@ Bool W3DDisplay::setDisplayMode( UnsignedInt xres, UnsignedInt yres, UnsignedInt
 	const UnsignedInt oldHeight = getHeight();
 	const UnsignedInt oldBitDepth = getBitDepth();
 	const Bool oldWindowed = getWindowed();
-	SDL_Window *window = static_cast<SDL_Window *>(SDLPlatformWindow::window());
-	const Bool actualWindowed = window != nullptr ?
-		((SDL_GetWindowFlags(window) & SDL_WINDOW_FULLSCREEN) == 0 ? TRUE : FALSE) : oldWindowed;
 
 	// SDL owns the native window size. Resize it in logical coordinates first,
 	// then reset only the D3D back buffer. Passing resize_window=true here would
 	// invoke the legacy renderer's native SetWindowPos path and could undo SDL's
 	// fullscreen/windowed style transition.
+	if (!setSDLWindowed(windowed))
+		return FALSE;
 	resizeSDLWindow(xres, yres, windowed);
 	if (WW3D_ERROR_OK == WW3D::Set_Render_Device(
 		WW3D::Get_Render_Device(), xres, yres, bitdepth, windowed, false, true, true))
@@ -602,12 +609,13 @@ Bool W3DDisplay::setDisplayMode( UnsignedInt xres, UnsignedInt yres, UnsignedInt
 	}
 
 	//set back to the original mode.
-	resizeSDLWindow(oldWidth, oldHeight, actualWindowed);
+	setSDLWindowed(oldWindowed);
+	resizeSDLWindow(oldWidth, oldHeight, oldWindowed);
 	WW3D::Set_Render_Device(
-		WW3D::Get_Render_Device(), oldWidth, oldHeight, oldBitDepth, actualWindowed,
+		WW3D::Get_Render_Device(), oldWidth, oldHeight, oldBitDepth, oldWindowed,
 		false, true, true);
 	Render2DClass::Set_Screen_Resolution(RectClass(0, 0, oldWidth, oldHeight));
-	Display::setDisplayMode(oldWidth, oldHeight, oldBitDepth, actualWindowed);
+	Display::setDisplayMode(oldWidth, oldHeight, oldBitDepth, oldWindowed);
 	return FALSE;	//did not change to a new mode.
 }
 
@@ -853,10 +861,15 @@ void W3DDisplay::init()
 
 		if (TheGlobalData->m_incrementalAGPBuf)
 		{
-			SortingRendererClass::SetMinVertexBufferSize(1);
+			WW3D::Get_Render_Backend()->Set_Sorting_Min_Vertex_Buffer_Size(1);
 		}
 		if (WW3D::Init( SDLPlatformWindow::nativeHandle() ) != WW3D_ERROR_OK)
 			throw ERROR_INVALID_D3D;	//failed to initialize.  User probably doesn't have DX 8.1
+
+		// SDL owns the fullscreen window and uses borderless desktop mode.
+		// Tell the backend to keep its swap chain windowed while the logical
+		// display mode remains fullscreen, so only SDL changes desktop mode.
+		WW3D::Set_Fullscreen_Mode(RenderBackendFullscreenMode::Borderless);
 
 		WW3D::Set_Prelit_Mode( WW3D::PRELIT_MODE_LIGHTMAP_MULTI_PASS );
 		WW3D::Set_Collision_Box_Display_Mask(0x00);	///<set to 0xff to make collision boxes visible
@@ -1000,7 +1013,7 @@ void W3DDisplay::init()
 			m_nativeDebugDisplay->setFontWidth( 9 );
 		}
 
-		DX8WebBrowser::Initialize();
+		WW3D::Get_Render_Backend()->Initialize_Browser();
 	}
 
 	// we're now online
@@ -1172,7 +1185,7 @@ void W3DDisplay::gatherDebugStats()
 		double fps = (Real)s_framesRenderedSinceLastUpdate / s_timeSinceLastUpdateInSecs;
 		double drawsPerFrame = Debug_Statistics::Get_Draw_Calls(); //(Real)s_drawCallsSinceLastUpdate / (Real)s_framesRenderedSinceLastUpdate;
 		double sortPolysPerFrame = Debug_Statistics::Get_Sorting_Polygons();  //(Real)s_sortedPolysSinceLastUpdate / (Real)s_framesRenderedSinceLastUpdate;
-		double skinDrawsPerFrame = Debug_Statistics::Get_DX8_Skin_Renders();
+		double skinDrawsPerFrame = Debug_Statistics::Get_Skin_Renders();
 
 		if (fps<0.1) fps = 0.1;
 
@@ -1184,7 +1197,7 @@ void W3DDisplay::gatherDebugStats()
 		if (cumuTime < 0.0) cumuTime = 0.0;
 		Int numFrames = (Int)TheGameLogic->getFrame() - (Int)START_CUMU_FRAME;
 		double cumuFPS = (numFrames > 0 && cumuTime > 0.0) ? (numFrames / cumuTime) : 0.0;
-		double skinPolysPerFrame = Debug_Statistics::Get_DX8_Skin_Polygons();
+		double skinPolysPerFrame = Debug_Statistics::Get_Skin_Polygons();
 
 		Int LOD = TheGlobalData->m_terrainLOD;
 		//unibuffer.format( L"FPS: %.2f, %.2fms mapLOD=%d [cumu FPS=%.2f] draws: %.2f sort: %.2f", fps, ms, LOD, cumuFPS, drawsPerFrame,sortPolysPerFrame);
@@ -1209,7 +1222,7 @@ void W3DDisplay::gatherDebugStats()
 		fpsString.format( L"FPS: %.2f", fps);
 		m_benchmarkDisplayString->setText( fpsString );
 
-		Int polyPerFrame = Debug_Statistics::Get_DX8_Polygons();
+		Int polyPerFrame = Debug_Statistics::Get_Polygons();
 
 #ifdef EXTENDED_STATS
 		static float gameOverheadMS = 0.0f;
@@ -1228,76 +1241,76 @@ void W3DDisplay::gatherDebugStats()
 		} else if (statMode == gameOverhead) {
 			gameOverheadMS = ms;
 			statMode = console;
-			DX8Wrapper::stats.m_disableTerrain = true;
-			DX8Wrapper::stats.m_disableOverhead = true;
-			DX8Wrapper::stats.m_disableWater = true;
-			DX8Wrapper::stats.m_disableObjects = true;
-			DX8Wrapper::stats.m_disableConsole = false;
-			DX8Wrapper::stats.m_debugLinesToShow = 1;
+			WW3D::Get_Render_Backend()->Get_Debug_Settings().m_disableTerrain = true;
+			WW3D::Get_Render_Backend()->Get_Debug_Settings().m_disableOverhead = true;
+			WW3D::Get_Render_Backend()->Get_Debug_Settings().m_disableWater = true;
+			WW3D::Get_Render_Backend()->Get_Debug_Settings().m_disableObjects = true;
+			WW3D::Get_Render_Backend()->Get_Debug_Settings().m_disableConsole = false;
+			WW3D::Get_Render_Backend()->Get_Debug_Settings().m_debugLinesToShow = 1;
 		} else if (statMode == console) {
 			consoleMS = ms;
 			statMode = threeDOverhead;
-			DX8Wrapper::stats.m_disableTerrain = true;
-			DX8Wrapper::stats.m_disableOverhead = true;
-			DX8Wrapper::stats.m_disableWater = true;
-			DX8Wrapper::stats.m_disableObjects = true;
-			DX8Wrapper::stats.m_disableConsole = true;
-			DX8Wrapper::stats.m_debugLinesToShow = 1;
+			WW3D::Get_Render_Backend()->Get_Debug_Settings().m_disableTerrain = true;
+			WW3D::Get_Render_Backend()->Get_Debug_Settings().m_disableOverhead = true;
+			WW3D::Get_Render_Backend()->Get_Debug_Settings().m_disableWater = true;
+			WW3D::Get_Render_Backend()->Get_Debug_Settings().m_disableObjects = true;
+			WW3D::Get_Render_Backend()->Get_Debug_Settings().m_disableConsole = true;
+			WW3D::Get_Render_Backend()->Get_Debug_Settings().m_debugLinesToShow = 1;
 		} else if (statMode == threeDOverhead) {
 			threeDOverheadMS = ms;
 			statMode = terrain;
-			DX8Wrapper::stats.m_disableTerrain = false;
-			DX8Wrapper::stats.m_disableOverhead = true;
-			DX8Wrapper::stats.m_disableWater = true;
-			DX8Wrapper::stats.m_disableObjects = true;
-			DX8Wrapper::stats.m_disableConsole = true;
-			DX8Wrapper::stats.m_debugLinesToShow = 1;
+			WW3D::Get_Render_Backend()->Get_Debug_Settings().m_disableTerrain = false;
+			WW3D::Get_Render_Backend()->Get_Debug_Settings().m_disableOverhead = true;
+			WW3D::Get_Render_Backend()->Get_Debug_Settings().m_disableWater = true;
+			WW3D::Get_Render_Backend()->Get_Debug_Settings().m_disableObjects = true;
+			WW3D::Get_Render_Backend()->Get_Debug_Settings().m_disableConsole = true;
+			WW3D::Get_Render_Backend()->Get_Debug_Settings().m_debugLinesToShow = 1;
 		} else if (statMode == terrain) {
 			terrainMS = ms;
 			statMode = objects;
-			DX8Wrapper::stats.m_disableOverhead = true;
-			DX8Wrapper::stats.m_disableTerrain = true;
-			DX8Wrapper::stats.m_disableWater = true;
-			DX8Wrapper::stats.m_disableObjects = false;
-			DX8Wrapper::stats.m_disableConsole = true;
-			DX8Wrapper::stats.m_debugLinesToShow = 1;
+			WW3D::Get_Render_Backend()->Get_Debug_Settings().m_disableOverhead = true;
+			WW3D::Get_Render_Backend()->Get_Debug_Settings().m_disableTerrain = true;
+			WW3D::Get_Render_Backend()->Get_Debug_Settings().m_disableWater = true;
+			WW3D::Get_Render_Backend()->Get_Debug_Settings().m_disableObjects = false;
+			WW3D::Get_Render_Backend()->Get_Debug_Settings().m_disableConsole = true;
+			WW3D::Get_Render_Backend()->Get_Debug_Settings().m_debugLinesToShow = 1;
 		} else if (statMode == objects) {
 			objectMS = ms;
 			statMode = overlap;
-			DX8Wrapper::stats.m_disableOverhead = false;
-			DX8Wrapper::stats.m_disableTerrain = false;
-			DX8Wrapper::stats.m_disableWater = false;
-			DX8Wrapper::stats.m_disableObjects = false;
-			DX8Wrapper::stats.m_disableConsole = true;
-			DX8Wrapper::stats.m_sleepTime = (int)(terrainMS);
-			DX8Wrapper::stats.m_debugLinesToShow = 1;
+			WW3D::Get_Render_Backend()->Get_Debug_Settings().m_disableOverhead = false;
+			WW3D::Get_Render_Backend()->Get_Debug_Settings().m_disableTerrain = false;
+			WW3D::Get_Render_Backend()->Get_Debug_Settings().m_disableWater = false;
+			WW3D::Get_Render_Backend()->Get_Debug_Settings().m_disableObjects = false;
+			WW3D::Get_Render_Backend()->Get_Debug_Settings().m_disableConsole = true;
+			WW3D::Get_Render_Backend()->Get_Debug_Settings().m_sleepTime = (int)(terrainMS);
+			WW3D::Get_Render_Backend()->Get_Debug_Settings().m_debugLinesToShow = 1;
 		} else if (statMode == overlap) {
 			overlapMS = ms;
 			statMode = normal;
-			DX8Wrapper::stats.m_disableOverhead = false;
-			DX8Wrapper::stats.m_disableTerrain = false;
-			DX8Wrapper::stats.m_disableWater = false;
-			DX8Wrapper::stats.m_disableObjects = false;
-			DX8Wrapper::stats.m_disableConsole = true;
-			DX8Wrapper::stats.m_sleepTime = 0;
-			DX8Wrapper::stats.m_debugLinesToShow = 1;
+			WW3D::Get_Render_Backend()->Get_Debug_Settings().m_disableOverhead = false;
+			WW3D::Get_Render_Backend()->Get_Debug_Settings().m_disableTerrain = false;
+			WW3D::Get_Render_Backend()->Get_Debug_Settings().m_disableWater = false;
+			WW3D::Get_Render_Backend()->Get_Debug_Settings().m_disableObjects = false;
+			WW3D::Get_Render_Backend()->Get_Debug_Settings().m_disableConsole = true;
+			WW3D::Get_Render_Backend()->Get_Debug_Settings().m_sleepTime = 0;
+			WW3D::Get_Render_Backend()->Get_Debug_Settings().m_debugLinesToShow = 1;
 		} else if (statMode == normal) {
 			overlapMS = (ms + ((int)terrainMS) - overlapMS );
 			statMode = disabled;
 			extendedStats = SHOW_STATS_TIME;
 
 			// Done collecting stats. Re-enable stuff
-			DX8Wrapper::stats.m_disableConsole = false;
-			DX8Wrapper::stats.m_debugLinesToShow = -1;
-		} else if (!DX8Wrapper::stats.m_showingStats) {
+			WW3D::Get_Render_Backend()->Get_Debug_Settings().m_disableConsole = false;
+			WW3D::Get_Render_Backend()->Get_Debug_Settings().m_debugLinesToShow = -1;
+		} else if (!WW3D::Get_Render_Backend()->Get_Debug_Settings().m_showingStats) {
 			// start collecting extended info.
-			DX8Wrapper::stats.m_showingStats = true;
-			DX8Wrapper::stats.m_disableOverhead = false;
-			DX8Wrapper::stats.m_disableTerrain = true;
-			DX8Wrapper::stats.m_disableWater = true;
-			DX8Wrapper::stats.m_disableObjects = true;
-			DX8Wrapper::stats.m_disableConsole = true;
-			DX8Wrapper::stats.m_debugLinesToShow = 1;
+			WW3D::Get_Render_Backend()->Get_Debug_Settings().m_showingStats = true;
+			WW3D::Get_Render_Backend()->Get_Debug_Settings().m_disableOverhead = false;
+			WW3D::Get_Render_Backend()->Get_Debug_Settings().m_disableTerrain = true;
+			WW3D::Get_Render_Backend()->Get_Debug_Settings().m_disableWater = true;
+			WW3D::Get_Render_Backend()->Get_Debug_Settings().m_disableObjects = true;
+			WW3D::Get_Render_Backend()->Get_Debug_Settings().m_disableConsole = true;
+			WW3D::Get_Render_Backend()->Get_Debug_Settings().m_debugLinesToShow = 1;
 			statMode = sync;
 			gameOverheadMS = 0.0f;
 			threeDOverheadMS = 0.0f;
@@ -1314,13 +1327,13 @@ void W3DDisplay::gatherDebugStats()
 				char bufferA[ 256 ];
 				sprintf( bufferA, "FPS: %.2f, %.2fms - OH %.2fms, Console %.2fms, 3D OH %.2fms, Terrain %.2fms, Obs %.2fms, CPU %.2fms\n",
 					fps, ms, gameOverheadMS, consoleMS, threeDOverheadMS, terrainMS, objectMS, overlapMS);
-				::OutputDebugString(bufferA);
+				SDL_Log("%s", bufferA);
 				if (pListFile) {
 					fprintf(pListFile, "\n%s", bufferA);
 				}
 				sprintf( bufferA, "Polygons: per frame %d, per second %d\n", polyPerFrame,
 						(Int)(polyPerFrame*fps));
-				::OutputDebugString(bufferA);
+				SDL_Log("%s", bufferA);
 				if (pListFile) {
 					fprintf(pListFile, "%s", bufferA);
 					fflush(pListFile);
@@ -1339,17 +1352,6 @@ void W3DDisplay::gatherDebugStats()
 		}
 
 #endif
-		// check for debug D3D
-		Bool debugD3D=false;
-		RegistryClass registry ("Software\\Microsoft\\Direct3d");
-		if (registry.Is_Valid ()) {
-			if (registry.Get_Int ("LoadDebugRuntime", 0) == 1) {
-				debugD3D = true;
-			}
-		}
-		if (debugD3D) {
-			unibuffer.concat(L", DEBUG D3D");
-		}
 #ifdef RTS_DEBUG
 		unibuffer.concat(L", DEBUG app");
 #endif
@@ -1366,7 +1368,7 @@ void W3DDisplay::gatherDebugStats()
 		m_displayStrings[Polygons]->setText( unibuffer );
 
 		// vertices this frame
-		unibuffer.format( L"Vertices: %d", Debug_Statistics::Get_DX8_Vertices() );
+		unibuffer.format( L"Vertices: %d", Debug_Statistics::Get_Vertices() );
 		m_displayStrings[Vertices]->setText( unibuffer );
 
 		//
@@ -1659,9 +1661,9 @@ void W3DDisplay::drawDebugStats()
 
 	int linesOfStrings = DisplayStringCount;
 #ifdef EXTENDED_STATS
-	if (DX8Wrapper::stats.m_debugLinesToShow > -1)
+	if (WW3D::Get_Render_Backend()->Get_Debug_Settings().m_debugLinesToShow > -1)
 	{
-		linesOfStrings = DX8Wrapper::stats.m_debugLinesToShow;
+		linesOfStrings = WW3D::Get_Render_Backend()->Get_Debug_Settings().m_debugLinesToShow;
 	}
 
 #endif
@@ -1731,7 +1733,7 @@ void W3DDisplay::calculateTerrainLOD()
 
 	Int64 freq64 = getPerformanceCounterFrequency();
 
-	char buf[_MAX_PATH];
+	char buf[256];
 	float frameTime = 0;
 	float maxTimeLimit = TheGlobalData->m_terrainLODTargetTimeMS/1000.0f;
 	TerrainLOD goodLOD = TERRAIN_LOD_MIN;
@@ -1773,7 +1775,7 @@ void W3DDisplay::calculateTerrainLOD()
 			Int64 time64 = getPerformanceCounter();
 			timeForFrame = (float)((double)(time64-startTime64) / (double)(freq64));
 			sprintf(buf, "%.2fms ", timeForFrame*1000.0f);
-			::OutputDebugString(buf);
+			SDL_Log("%s", buf);
 			if (i>=NUM_TO_DISCARD) {
 				frameTime += timeForFrame;
 				if (i>NUM_TO_DISCARD+1 &&
@@ -1786,7 +1788,7 @@ void W3DDisplay::calculateTerrainLOD()
 		frameTime /= ((i)-NUM_TO_DISCARD);
 		count++;
 		sprintf(buf, "\n LOD %d, time %.2fms\n", curLOD, frameTime*1000.0f);
-		::OutputDebugString(buf);
+		SDL_Log("%s", buf);
 		if (frameTime<maxTimeLimit && goodLOD<curLOD) {
 			goodLOD = curLOD;
 		}
@@ -1893,7 +1895,7 @@ AGAIN:
 #ifdef EXTENDED_STATS
 	else
 	{
-		DX8Wrapper::stats.m_showingStats = false;
+		WW3D::Get_Render_Backend()->Get_Debug_Settings().m_showingStats = false;
 	}
 #endif
 
@@ -1961,7 +1963,7 @@ AGAIN:
 	WW3D::Sync(TheGameLogic->hasUpdated());
 
 	static Int now;
-	now=timeGetTime();
+	now=SDL_GetTicks();
 
 	if (TheTacticalView->getTimeMultiplier()>1)
 	{
@@ -2003,8 +2005,8 @@ AGAIN:
 		Debug_Statistics::End_Statistics();	//record number of polygons rendered in RenderTargetTextures.
 
 		//Store number of polygons rendered in renderTargetTextures.
-		Int numRenderTargetPolygons=Debug_Statistics::Get_DX8_Polygons();
-		Int numRenderTargetVertices=Debug_Statistics::Get_DX8_Vertices();
+		Int numRenderTargetPolygons=Debug_Statistics::Get_Polygons();
+		Int numRenderTargetVertices=Debug_Statistics::Get_Vertices();
 
 		// start render block
 		#if defined(_ALLOW_DEBUG_CHEATS_IN_RELEASE)
@@ -2029,7 +2031,7 @@ AGAIN:
 				couldRender = true;
 				// add the number of verts/polygons drawn before the main scene
 				if (numRenderTargetPolygons || numRenderTargetVertices)
-					Debug_Statistics::Record_DX8_Polys_And_Vertices(numRenderTargetPolygons,numRenderTargetVertices,ShaderClass::_PresetOpaqueShader);
+					Debug_Statistics::Record_Polys_And_Vertices(numRenderTargetPolygons,numRenderTargetVertices,ShaderClass::_PresetOpaqueShader);
 
 				// draw all views of the world
 				drawViews();
@@ -2134,7 +2136,7 @@ AGAIN:
 	} while (freezeTime && !TheTacticalView->isCameraMovementFinished());
 
 #ifdef EXTENDED_STATS
-	if (DX8Wrapper::stats.m_disableOverhead) {
+	if (WW3D::Get_Render_Backend()->Get_Debug_Settings().m_disableOverhead) {
 		goto AGAIN;
 	}
 #endif
@@ -2242,7 +2244,7 @@ void W3DDisplay::createLightPulse( const Coord3D *pos, const RGBColor *color,
 void W3DDisplay::toggleLetterBox()
 {
 	m_letterBoxEnabled = !m_letterBoxEnabled;
-	m_letterBoxFadeStartTime = timeGetTime();
+	m_letterBoxFadeStartTime = SDL_GetTicks();
 
 	//WST  9/18/2002 This is not a script api to prevent cheat. JSC Integrated 5/20/03
 	if( TheTacticalView )
@@ -2258,7 +2260,7 @@ void W3DDisplay::enableLetterBox(Bool enable)
 		if (!m_letterBoxEnabled)
 		{	//letterbox mode not previously enabled
 			m_letterBoxEnabled = TRUE;
-			m_letterBoxFadeStartTime = timeGetTime();
+			m_letterBoxFadeStartTime = SDL_GetTicks();
 
 			//WST  9/18/2002 - This is not a script api to prevent cheat.  JSC Integrated 5/20/03
 			if( TheTacticalView )
@@ -2272,7 +2274,7 @@ void W3DDisplay::enableLetterBox(Bool enable)
 		if (m_letterBoxEnabled)
 		{	//letterbox mode no previously disabled
 			m_letterBoxEnabled = FALSE;
-			m_letterBoxFadeStartTime = timeGetTime();
+			m_letterBoxFadeStartTime = SDL_GetTicks();
 
 			//WST  9/18/2002. JSC Integrated 5/20/03
 			if( TheTacticalView )
@@ -3271,7 +3273,7 @@ void W3DDisplay::dumpAssetUsage(const char* mapname)
 	while (true)
 	{
 		sprintf(buf, "AssetUsage_%s_%04d.txt",leafname,idx);
-		if (_access(buf, 0) != 0)
+		if (!std::filesystem::exists(buf))
 			break;	// it exists, we're good
 		++idx;
 	}
@@ -3292,8 +3294,8 @@ void W3DDisplay::dumpAssetUsage(const char* mapname)
 //-------------------------------------------------------------------------------------------------
 static void drawFramerateBar()
 {
-	static DWORD prevTime = timeGetTime();
-	DWORD now = timeGetTime();
+	static unsigned int prevTime = SDL_GetTicks();
+	unsigned int now = SDL_GetTicks();
 	Real percTime = (1000.0f / (now - prevTime) ) / (1000.0f / TheGlobalData->m_framesPerSecondLimit);
 
 	if (percTime > 1.0f)

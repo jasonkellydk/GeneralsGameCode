@@ -22,12 +22,12 @@
 
 #pragma once
 
-#include "WW3D2/scene.h"
+#include "WW3D2/Scene.h"
 #include "WWLib/chunkio.h"
-#include "WW3D2/hanim.h"
-#include "WW3D2/hcanim.h"
-#include "WW3D2/dynamesh.h"
-#include "WW3D2/rendobj.h"
+#include "WW3D2/HAnim.h"
+#include "WW3D2/HCAnim.h"
+#include "WW3D2/DynaMesh.h"
+#include "WW3D2/RendObj.h"
 #include "LODDefs.h"
 
 

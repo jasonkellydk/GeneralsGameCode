@@ -21,25 +21,24 @@
 #include "DrawObject.h"
 
 #include <stdlib.h>
-#include <WW3D2/assetmgr.h>
-#include <WW3D2/texture.h>
+#include <WW3D2/AssetMgr.h>
+#include <WW3D2/Texture.h>
 #include <WWMath/tri.h>
 #include <WWMath/colmath.h>
-#include <WW3D2/coltest.h>
-#include <WW3D2/rinfo.h>
-#include <WW3D2/camera.h>
+#include <WW3D2/ColTest.h>
+#include <WW3D2/RInfo.h>
+#include <WW3D2/Camera.h>
 #include "Common/GlobalData.h"
 #include "W3DDevice/GameClient/WorldHeightMap.h"
 #include "W3DDevice/GameClient/TerrainTex.h"
 #include "W3DDevice/GameClient/HeightMap.h"
 #include "W3DDevice/GameClient/W3DAssetManager.h"
 #include "W3DDevice/GameClient/W3DWater.h"
-#include "WW3D2/dx8wrapper.h"
-#include "WW3D2/IRenderBackend.h"
-#include "WW3D2/mesh.h"
-#include "WW3D2/meshmdl.h"
-#include "WW3D2/shader.h"
-#include "WW3D2/ww3d.h"
+#include "WW3D2/Backend/IRenderBackend.h"
+#include "WW3D2/Mesh.h"
+#include "WW3D2/MeshMdl.h"
+#include "WW3D2/Shader.h"
+#include "WW3D2/WW3D.h"
 #include "Common/MapObject.h"
 #include "GameLogic/PolygonTrigger.h"
 #include "GameLogic/SidesList.h"
@@ -55,7 +54,7 @@
 #include "Common/BorderColors.h"
 #include "Common/ThingTemplate.h"
 #include "W3DDevice/Common/W3DConvert.h"
-#include "WW3D2/render2d.h"
+#include "WW3D2/Render2D.h"
 #include "GameLogic/Weapon.h"
 #include "Common/AudioEventInfo.h"
 
@@ -254,10 +253,11 @@ Int DrawObject::initData()
 	freeMapResources();	//free old data and ib/vb
 
 	m_numTriangles = 2*NUM_TRI;
-	m_indexBuffer=NEW_REF(DX8IndexBufferClass,(m_numTriangles*3, DX8IndexBufferClass::USAGE_DYNAMIC));
+	m_indexBuffer=NEW_REF(IndexBufferClass,(m_numTriangles*3, IndexBufferClass::USAGE_DYNAMIC));
 
 	// Fill up the IB
-	DX8IndexBufferClass::WriteLockClass lockIdxBuffer(m_indexBuffer, D3DLOCK_DISCARD);
+	IndexBufferClass::WriteLockClass lockIdxBuffer(m_indexBuffer,
+		RenderBackendBufferLockMode::Discard);
 	UnsignedShort *ib=lockIdxBuffer.Get_Index_Array();
 
 	for (i=0; i<3*m_numTriangles; i+=3)
@@ -269,11 +269,11 @@ Int DrawObject::initData()
 		ib+=3;	//skip the 3 indices we just filled
 	}
 
-	m_vertexBufferTile1=NEW_REF(DX8VertexBufferClass,(DX8_FVF_XYZDUV1,m_numTriangles*3,DX8VertexBufferClass::USAGE_DYNAMIC));
-	m_vertexBufferTile2=NEW_REF(DX8VertexBufferClass,(DX8_FVF_XYZDUV1,m_numTriangles*3,DX8VertexBufferClass::USAGE_DYNAMIC));
+	m_vertexBufferTile1=NEW_REF(VertexBufferClass,(RenderBackendVertexFormat::PositionDiffuseTexture,m_numTriangles*3,VertexBufferClass::USAGE_DYNAMIC));
+	m_vertexBufferTile2=NEW_REF(VertexBufferClass,(RenderBackendVertexFormat::PositionDiffuseTexture,m_numTriangles*3,VertexBufferClass::USAGE_DYNAMIC));
 
-	m_vertexFeedback=NEW_REF(DX8VertexBufferClass,(DX8_FVF_XYZDUV1,NUM_FEEDBACK_VERTEX,DX8VertexBufferClass::USAGE_DYNAMIC));
-	m_indexFeedback=NEW_REF(DX8IndexBufferClass,(NUM_FEEDBACK_INDEX,DX8IndexBufferClass::USAGE_DYNAMIC));
+	m_vertexFeedback=NEW_REF(VertexBufferClass,(RenderBackendVertexFormat::PositionDiffuseTexture,NUM_FEEDBACK_VERTEX,VertexBufferClass::USAGE_DYNAMIC));
+	m_indexFeedback=NEW_REF(IndexBufferClass,(NUM_FEEDBACK_INDEX,IndexBufferClass::USAGE_DYNAMIC));
 
 	//go with a preset material for now.
 	m_vertexMaterialClass=VertexMaterialClass::Get_Preset(VertexMaterialClass::PRELIT_DIFFUSE);
@@ -323,11 +323,13 @@ void DrawObject::updateMeshVB()
 
 	m_feedbackVertexCount = 0;
 	m_feedbackIndexCount = 0;
-	DX8IndexBufferClass::WriteLockClass lockIdxBuffer(m_indexFeedback, D3DLOCK_DISCARD);
+	IndexBufferClass::WriteLockClass lockIdxBuffer(m_indexFeedback,
+		RenderBackendBufferLockMode::Discard);
 	UnsignedShort *ib=lockIdxBuffer.Get_Index_Array();
 	UnsignedShort *curIb = ib;
 
-	DX8VertexBufferClass::WriteLockClass lockVtxBuffer(m_vertexFeedback, D3DLOCK_DISCARD);
+	VertexBufferClass::WriteLockClass lockVtxBuffer(m_vertexFeedback,
+		RenderBackendBufferLockMode::Discard);
 	VertexFormatXYZDUV1 *vb = (VertexFormatXYZDUV1*)lockVtxBuffer.Get_Vertex_Array();
 	VertexFormatXYZDUV1 *curVb = vb;
 
@@ -451,11 +453,13 @@ void DrawObject::updateRampVB()
 
 	m_feedbackVertexCount = 0;
 	m_feedbackIndexCount = 0;
-	DX8IndexBufferClass::WriteLockClass lockIdxBuffer(m_indexFeedback, D3DLOCK_DISCARD);
+	IndexBufferClass::WriteLockClass lockIdxBuffer(m_indexFeedback,
+		RenderBackendBufferLockMode::Discard);
 	UnsignedShort *ib=lockIdxBuffer.Get_Index_Array();
 	UnsignedShort *curIb = ib;
 
-	DX8VertexBufferClass::WriteLockClass lockVtxBuffer(m_vertexFeedback, D3DLOCK_DISCARD);
+	VertexBufferClass::WriteLockClass lockVtxBuffer(m_vertexFeedback,
+		RenderBackendBufferLockMode::Discard);
 	VertexFormatXYZDUV1 *vb = (VertexFormatXYZDUV1*)lockVtxBuffer.Get_Vertex_Array();
 	VertexFormatXYZDUV1 *curVb = vb;
 
@@ -567,11 +571,13 @@ void DrawObject::updateBoundaryVB()
 
 	m_feedbackVertexCount = 0;
 	m_feedbackIndexCount = 0;
-	DX8IndexBufferClass::WriteLockClass lockIdxBuffer(m_indexFeedback, D3DLOCK_DISCARD);
+	IndexBufferClass::WriteLockClass lockIdxBuffer(m_indexFeedback,
+		RenderBackendBufferLockMode::Discard);
 	UnsignedShort *ib=lockIdxBuffer.Get_Index_Array();
 	UnsignedShort *curIb = ib;
 
-	DX8VertexBufferClass::WriteLockClass lockVtxBuffer(m_vertexFeedback, D3DLOCK_DISCARD);
+	VertexBufferClass::WriteLockClass lockVtxBuffer(m_vertexFeedback,
+		RenderBackendBufferLockMode::Discard);
 	VertexFormatXYZDUV1 *vb = (VertexFormatXYZDUV1*)lockVtxBuffer.Get_Vertex_Array();
 	VertexFormatXYZDUV1 *curVb = vb;
 
@@ -743,11 +749,13 @@ void DrawObject::updateAmbientSoundVB()
 {
 	m_feedbackVertexCount = 0;
 	m_feedbackIndexCount = 0;
-	DX8IndexBufferClass::WriteLockClass lockIdxBuffer(m_indexFeedback, D3DLOCK_DISCARD);
+	IndexBufferClass::WriteLockClass lockIdxBuffer(m_indexFeedback,
+		RenderBackendBufferLockMode::Discard);
 	UnsignedShort *ib=lockIdxBuffer.Get_Index_Array();
 	UnsignedShort *curIb = ib;
 
-	DX8VertexBufferClass::WriteLockClass lockVtxBuffer(m_vertexFeedback, D3DLOCK_DISCARD);
+	VertexBufferClass::WriteLockClass lockVtxBuffer(m_vertexFeedback,
+		RenderBackendBufferLockMode::Discard);
 	VertexFormatXYZDUV1 *vb = (VertexFormatXYZDUV1*)lockVtxBuffer.Get_Vertex_Array();
 	VertexFormatXYZDUV1 *curVb = vb;
 
@@ -853,11 +861,13 @@ void DrawObject::updateWaypointVB()
 
 	m_feedbackVertexCount = 0;
 	m_feedbackIndexCount = 0;
-	DX8IndexBufferClass::WriteLockClass lockIdxBuffer(m_indexFeedback, D3DLOCK_DISCARD);
+	IndexBufferClass::WriteLockClass lockIdxBuffer(m_indexFeedback,
+		RenderBackendBufferLockMode::Discard);
 	UnsignedShort *ib=lockIdxBuffer.Get_Index_Array();
 	UnsignedShort *curIb = ib;
 
-	DX8VertexBufferClass::WriteLockClass lockVtxBuffer(m_vertexFeedback, D3DLOCK_DISCARD);
+	VertexBufferClass::WriteLockClass lockVtxBuffer(m_vertexFeedback,
+		RenderBackendBufferLockMode::Discard);
 	VertexFormatXYZDUV1 *vb = (VertexFormatXYZDUV1*)lockVtxBuffer.Get_Vertex_Array();
 	VertexFormatXYZDUV1 *curVb = vb;
 
@@ -1091,11 +1101,13 @@ void DrawObject::updatePolygonVB(PolygonTrigger *pTrig, Bool selected, Bool isOp
 	green = green<<8;
 	m_feedbackVertexCount = 0;
 	m_feedbackIndexCount = 0;
-	DX8IndexBufferClass::WriteLockClass lockIdxBuffer(m_indexFeedback, D3DLOCK_DISCARD);
+	IndexBufferClass::WriteLockClass lockIdxBuffer(m_indexFeedback,
+		RenderBackendBufferLockMode::Discard);
 	UnsignedShort *ib=lockIdxBuffer.Get_Index_Array();
 	UnsignedShort *curIb = ib;
 
-	DX8VertexBufferClass::WriteLockClass lockVtxBuffer(m_vertexFeedback, D3DLOCK_DISCARD);
+	VertexBufferClass::WriteLockClass lockVtxBuffer(m_vertexFeedback,
+		RenderBackendBufferLockMode::Discard);
 	VertexFormatXYZDUV1 *vb = (VertexFormatXYZDUV1*)lockVtxBuffer.Get_Vertex_Array();
 	VertexFormatXYZDUV1 *curVb = vb;
 
@@ -1185,11 +1197,13 @@ void DrawObject::updateFeedbackVB()
 	const Int theAlpha = 64;
 	m_feedbackVertexCount = 0;
 	m_feedbackIndexCount = 0;
-	DX8IndexBufferClass::WriteLockClass lockIdxBuffer(m_indexFeedback, D3DLOCK_DISCARD);
+	IndexBufferClass::WriteLockClass lockIdxBuffer(m_indexFeedback,
+		RenderBackendBufferLockMode::Discard);
 	UnsignedShort *ib=lockIdxBuffer.Get_Index_Array();
 	UnsignedShort *curIb = ib;
 
-	DX8VertexBufferClass::WriteLockClass lockVtxBuffer(m_vertexFeedback, D3DLOCK_DISCARD);
+	VertexBufferClass::WriteLockClass lockVtxBuffer(m_vertexFeedback,
+		RenderBackendBufferLockMode::Discard);
 	VertexFormatXYZDUV1 *vb = (VertexFormatXYZDUV1*)lockVtxBuffer.Get_Vertex_Array();
 	VertexFormatXYZDUV1 *curVb = vb;
 
@@ -1372,7 +1386,7 @@ but doesn't, really.
 
 /** updateVB puts a circle with an arrow into the vertex buffer. */
 
-Int DrawObject::updateVB(DX8VertexBufferClass	*pVB, Int color, Bool doArrow, Bool doDiamond)
+Int DrawObject::updateVB(VertexBufferClass	*pVB, Int color, Bool doArrow, Bool doDiamond)
 {
 	Int i, k;
 
@@ -1394,7 +1408,8 @@ Int DrawObject::updateVB(DX8VertexBufferClass	*pVB, Int color, Bool doArrow, Boo
 	if (pVB )
 	{
 
-		DX8VertexBufferClass::WriteLockClass lockVtxBuffer(pVB, D3DLOCK_DISCARD);
+	VertexBufferClass::WriteLockClass lockVtxBuffer(pVB,
+		RenderBackendBufferLockMode::Discard);
 		VertexFormatXYZDUV1 *vb = (VertexFormatXYZDUV1*)lockVtxBuffer.Get_Vertex_Array();
 
 		const Real theZ = 0.0f;

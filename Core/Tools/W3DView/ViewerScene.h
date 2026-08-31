@@ -36,7 +36,7 @@
 
 #pragma once
 
-#include "WW3D2/scene.h"
+#include "WW3D2/Scene.h"
 #include "WWMath/aabox.h"
 #include "WWMath/sphere.h"
 

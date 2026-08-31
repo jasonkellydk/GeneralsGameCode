@@ -37,7 +37,7 @@ public:
 
 	W3DShadowManager();
 	~W3DShadowManager();
-	Bool init();	///<initialize resources used by manager, must have valid D3D device.
+	Bool init();	///<initialize resources used by manager, must have a valid renderer.
 	void queueShadows(Bool state) {m_isShadowScene=state;}	///<flags system to process shadows on next render call.
 
 	// shadow list management

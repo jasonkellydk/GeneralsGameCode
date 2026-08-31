@@ -28,7 +28,7 @@
 
 #pragma once
 
-#include "WW3D2/light.h"
+#include "WW3D2/Light.h"
 #include "Lib/BaseType.h"
 class HeightMapRenderObjClass;
 

@@ -33,12 +33,12 @@
 #include "ViewerAssetMgr.h"
 #include "Globals.h"
 #include "AnimatedSoundOptionsDialog.h"
-#include "WW3D2/animatedsoundmgr.h"
+#include "WW3D2/AnimatedSoundMgr.h"
 
 
 #undef STRICT
-#include "WW3D2/ww3d.h"
-#include "WW3D2/assetmgr.h"
+#include "WW3D2/WW3D.h"
+#include "WW3D2/AssetMgr.h"
 
 #ifdef RTS_DEBUG
 #define new DEBUG_NEW

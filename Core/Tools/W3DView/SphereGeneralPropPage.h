@@ -22,8 +22,8 @@
 //
 
 #include "resource.h"
-#include "WW3D2/sphereobj.h"
-#include "WW3D2/shader.h"
+#include "WW3D2/SphereObj.h"
+#include "WW3D2/Shader.h"
 
 /////////////////////////////////////////////////////////////////////////////
 //

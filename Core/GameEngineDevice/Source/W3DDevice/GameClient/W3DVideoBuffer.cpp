@@ -46,8 +46,8 @@
 //----------------------------------------------------------------------------
 
 #include "Common/GameMemory.h"
-#include "WW3D2/texture.h"
-#include "WW3D2/textureloader.h"
+#include "WW3D2/Texture.h"
+#include "WW3D2/TextureLoader.h"
 #include "W3DDevice/GameClient/W3DVideoBuffer.h"
 
 //----------------------------------------------------------------------------

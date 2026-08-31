@@ -20,46 +20,45 @@
 //
 
 #include "StdAfx.h"
+#include <SDL3/SDL.h>
 #include "resource.h"
 #include "WWMath/wwmath.h"
-#include "WW3D2/ww3d.h"
-#include "WW3D2/scene.h"
-#include "WW3D2/rendobj.h"
-#include "WW3D2/camera.h"
-#include "WW3D2/intersec.h"
+#include "WW3D2/WW3D.h"
+#include "WW3D2/Scene.h"
+#include "WW3D2/RendObj.h"
+#include "WW3D2/Camera.h"
+#include "WW3D2/Intersec.h"
 #include "W3DDevice/GameClient/W3DAssetManager.h"
 #include "W3DDevice/GameClient/Module/W3DModelDraw.h"
 #include "W3DDevice/GameClient/Module/W3DTreeDraw.h"
-#include "WW3D2/agg_def.h"
-#include "WW3D2/part_ldr.h"
-#include "WW3D2/hanim.h"
-#include "WW3D2/dx8wrapper.h"
-#include "WW3D2/dx8indexbuffer.h"
-#include "WW3D2/dx8vertexbuffer.h"
-#include "WW3D2/dx8renderer.h"
-#include "WW3D2/dx8fvf.h"
-#include "WW3D2/vertmaterial.h"
-#include "WW3D2/font3d.h"
-#include "WW3D2/render2d.h"
-#include "WW3D2/rddesc.h"
-#include "WW3D2/textdraw.h"
+#include "WW3D2/AggDef.h"
+#include "WW3D2/PartLdr.h"
+#include "WW3D2/HAnim.h"
+#include "WW3D2/IndexBuffer.h"
+#include "WW3D2/VertexBuffer.h"
+#include "WW3D2/VertexFormat.h"
+#include "WW3D2/VertMaterial.h"
+#include "WW3D2/Font3D.h"
+#include "WW3D2/Render2D.h"
+#include "WW3D2/RDDesc.h"
+#include "WW3D2/TextDraw.h"
 #include "WWMath/rect.h"
-#include "WW3D2/mesh.h"
-#include "WW3D2/meshmdl.h"
-#include "WW3D2/line3d.h"
-#include "WW3D2/dynamesh.h"
-#include "WW3D2/sphereobj.h"
-#include "WW3D2/ringobj.h"
-#include "WW3D2/surfaceclass.h"
+#include "WW3D2/Mesh.h"
+#include "WW3D2/MeshMdl.h"
+#include "WW3D2/Line3D.h"
+#include "WW3D2/DynaMesh.h"
+#include "WW3D2/SphereObj.h"
+#include "WW3D2/RingObj.h"
+#include "WW3D2/SurfaceClass.h"
 #include "WWMath/vector2i.h"
-#include "WW3D2/bmp2d.h"
-#include "WW3D2/decalsys.h"
-#include "WW3D2/shattersystem.h"
-#include "WW3D2/light.h"
-#include "WW3D2/texproject.h"
+#include "WW3D2/Bmp2D.h"
+#include "WW3D2/DecalSys.h"
+#include "WW3D2/ShatterSystem.h"
+#include "WW3D2/Light.h"
+#include "WW3D2/TexProject.h"
 #include "MapSettings.h"
-#include "WW3D2/predlod.h"
-#include "SelectMacrotexture.h"
+#include "WW3D2/PredLod.h"
+#include "SelectMacroTexture.h"
 #include "WorldBuilderView.h"
 #include "WHeightMapEdit.h"
 #include "WorldBuilderDoc.h"
@@ -92,9 +91,6 @@
 #include "GlobalLightOptions.h"
 #include "LayersList.h"
 #include "ImpassableOptions.h"
-
-
-#include <d3dx9.h>
 
 
 // ----------------------------------------------------------------------------
@@ -135,8 +131,8 @@ static void		Debug_Refs();
 static void WWDebug_Message_Callback(DebugType type, const char * message)
 {
 #ifdef RTS_DEBUG
-	::OutputDebugString(message);
-	::OutputDebugString("\n");
+	SDL_Log("%s", message);
+	SDL_Log("%s", "\n");
 #endif
 }
 
@@ -144,8 +140,8 @@ static void WWDebug_Message_Callback(DebugType type, const char * message)
 static void WWAssert_Callback(const char * message)
 {
 #ifdef RTS_DEBUG
-	::OutputDebugString(message);
-	::OutputDebugString("\n");
+	SDL_Log("%s", message);
+	SDL_Log("%s", "\n");
 	::DebugBreak();
 #endif
 }
@@ -464,7 +460,7 @@ void WbView3d::shutdownWW3D()
 	m_buildLayer = nullptr;
 
 	if (m3DFont) {
-		m3DFont->Release();
+		WW3D::Get_Render_Backend()->Release_Font(m3DFont);
 		m3DFont = nullptr;
 	}
 	if (m_ww3dInited) {
@@ -514,7 +510,7 @@ void WbView3d::ReleaseResources()
 		TheTerrainRenderObject->ReleaseResources();
 	}
 	if (m3DFont) {
-		m3DFont->Release();
+		WW3D::Get_Render_Backend()->Release_Font(m3DFont);
 	}
 	m3DFont = nullptr;
 	if (m_drawObject) {
@@ -535,37 +531,7 @@ void WbView3d::ReAcquireResources()
 		TheTerrainRenderObject->worldBuilderUpdateBridgeTowers( m_assetManager, m_scene );
 	}
 	m_drawObject->initData();
-	IDirect3DDevice9* pDev = DX8Wrapper::_Get_D3D_Device8();
-	if (pDev) {
-
-//		CDC* pDC = GetDC();
-		LOGFONT logFont;
-		logFont.lfHeight = 20;
-		logFont.lfWidth = 0;
-		logFont.lfEscapement = 0;
-		logFont.lfOrientation = 0;
-		logFont.lfWeight = FW_REGULAR;
-		logFont.lfItalic = FALSE;
-		logFont.lfUnderline = FALSE;
-		logFont.lfStrikeOut = FALSE;
-		logFont.lfCharSet = ANSI_CHARSET;
-		logFont.lfOutPrecision = OUT_DEFAULT_PRECIS;
-		logFont.lfClipPrecision = CLIP_DEFAULT_PRECIS;
-		logFont.lfQuality = DEFAULT_QUALITY;
-		logFont.lfPitchAndFamily = DEFAULT_PITCH;
-		strcpy(logFont.lfFaceName, "Arial");
-
-		HFONT hFont = CreateFontIndirect(&logFont);
-		if (hFont) {
-			D3DXCreateFont(pDev, hFont, &m3DFont);
-			DeleteObject(hFont);
-		} else {
-			m3DFont = nullptr;
-		}
-
-	} else {
-		m3DFont = nullptr;
-	}
+	m3DFont = WW3D::Get_Render_Backend()->Create_Font(20, "Arial");
 
 }
 
@@ -1581,7 +1547,7 @@ void WbView3d::updateHeightMapInView(WorldHeightMap *htMap, Bool partial, const 
 
 	if (m_heightMapRenderObj) {
 
-		Int curTicks = ::GetTickCount();
+		Int curTicks = SDL_GetTicks();
 
 		RefRenderObjListIterator lightListIt(&m_lightList);
 		if (partial) {
@@ -1599,7 +1565,7 @@ void WbView3d::updateHeightMapInView(WorldHeightMap *htMap, Bool partial, const 
 			}
 			m_heightMapRenderObj->updateViewImpassableAreas();
 		}
-		curTicks = GetTickCount() - curTicks;
+		curTicks = SDL_GetTicks() - curTicks;
 		if (curTicks < 1) curTicks = 1;
 	}
 
@@ -2048,13 +2014,13 @@ void WbView3d::redraw()
 			m_needToLoadRoads = false;
 		}
 		++m_updateCount;
-		Int curTicks = GetTickCount();
+		Int curTicks = SDL_GetTicks();
 		RefRenderObjListIterator lightListIt(&m_lightList);
 		m_heightMapRenderObj->updateCenter(m_camera, &m_cameraTarget, &lightListIt);
 		m_heightMapRenderObj->On_Frame_Update();
 		--m_updateCount;
 
-		curTicks = GetTickCount()-curTicks;
+		curTicks = SDL_GetTicks()-curTicks;
 //		if (curTicks>2) {
 //			WWDEBUG_SAY(("%d ms for updateCenter, %d FPS", curTicks, 1000/curTicks));
 //		}
@@ -2069,7 +2035,7 @@ void WbView3d::redraw()
 	WW3D::Update_Logic_Frame_Time(TheFramePacer->getLogicTimeStepMilliseconds());
 	WW3D::Sync(WW3D::Get_Fractional_Sync_Milliseconds() >= WWSyncMilliseconds);
 
-	m_buildRedMultiplier += (GetTickCount()-m_time)/500.0f;
+	m_buildRedMultiplier += (SDL_GetTicks()-m_time)/500.0f;
 	if (m_buildRedMultiplier>4.0f || m_buildRedMultiplier<0) {
 		m_buildRedMultiplier = 0;
 	}
@@ -2078,7 +2044,7 @@ void WbView3d::redraw()
 
 	TheFramePacer->update();
 
-	m_time = ::GetTickCount();
+	m_time = SDL_GetTicks();
 }
 
 // ----------------------------------------------------------------------------
@@ -2123,13 +2089,13 @@ void WbView3d::render()
 		}
 		if (m_showObjToolTrackingObj && m_objectToolTrackingObj) {
 			m_transparentObjectsScene->Add_Render_Object(m_objectToolTrackingObj);
-			DX8TextureCategoryClass::SetForceMultiply(true);
-			TheDX8MeshRenderer.Enable_Lighting(false);
+			WW3D::Get_Render_Backend()->Set_Force_Multiply(true);
+			WW3D::Get_Render_Backend()->Set_Mesh_Renderer_Lighting(false);
 			Real lightLevel = 1.0f;
 			m_transparentObjectsScene->Set_Ambient_Light(Vector3(lightLevel,lightLevel,lightLevel));
 			WW3D::Render(m_transparentObjectsScene, m_camera);
-			TheDX8MeshRenderer.Enable_Lighting(true);
-			DX8TextureCategoryClass::SetForceMultiply(false);
+			WW3D::Get_Render_Backend()->Set_Mesh_Renderer_Lighting(true);
+			WW3D::Get_Render_Backend()->Set_Force_Multiply(false);
 			m_transparentObjectsScene->Remove_Render_Object(m_objectToolTrackingObj);
 		}
 
@@ -2269,37 +2235,7 @@ void WbView3d::initWW3D()
 			}
 		}
 
-		IDirect3DDevice9* pDev = DX8Wrapper::_Get_D3D_Device8();
-		if (pDev) {
-
-//			CDC* pDC = GetDC();
-			LOGFONT logFont;
-			logFont.lfHeight = 20;
-			logFont.lfWidth = 0;
-			logFont.lfEscapement = 0;
-			logFont.lfOrientation = 0;
-			logFont.lfWeight = FW_REGULAR;
-			logFont.lfItalic = FALSE;
-			logFont.lfUnderline = FALSE;
-			logFont.lfStrikeOut = FALSE;
-			logFont.lfCharSet = ANSI_CHARSET;
-			logFont.lfOutPrecision = OUT_DEFAULT_PRECIS;
-			logFont.lfClipPrecision = CLIP_DEFAULT_PRECIS;
-			logFont.lfQuality = DEFAULT_QUALITY;
-			logFont.lfPitchAndFamily = DEFAULT_PITCH;
-			strcpy(logFont.lfFaceName, "Arial");
-
-			HFONT hFont = CreateFontIndirect(&logFont);
-			if (hFont) {
-				D3DXCreateFont(pDev, hFont, &m3DFont);
-				DeleteObject(hFont);
-			} else {
-				m3DFont = nullptr;
-			}
-
-		} else {
-			m3DFont = nullptr;
-		}
+		m3DFont = WW3D::Get_Render_Backend()->Create_Font(20, "Arial");
 
 		WW3D::Enable_Static_Sort_Lists(true);
 		WW3D::Set_Thumbnail_Enabled(false);
@@ -2372,7 +2308,7 @@ void WbView3d::OnPaint()
 		CMainFrame::GetMainFrame()->adjustWindowSize();
 		m_firstPaint = false;
 	}
-	DX8Wrapper::SetCleanupHook(this);
+	WW3D::Get_Render_Backend()->Set_Cleanup_Hook(this);
 
 }
 
@@ -2519,13 +2455,18 @@ void WbView3d::drawLabels(HDC hdc)
 						}
 
 						if (m3DFont && !hdc) {
-							RECT rct;
+							RenderBackendRect rct;
 							pt.y -= 5;
 							pt.x += 1;
 							rct.top = rct.bottom = pt.y;
 							rct.left = rct.right = pt.x;
-							m3DFont->DrawText(name.str(), name.getLength(), &rct,
-								DT_LEFT | DT_NOCLIP | DT_TOP | DT_SINGLELINE, 0xAF000000 + (red<<16) + (green<<8));
+							WW3D::Get_Render_Backend()->Draw_Font(m3DFont, name.str(),
+								name.getLength(), rct,
+								RenderBackendFontDrawFlagLeft |
+								RenderBackendFontDrawFlagNoClip |
+								RenderBackendFontDrawFlagTop |
+								RenderBackendFontDrawFlagSingleLine,
+								0xAF000000 + (red<<16) + (green<<8));
 
 						} else if (!m3DFont) {
 							//docToViewCoords(pos, &pt);
@@ -2816,7 +2757,7 @@ Real WbView3d::getCurrentZoom()
 // ----------------------------------------------------------------------------
 void WbView3d::OnTimer(UINT nIDEvent)
 {
-	if (getLastDrawTime()+UPDATE_TIME<::GetTickCount())
+	if (getLastDrawTime()+UPDATE_TIME<SDL_GetTicks())
 	{
 		Invalidate(false);
 	}

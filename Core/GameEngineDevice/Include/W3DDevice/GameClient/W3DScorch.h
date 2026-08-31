@@ -26,8 +26,8 @@
 
 struct VertexFormatXYZDUV1;
 class TextureClass;
-class DX8IndexBufferClass;
-class DX8VertexBufferClass;
+class IndexBufferClass;
+class VertexBufferClass;
 class WorldHeightMap;
 
 class W3DScorchInterface
@@ -80,8 +80,8 @@ private:
 	Bool writeScorchToBuffer(const TScorch& scorch, WorldHeightMap& map, UnsignedInt diffuse,
 	                         VertexFormatXYZDUV1* curVb, UnsignedShort* curIb);
 
-	DX8VertexBufferClass* m_vertexScorch;    ///< Scorch vertex buffer.
-	DX8IndexBufferClass* m_indexScorch;    ///< indices defining a triangles for the scorch drawing.
+	VertexBufferClass* m_vertexScorch;    ///< Scorch vertex buffer.
+	IndexBufferClass* m_indexScorch;    ///< indices defining a triangles for the scorch drawing.
 	TextureClass* m_scorchTexture;    ///< Scorch mark texture
 	Int m_curNumScorchVertices;    ///< number of vertices used in m_vertexScorch.
 	Int m_curNumScorchIndices;    ///< number of indices used in m_indexScorch.

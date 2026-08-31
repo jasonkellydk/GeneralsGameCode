@@ -30,7 +30,7 @@
 
 //#define DO_8STAGE_TERRAIN_PASS		//optimized terrain rendering for Nvidia based cards
 
-#include "WW3D2/texture.h"
+#include "WW3D2/Texture.h"
 #include "WWMath/matrix3d.h"
 #include "Common/AsciiString.h"
 #include "W3DDevice/GameClient/TileData.h"
@@ -48,6 +48,14 @@ class TerrainTextureClass : public TextureClass
 	W3DMPO_CODE(TerrainTextureClass)
 protected:
 	virtual void Apply(unsigned int stage) override;
+	virtual bool Recreate_Procedural_Texture() override;
+
+	WorldHeightMap *m_sourceHeightMap;
+	bool m_isFlatTexture;
+	Int m_flatXCell;
+	Int m_flatYCell;
+	Int m_flatCellWidth;
+	Int m_flatPixelsPerCell;
 
 public:
 		/// Create texture for a height map.
@@ -61,6 +69,7 @@ public:
 	int update(WorldHeightMap *htMap); ///< Sets the pixels, and returns the actual height of the texture.
 	Bool updateFlat(WorldHeightMap *htMap, Int xCell, Int yCell, Int cellWidth, Int pixelsPerCell); ///< Sets the pixels.
 	void setLOD(Int LOD);
+	void Clear_Source_Height_Map() { m_sourceHeightMap = nullptr; }
 };
 
 
@@ -69,9 +78,14 @@ class AlphaTerrainTextureClass : public TextureClass
 	W3DMPO_CODE(AlphaTerrainTextureClass)
 protected:
 		virtual void Apply(unsigned int stage) override;
+		virtual bool Recreate_Procedural_Texture() override;
+
+	TextureClass *m_baseTexture;
+
 public:
 		// Create texture for a height map.
 		AlphaTerrainTextureClass(TextureClass *pBaseTex );
+		virtual ~AlphaTerrainTextureClass() override;
 
 		// just use default destructor. ~TerrainTextureClass();
 
@@ -85,7 +99,10 @@ class AlphaEdgeTextureClass : public TextureClass
 	W3DMPO_CODE(AlphaEdgeTextureClass)
 protected:
 	virtual void Apply(unsigned int stage) override;
+	virtual bool Recreate_Procedural_Texture() override;
 	int update256(WorldHeightMap *htMap);///< Sets the pixels, and returns the actual height of the texture.
+
+	WorldHeightMap *m_sourceHeightMap;
 
 public:
 		/// Create texture for a height map.
@@ -94,6 +111,7 @@ public:
 		// just use default destructor. ~TerrainTextureClass();
 public:
 	int update(WorldHeightMap *htMap); ///< Sets the pixels, and returns the actual height of the texture.
+	void Clear_Source_Height_Map() { m_sourceHeightMap = nullptr; }
 
 };
 

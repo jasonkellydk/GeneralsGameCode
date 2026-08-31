@@ -25,12 +25,11 @@
 #pragma once
 
 #include "WWLib/always.h"
-#include "WW3D2/rendobj.h"
-#include "WW3D2/w3d_file.h"
-#include "WW3D2/dx8vertexbuffer.h"
-#include "WW3D2/dx8indexbuffer.h"
-#include "WW3D2/shader.h"
-#include "WW3D2/vertmaterial.h"
+#include "WW3D2/RendObj.h"
+#include "WW3D2/W3DFile.h"
+#include "WW3D2/Backend/IRenderBackend.h"
+#include "WW3D2/Shader.h"
+#include "WW3D2/VertMaterial.h"
 #include "Lib/BaseType.h"
 
 
@@ -84,11 +83,11 @@ protected:
 	static Int m_diffuse;
 	static Bool			 m_needUpdate;
 
-	DX8IndexBufferClass			*m_indexBuffer;	//indices defining a triangle strip the covers full terrain
+	RenderBackendIndexBuffer			*m_indexBuffer;	//indices defining a triangle strip that covers full terrain
 	ShaderClass m_shaderClass; //shader or rendering state for heightmap
 	VertexMaterialClass	  	  *m_vertexMaterialClass;
-	DX8VertexBufferClass	*m_vertexBufferCircle;	//collection of vertexes that make the circle.
-	DX8VertexBufferClass	*m_vertexBufferScreen;	//2 triangle quad that covers the screen.
+	RenderBackendVertexBuffer	*m_vertexBufferCircle;	//collection of vertices that make the circle.
+	RenderBackendVertexBuffer	*m_vertexBufferScreen;	//2 triangle quad that covers the screen.
 
 	int initData();
 	Int updateCircleVB();

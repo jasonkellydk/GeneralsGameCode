@@ -48,16 +48,15 @@
 #include "Common/PerfTimer.h"
 #include "Common/GlobalData.h"
 #include "Common/Debug.h"
-#include "WW3D2/texture.h"
+#include "WW3D2/Texture.h"
 #include "WWMath/colmath.h"
-#include "WW3D2/coltest.h"
-#include "WW3D2/rinfo.h"
-#include "WW3D2/camera.h"
-#include "WW3D2/assetmgr.h"
-#include "WW3D2/dx8wrapper.h"
-#include "WW3D2/IRenderBackend.h"
-#include "WW3D2/ww3d.h"
-#include "WW3D2/scene.h"
+#include "WW3D2/ColTest.h"
+#include "WW3D2/RInfo.h"
+#include "WW3D2/Camera.h"
+#include "WW3D2/AssetMgr.h"
+#include "WW3D2/Backend/IRenderBackend.h"
+#include "WW3D2/WW3D.h"
+#include "WW3D2/Scene.h"
 #include "GameLogic/TerrainLogic.h"
 #include "GameLogic/Object.h"
 #include "GameClient/Drawable.h"
@@ -596,11 +595,11 @@ void TerrainTracksRenderObjClassSystem::ReAcquireResources()
 	REF_PTR_RELEASE(m_vertexBuffer);
 
 	//Create static index buffers.  These will index the vertex buffers holding the track segments
-	m_indexBuffer=NEW_REF(DX8IndexBufferClass,((m_maxTankTrackEdges-1)*6));
+	m_indexBuffer=NEW_REF(IndexBufferClass,((m_maxTankTrackEdges-1)*6));
 
 	// Fill up the IB
 	{
-		DX8IndexBufferClass::WriteLockClass lockIdxBuffer(m_indexBuffer);
+		IndexBufferClass::WriteLockClass lockIdxBuffer(m_indexBuffer);
 		UnsignedShort *ib=lockIdxBuffer.Get_Index_Array();
 
 		for (i=0; i<(m_maxTankTrackEdges-1); i++)
@@ -615,7 +614,7 @@ void TerrainTracksRenderObjClassSystem::ReAcquireResources()
 
 	DEBUG_ASSERTCRASH(numModules*m_maxTankTrackEdges*2 < 65535, ("Too many terrain track edges"));
 
-	m_vertexBuffer=NEW_REF(DX8VertexBufferClass,(DX8_FVF_XYZDUV1,numModules*m_maxTankTrackEdges*2,DX8VertexBufferClass::USAGE_DYNAMIC));
+	m_vertexBuffer=NEW_REF(VertexBufferClass,(RenderBackendVertexFormat::PositionDiffuseTexture,numModules*m_maxTankTrackEdges*2,VertexBufferClass::USAGE_DYNAMIC));
 }
 
 //=============================================================================
@@ -628,7 +627,7 @@ void TerrainTracksRenderObjClassSystem::ReleaseResources()
 	REF_PTR_RELEASE(m_indexBuffer);
 	REF_PTR_RELEASE(m_vertexBuffer);
 	// Note - it is ok to not release the material, as it is a w3d object that
-	// has no dx8 resources. jba.
+	// has no dx9 resources. jba.
 }
 
 //=============================================================================
@@ -825,7 +824,7 @@ Try improving the fit to vertical surfaces like cliffs.
 	//check if there is anything to draw and fill vertex buffer
 	if (m_edgesToFlush >= 2)
 	{
-		DX8VertexBufferClass::WriteLockClass lockVtxBuffer(m_vertexBuffer);
+		VertexBufferClass::WriteLockClass lockVtxBuffer(m_vertexBuffer);
 		VertexFormatXYZDUV1 *verts = (VertexFormatXYZDUV1*)lockVtxBuffer.Get_Vertex_Array();
 		trackStartIndex=0;
 

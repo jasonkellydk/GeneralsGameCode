@@ -19,11 +19,11 @@
 // ObjectPreview.cpp : implementation file
 //
 
-#include <WW3D2/rinfo.h>
-#include <WW3D2/camera.h>
-#include <WW3D2/light.h>
-#include <WW3D2/IRenderBackend.h>
-#include <WW3D2/ww3d.h>
+#include <WW3D2/RInfo.h>
+#include <WW3D2/Camera.h>
+#include <WW3D2/Light.h>
+#include "WW3D2/Backend/IRenderBackend.h"
+#include <WW3D2/WW3D.h>
 
 #include "StdAfx.h"
 #include "resource.h"

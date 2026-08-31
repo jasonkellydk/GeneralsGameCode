@@ -25,34 +25,61 @@
 
 #include "Common/Debug.h"
 #include "W3DDevice/GameClient/W3DBufferManager.h"
+#include "WW3D2/WW3D.h"
 
 W3DBufferManager *TheW3DBufferManager=nullptr;	//singleton
 
-static int FVFTypeIndexList[W3DBufferManager::MAX_FVF]=
+static const RenderBackendVertexFormat FVFTypeFormatList[W3DBufferManager::MAX_FVF]=
 {
-	D3DFVF_XYZ,
-	D3DFVF_XYZ|D3DFVF_DIFFUSE,
-	D3DFVF_XYZ|D3DFVF_TEX1,
-	D3DFVF_XYZ|D3DFVF_DIFFUSE|D3DFVF_TEX1,
-	D3DFVF_XYZ|D3DFVF_TEX2,
-	D3DFVF_XYZ|D3DFVF_DIFFUSE|D3DFVF_TEX2,
-	D3DFVF_XYZ|D3DFVF_NORMAL,
-	D3DFVF_XYZ|D3DFVF_NORMAL|D3DFVF_DIFFUSE,
-	D3DFVF_XYZ|D3DFVF_NORMAL|D3DFVF_TEX1,
-	D3DFVF_XYZ|D3DFVF_NORMAL|D3DFVF_DIFFUSE|D3DFVF_TEX1,
-	D3DFVF_XYZ|D3DFVF_NORMAL|D3DFVF_TEX2,
-	D3DFVF_XYZ|D3DFVF_NORMAL|D3DFVF_DIFFUSE|D3DFVF_TEX2,
-	D3DFVF_XYZRHW,
-	D3DFVF_XYZRHW|D3DFVF_DIFFUSE,
-	D3DFVF_XYZRHW|D3DFVF_TEX1,
-	D3DFVF_XYZRHW|D3DFVF_DIFFUSE|D3DFVF_TEX1,
-	D3DFVF_XYZRHW|D3DFVF_TEX2,
-	D3DFVF_XYZRHW|D3DFVF_DIFFUSE|D3DFVF_TEX2
+	RenderBackendVertexFormat::Position,
+	RenderBackendVertexFormat::PositionDiffuse,
+	RenderBackendVertexFormat::PositionTexture,
+	RenderBackendVertexFormat::PositionDiffuseTexture,
+	RenderBackendVertexFormat::PositionTexture2,
+	RenderBackendVertexFormat::PositionDiffuseTexture2,
+	RenderBackendVertexFormat::PositionNormal,
+	RenderBackendVertexFormat::PositionNormalDiffuse,
+	RenderBackendVertexFormat::PositionNormalTexture,
+	RenderBackendVertexFormat::PositionNormalDiffuseTexture,
+	RenderBackendVertexFormat::PositionNormalTexture2,
+	RenderBackendVertexFormat::PositionNormalDiffuseTexture2,
+	RenderBackendVertexFormat::TransformedPosition,
+	RenderBackendVertexFormat::TransformedPositionDiffuse,
+	RenderBackendVertexFormat::TransformedPositionTexture,
+	RenderBackendVertexFormat::TransformedPositionDiffuseTexture,
+	RenderBackendVertexFormat::TransformedPositionTexture2,
+	RenderBackendVertexFormat::TransformedPositionDiffuseTexture2
 };
 
-Int W3DBufferManager::getDX8Format(VBM_FVF_TYPES format)
+RenderBackendVertexFormat W3DBufferManager::getRenderBackendFormat(VBM_FVF_TYPES format)
 {
-	return FVFTypeIndexList[format];
+	return FVFTypeFormatList[format];
+}
+
+static void Release_Vertex_Buffer(RenderBackendVertexBuffer *& buffer)
+{
+	if (buffer != nullptr)
+	{
+		IRenderBackend *backend = WW3D::Get_Render_Backend();
+		if (backend != nullptr)
+		{
+			backend->Release_Vertex_Buffer(buffer);
+		}
+		buffer = nullptr;
+	}
+}
+
+static void Release_Index_Buffer(RenderBackendIndexBuffer *& buffer)
+{
+	if (buffer != nullptr)
+	{
+		IRenderBackend *backend = WW3D::Get_Render_Backend();
+		if (backend != nullptr)
+		{
+			backend->Release_Index_Buffer(buffer);
+		}
+		buffer = nullptr;
+	}
 }
 
 W3DBufferManager::W3DBufferManager()
@@ -141,7 +168,7 @@ void W3DBufferManager::freeAllBuffers()
 		W3DVertexBuffer *vb = m_W3DVertexBuffers[i];
 		while (vb)
 		{	DEBUG_ASSERTCRASH(vb->m_usedSlots == nullptr, ("Freeing Non-Empty Vertex Buffer"));
-			REF_PTR_RELEASE(vb->m_DX8VertexBuffer);
+			Release_Vertex_Buffer(vb->m_vertexBuffer);
 			m_numEmptyVertexBuffersAllocated--;
 			vb=vb->m_nextVB;	//get next vertex buffer of this type
 		}
@@ -151,7 +178,7 @@ void W3DBufferManager::freeAllBuffers()
 	W3DIndexBuffer *ib = m_W3DIndexBuffers;
 	while (ib)
 	{	DEBUG_ASSERTCRASH(ib->m_usedSlots == nullptr, ("Freeing Non-Empty Index Buffer"));
-		REF_PTR_RELEASE(ib->m_DX8IndexBuffer);
+		Release_Index_Buffer(ib->m_indexBuffer);
 		m_numEmptyIndexBuffersAllocated--;
 		ib=ib->m_nextIB;	//get next vertex buffer of this type
 	}
@@ -168,7 +195,7 @@ void W3DBufferManager::ReleaseResources()
 		W3DVertexBuffer *vb = m_W3DVertexBuffers[i];
 		while (vb)
 		{
-			REF_PTR_RELEASE(vb->m_DX8VertexBuffer);
+			Release_Vertex_Buffer(vb->m_vertexBuffer);
 			vb=vb->m_nextVB;	//get next vertex buffer of this type
 		}
 	}
@@ -176,7 +203,7 @@ void W3DBufferManager::ReleaseResources()
 	W3DIndexBuffer *ib = m_W3DIndexBuffers;
 	while (ib)
 	{
-		REF_PTR_RELEASE(ib->m_DX8IndexBuffer);
+		Release_Index_Buffer(ib->m_indexBuffer);
 		ib=ib->m_nextIB;	//get next vertex buffer of this type
 	}
 }
@@ -187,10 +214,13 @@ Bool W3DBufferManager::ReAcquireResources()
 	{
 		W3DVertexBuffer *vb = m_W3DVertexBuffers[i];
 		while (vb)
-		{	DEBUG_ASSERTCRASH( vb->m_DX8VertexBuffer == nullptr, ("ReAcquire of existing vertex buffer"));
-			vb->m_DX8VertexBuffer=NEW_REF(DX8VertexBufferClass,(FVFTypeIndexList[vb->m_format],vb->m_size,DX8VertexBufferClass::USAGE_DEFAULT));
-			DEBUG_ASSERTCRASH( vb->m_DX8VertexBuffer, ("Failed ReAcquire of vertex buffer"));
-			if (!vb->m_DX8VertexBuffer)
+		{	DEBUG_ASSERTCRASH( vb->m_vertexBuffer == nullptr, ("ReAcquire of existing vertex buffer"));
+			IRenderBackend *backend = WW3D::Get_Render_Backend();
+			vb->m_vertexBuffer = backend != nullptr ? backend->Create_Vertex_Buffer(
+				static_cast<unsigned>(vb->m_size) * RenderBackend_Vertex_Format_Stride(FVFTypeFormatList[vb->m_format]),
+				FVFTypeFormatList[vb->m_format], false) : nullptr;
+			DEBUG_ASSERTCRASH( vb->m_vertexBuffer, ("Failed ReAcquire of vertex buffer"));
+			if (!vb->m_vertexBuffer)
 				return FALSE;
 			vb=vb->m_nextVB;	//get next vertex buffer of this type
 		}
@@ -198,10 +228,12 @@ Bool W3DBufferManager::ReAcquireResources()
 
 	W3DIndexBuffer *ib = m_W3DIndexBuffers;
 	while (ib)
-	{	DEBUG_ASSERTCRASH( ib->m_DX8IndexBuffer == nullptr, ("ReAcquire of existing index buffer"));
-		ib->m_DX8IndexBuffer=NEW_REF(DX8IndexBufferClass,(ib->m_size,DX8IndexBufferClass::USAGE_DEFAULT));
-		DEBUG_ASSERTCRASH( ib->m_DX8IndexBuffer, ("Failed ReAcquire of index buffer"));
-		if (!ib->m_DX8IndexBuffer)
+	{	DEBUG_ASSERTCRASH( ib->m_indexBuffer == nullptr, ("ReAcquire of existing index buffer"));
+		IRenderBackend *backend = WW3D::Get_Render_Backend();
+		ib->m_indexBuffer = backend != nullptr ? backend->Create_Index_Buffer(
+			static_cast<unsigned>(ib->m_size) * sizeof(UnsignedShort), false) : nullptr;
+		DEBUG_ASSERTCRASH( ib->m_indexBuffer, ("Failed ReAcquire of index buffer"));
+		if (!ib->m_indexBuffer)
 			return FALSE;
 		ib=ib->m_nextIB;	//get next vertex buffer of this type
 	}
@@ -310,7 +342,10 @@ W3DBufferManager::W3DVertexBufferSlot * W3DBufferManager::allocateSlotStorage(VB
 
 		Int vbSize=__max(DEFAULT_VERTEX_BUFFER_SIZE,size);
 
-		pVB->m_DX8VertexBuffer=NEW_REF(DX8VertexBufferClass,(FVFTypeIndexList[fvfType],vbSize,DX8VertexBufferClass::USAGE_DEFAULT));
+		IRenderBackend *backend = WW3D::Get_Render_Backend();
+		pVB->m_vertexBuffer = backend != nullptr ? backend->Create_Vertex_Buffer(
+			static_cast<unsigned>(vbSize) * RenderBackend_Vertex_Format_Stride(FVFTypeFormatList[fvfType]),
+			FVFTypeFormatList[fvfType], false) : nullptr;
 		pVB->m_format=fvfType;
 		pVB->m_startFreeIndex=size;
 		pVB->m_size=vbSize;
@@ -430,7 +465,9 @@ W3DBufferManager::W3DIndexBufferSlot * W3DBufferManager::allocateSlotStorage(Int
 
 		Int ibSize=__max(DEFAULT_INDEX_BUFFER_SIZE,size);
 
-		pIB->m_DX8IndexBuffer=NEW_REF(DX8IndexBufferClass,(ibSize,DX8IndexBufferClass::USAGE_DEFAULT));
+		IRenderBackend *backend = WW3D::Get_Render_Backend();
+		pIB->m_indexBuffer = backend != nullptr ? backend->Create_Index_Buffer(
+			static_cast<unsigned>(ibSize) * sizeof(UnsignedShort), false) : nullptr;
 		pIB->m_startFreeIndex=size;
 		pIB->m_size=ibSize;
 		ibSlot=&m_W3DIndexBufferEmptySlots[m_numEmptyIndexSlotsAllocated];

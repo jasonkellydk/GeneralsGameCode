@@ -26,16 +26,16 @@
 #include "W3DDevice/GameClient/WorldHeightMap.h"
 
 #include <stdlib.h>
-#include <WW3D2/assetmgr.h>
-#include <WW3D2/texture.h>
+#include <WW3D2/AssetMgr.h>
+#include <WW3D2/Texture.h>
 #include <WWMath/tri.h>
 #include <WWMath/colmath.h>
-#include <WW3D2/coltest.h>
-#include <WW3D2/rinfo.h>
-#include <WW3D2/camera.h>
-#include "WW3D2/ww3d.h"
-#include "WW3D2/dx8wrapper.h"
-#include "WW3D2/shader.h"
+#include <WW3D2/ColTest.h>
+#include <WW3D2/RInfo.h>
+#include <WW3D2/Camera.h>
+#include "WW3D2/WW3D.h"
+#include "WW3D2/VertexFormat.h"
+#include "WW3D2/Shader.h"
 #include "Common/GlobalData.h"
 #include "Common/MapObject.h"
 #include "GameLogic/GameLogic.h"
@@ -132,10 +132,10 @@ RenderObjClass * W3DStatusCircle::Clone() const
 
 Int W3DStatusCircle::freeMapResources()
 {
-
-	REF_PTR_RELEASE(m_indexBuffer);
-	REF_PTR_RELEASE(m_vertexBufferScreen);
-	REF_PTR_RELEASE(m_vertexBufferCircle);
+	IRenderBackend *backend = WW3D::Get_Render_Backend();
+	RenderBackend_Release_Index_Buffer(backend, m_indexBuffer);
+	RenderBackend_Release_Vertex_Buffer(backend, m_vertexBufferScreen);
+	RenderBackend_Release_Vertex_Buffer(backend, m_vertexBufferCircle);
 	REF_PTR_RELEASE(m_vertexMaterialClass);
 	return 0;
 }
@@ -151,11 +151,20 @@ Int W3DStatusCircle::initData()
 	freeMapResources();	//free old data and ib/vb
 
 	m_numTriangles = NUM_TRI;
-	m_indexBuffer=NEW_REF(DX8IndexBufferClass,(m_numTriangles*3));
+	IRenderBackend *backend = WW3D::Get_Render_Backend();
+	if (backend == nullptr) {
+		return -1;
+	}
+	m_indexBuffer=backend->Create_Index_Buffer(
+		static_cast<unsigned>(m_numTriangles * 3) * sizeof(UnsignedShort), false);
 
 	// Fill up the IB
-	DX8IndexBufferClass::WriteLockClass lockIdxBuffer(m_indexBuffer);
-	UnsignedShort *ib=lockIdxBuffer.Get_Index_Array();
+	RenderBackendIndexBufferLock lockIdxBuffer(backend, m_indexBuffer, 0, 0,
+		RenderBackendBufferLockMode::Normal);
+	if (!lockIdxBuffer.Is_Locked()) {
+		return -1;
+	}
+	UnsignedShort *ib=(UnsignedShort*)lockIdxBuffer.Get_Data();
 
 	for (i=0; i<3*m_numTriangles; i+=3)
 	{
@@ -166,8 +175,12 @@ Int W3DStatusCircle::initData()
 		ib+=3;	//skip the 3 indices we just filled
 	}
 
-	m_vertexBufferCircle=NEW_REF(DX8VertexBufferClass,(DX8_FVF_XYZDUV1,m_numTriangles*3,DX8VertexBufferClass::USAGE_DEFAULT));
-	m_vertexBufferScreen=NEW_REF(DX8VertexBufferClass,(DX8_FVF_XYZDUV1,2*3,DX8VertexBufferClass::USAGE_DEFAULT));
+	m_vertexBufferCircle=backend->Create_Vertex_Buffer(
+		static_cast<unsigned>(m_numTriangles * 3) * sizeof(VertexFormatXYZDUV1),
+		RenderBackendVertexFormat::PositionDiffuseTexture, false);
+	m_vertexBufferScreen=backend->Create_Vertex_Buffer(
+		static_cast<unsigned>(2 * 3) * sizeof(VertexFormatXYZDUV1),
+		RenderBackendVertexFormat::PositionDiffuseTexture, false);
 
 	//go with a preset material for now.
 	m_vertexMaterialClass=VertexMaterialClass::Get_Preset(VertexMaterialClass::PRELIT_DIFFUSE);
@@ -185,12 +198,17 @@ Int W3DStatusCircle::updateCircleVB()
 {
 	Int i, k;
 	Real shade;
-	DX8VertexBufferClass	*pVB = m_vertexBufferCircle;
+	RenderBackendVertexBuffer	*pVB = m_vertexBufferCircle;
 	if (m_vertexBufferCircle )
 	{
 		m_needUpdate = false;
-		DX8VertexBufferClass::WriteLockClass lockVtxBuffer(pVB);
-		VertexFormatXYZDUV1 *vb = (VertexFormatXYZDUV1*)lockVtxBuffer.Get_Vertex_Array();
+		IRenderBackend *backend = WW3D::Get_Render_Backend();
+		RenderBackendVertexBufferLock lockVtxBuffer(backend, pVB, 0, 0,
+			RenderBackendBufferLockMode::Normal);
+		if (!lockVtxBuffer.Is_Locked()) {
+			return -1;
+		}
+		VertexFormatXYZDUV1 *vb = (VertexFormatXYZDUV1*)lockVtxBuffer.Get_Data();
 
 		const Real theZ = 0.0f;
 		const Real theRadius = 0.02f;
@@ -240,12 +258,17 @@ Int W3DStatusCircle::updateCircleVB()
 
 Int W3DStatusCircle::updateScreenVB(Int diffuse)
 {
-	DX8VertexBufferClass	*pVB = m_vertexBufferScreen;
+	RenderBackendVertexBuffer	*pVB = m_vertexBufferScreen;
 	if (m_vertexBufferScreen )
 	{
 		m_needUpdate = false;
-		DX8VertexBufferClass::WriteLockClass lockVtxBuffer(pVB);
-		VertexFormatXYZDUV1 *vb = (VertexFormatXYZDUV1*)lockVtxBuffer.Get_Vertex_Array();
+		IRenderBackend *backend = WW3D::Get_Render_Backend();
+		RenderBackendVertexBufferLock lockVtxBuffer(backend, pVB, 0, 0,
+			RenderBackendBufferLockMode::Normal);
+		if (!lockVtxBuffer.Is_Locked()) {
+			return -1;
+		}
+		VertexFormatXYZDUV1 *vb = (VertexFormatXYZDUV1*)lockVtxBuffer.Get_Data();
 
 		vb->x =	-1;
 		vb->y =	-1;
@@ -301,6 +324,11 @@ Int W3DStatusCircle::updateScreenVB(Int diffuse)
 
 void W3DStatusCircle::Render(RenderInfoClass & rinfo)
 {
+	IRenderBackend *backend = WW3D::Get_Render_Backend();
+	if (backend == nullptr) {
+		return;
+	}
+
 	if (!TheGameLogic->isInGame() || TheGameLogic->getGameMode() == GAME_SHELL)
 		return;
 
@@ -318,11 +346,12 @@ void W3DStatusCircle::Render(RenderInfoClass & rinfo)
 			updateCircleVB();
 		}
 		//Apply the shader and material
-		WW3D::Get_Render_Backend()->Set_Material(m_vertexMaterialClass);
-		WW3D::Get_Render_Backend()->Set_Shader(m_shaderClass);
-		WW3D::Get_Render_Backend()->Set_Texture(0, nullptr);
-		WW3D::Get_Render_Backend()->Set_Index_Buffer(m_indexBuffer,0);
-		WW3D::Get_Render_Backend()->Set_Vertex_Buffer(m_vertexBufferCircle);
+		backend->Set_Material(m_vertexMaterialClass);
+		backend->Set_Shader(m_shaderClass);
+		backend->Set_Texture(0, nullptr);
+		backend->Set_Index_Buffer(m_indexBuffer);
+		backend->Set_Vertex_Buffer(m_vertexBufferCircle, 0, sizeof(VertexFormatXYZDUV1));
+		backend->Set_Vertex_Format(RenderBackendVertexFormat::PositionDiffuseTexture);
 		setIndex = true;
 
 		Vector3 vec(0.95f, 0.67f, 0);
@@ -330,8 +359,9 @@ void W3DStatusCircle::Render(RenderInfoClass & rinfo)
 
 		tm.Set_Translation(vec);
 
-		WW3D::Get_Render_Backend()->Set_Transform(RenderBackendTransform::World,tm);
-		WW3D::Get_Render_Backend()->Draw_Triangles(	0,NUM_TRI, 0,	(m_numTriangles*3));
+		backend->Set_Transform(RenderBackendTransform::World,tm);
+		backend->Draw_Indexed_Primitives(RenderBackendPrimitiveType::TriangleList,
+			0, 0, m_numTriangles * 3, 0, NUM_TRI);
 	}
 
 
@@ -341,9 +371,9 @@ void W3DStatusCircle::Render(RenderInfoClass & rinfo)
 	}
 
 	if (!setIndex) {
-		WW3D::Get_Render_Backend()->Set_Material(m_vertexMaterialClass);
-		WW3D::Get_Render_Backend()->Set_Index_Buffer(m_indexBuffer,0);
-		WW3D::Get_Render_Backend()->Set_Texture(0, nullptr);
+		backend->Set_Material(m_vertexMaterialClass);
+		backend->Set_Index_Buffer(m_indexBuffer);
+		backend->Set_Texture(0, nullptr);
 	}
 
 	tm.Make_Identity();
@@ -351,32 +381,38 @@ void W3DStatusCircle::Render(RenderInfoClass & rinfo)
 	Int clr = 255*intensity;
 	Int diffuse = (0xff<<24)|(clr<<16)|(clr<<8)|clr;	 // b g<<8 r<<16 a<<24.
 	updateScreenVB(diffuse);
-	WW3D::Get_Render_Backend()->Set_Transform(RenderBackendTransform::World,tm);
-	WW3D::Get_Render_Backend()->Set_Shader(ShaderClass(SC_ADD));
-	WW3D::Get_Render_Backend()->Set_Vertex_Buffer(m_vertexBufferScreen);
-	WW3D::Get_Render_Backend()->Apply_Render_State_Changes();
+	backend->Set_Transform(RenderBackendTransform::World,tm);
+	backend->Set_Shader(ShaderClass(SC_ADD));
+	backend->Set_Vertex_Buffer(m_vertexBufferScreen, 0, sizeof(VertexFormatXYZDUV1));
+	backend->Set_Vertex_Format(RenderBackendVertexFormat::PositionDiffuseTexture);
+	backend->Apply_Render_State_Changes();
 	switch (fade) {
 		default:
 		case ScriptEngine::FADE_ADD:
-			WW3D::Get_Render_Backend()->Draw_Triangles(	0,2, 0,	(2*3));
+			backend->Draw_Indexed_Primitives(RenderBackendPrimitiveType::TriangleList,
+				0, 0, 2 * 3, 0, 2);
 			break;
 		case ScriptEngine::FADE_SUBTRACT:
 			WW3D::Get_Render_Backend()->Set_Blend_Operation(RenderBackendBlendOperation::ReverseSubtract);
-			WW3D::Get_Render_Backend()->Draw_Triangles(	0,2, 0,	(2*3));
+			backend->Draw_Indexed_Primitives(RenderBackendPrimitiveType::TriangleList,
+				0, 0, 2 * 3, 0, 2);
 			WW3D::Get_Render_Backend()->Set_Blend_Operation(RenderBackendBlendOperation::Add);
 			break;
 		case ScriptEngine::FADE_SATURATE:
 			// 4x multiply
 			WW3D::Get_Render_Backend()->Set_Blend_Factors(RenderBackendBlendFactor::DestinationColor,
 				RenderBackendBlendFactor::SourceColor);
-			WW3D::Get_Render_Backend()->Draw_Triangles(	0,2, 0,	(2*3));
-			WW3D::Get_Render_Backend()->Draw_Triangles(	0,2, 0,	(2*3));
+			backend->Draw_Indexed_Primitives(RenderBackendPrimitiveType::TriangleList,
+				0, 0, 2 * 3, 0, 2);
+			backend->Draw_Indexed_Primitives(RenderBackendPrimitiveType::TriangleList,
+				0, 0, 2 * 3, 0, 2);
 			break;
 		case ScriptEngine::FADE_MULTIPLY:
 			// Straight multiply
 			WW3D::Get_Render_Backend()->Set_Blend_Factors(RenderBackendBlendFactor::Zero,
 				RenderBackendBlendFactor::SourceColor);
-			WW3D::Get_Render_Backend()->Draw_Triangles(	0,2, 0,	(2*3));
+			backend->Draw_Indexed_Primitives(RenderBackendPrimitiveType::TriangleList,
+				0, 0, 2 * 3, 0, 2);
 			break;
 	}
 	ShaderClass::Invalidate();

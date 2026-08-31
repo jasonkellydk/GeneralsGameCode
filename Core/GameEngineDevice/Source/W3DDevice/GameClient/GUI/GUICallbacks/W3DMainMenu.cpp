@@ -46,9 +46,7 @@
 //-----------------------------------------------------------------------------
 // SYSTEM INCLUDES ////////////////////////////////////////////////////////////
 //-----------------------------------------------------------------------------
-#define WIN32_LEAN_AND_MEAN
-#include <windows.h>
-#include <mmsystem.h>
+#include <SDL3/SDL.h>
 #include <time.h>
 //-----------------------------------------------------------------------------
 // USER INCLUDES //////////////////////////////////////////////////////////////
@@ -111,8 +109,8 @@ static void advancePosition(GameWindow *window, const Image *image, UnsignedInt 
 	static Int x = -DEFAULT_DISPLAY_WIDTH;
 	static Int y = pos.y - (image->getImageHeight()/2);
 
-	static UnsignedInt m_startTime = timeGetTime();
-	Int time = timeGetTime() - m_startTime;
+	static UnsignedInt m_startTime = SDL_GetTicks();
+	Int time = SDL_GetTicks() - m_startTime;
 	Real percentDone = INT_TO_REAL(time) / 10000;
 
 	if(goingForward)
@@ -120,7 +118,7 @@ static void advancePosition(GameWindow *window, const Image *image, UnsignedInt 
 		if(percentDone >= 1)
 		{
 			y = pos.y + size.y - (image->getImageHeight()/2);
-			m_startTime = timeGetTime();
+			m_startTime = SDL_GetTicks();
 			goingForward = FALSE;
 		}
 		else
@@ -134,7 +132,7 @@ static void advancePosition(GameWindow *window, const Image *image, UnsignedInt 
 		if(percentDone >= 1)
 		{
 			y = pos.y - (image->getImageHeight()/2);
-			m_startTime = timeGetTime();
+			m_startTime = SDL_GetTicks();
 			goingForward = TRUE;
 		}
 		else
@@ -316,14 +314,14 @@ void W3DMetalBarMenuDraw( GameWindow *window, WinInstanceData *instData )
 //	static Int x = pos.x - image->getImageWidth();
 //	static Int y = pos.y - (image->getImageHeight()/2);
 //
-//	static UnsignedInt m_startTime = timeGetTime();
-//	Int time = timeGetTime() - m_startTime;
+//	static UnsignedInt m_startTime = SDL_GetTicks();
+//	Int time = SDL_GetTicks() - m_startTime;
 //	Real percentDone = INT_TO_REAL(time) / 15624;
 //
 //	if(percentDone >= 1)
 //	{
 ////			y = pos.y + size.y - (image->getImageHeight()/2) - 2;
-//			m_startTime = timeGetTime();
+//			m_startTime = SDL_GetTicks();
 //	}
 //		else
 //		{

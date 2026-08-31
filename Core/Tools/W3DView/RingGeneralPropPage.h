@@ -22,8 +22,8 @@
 //
 
 #include "resource.h"
-#include "WW3D2/ringobj.h"
-#include "WW3D2/shader.h"
+#include "WW3D2/RingObj.h"
+#include "WW3D2/Shader.h"
 
 /////////////////////////////////////////////////////////////////////////////
 //

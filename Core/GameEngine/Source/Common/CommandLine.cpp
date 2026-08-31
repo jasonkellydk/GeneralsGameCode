@@ -28,6 +28,7 @@
 #include "Common/ArchiveFileSystem.h"
 #include "Common/CommandLine.h"
 #include "Common/CRCDebug.h"
+#include "Common/Debug.h"
 #include "Common/LocalFileSystem.h"
 #include "Common/Recorder.h"
 #include "Common/version.h"
@@ -36,12 +37,12 @@
 #include "GameClient/GameText.h"
 #include "GameNetwork/NetworkDefs.h"
 #include "WWLib/trim.h"
+#include "WW3D2/WW3D.h"
 
 
 
 
 Bool TheDebugIgnoreSyncErrors = FALSE;
-extern Int DX8Wrapper_PreserveFPU;
 
 #ifdef DEBUG_CRC
 Int TheCRCFirstFrameToLog = -1;
@@ -147,7 +148,7 @@ Int parseFPUPreserve(char *args[], int argc)
 {
 	if (argc > 1)
 	{
-		DX8Wrapper_PreserveFPU = atoi(args[1]);
+		WW3D::Set_Preserve_FPU(atoi(args[1]) != 0);
 	}
 	return 2;
 }
@@ -414,11 +415,8 @@ Int parseHeadless(char *args[], int num)
 	TheWritableGlobalData->m_playIntro = FALSE;
 	TheWritableGlobalData->m_playSizzle = FALSE;
 
-	// TheSuperHackers @fix bobtista 03/02/2026 Set DX8Wrapper_IsWindowed to false in headless
-	// mode so that ignoringAsserts() works correctly throughout the entire process lifetime,
-	// including during shutdown after TheGlobalData has been destroyed.
-	extern bool DX8Wrapper_IsWindowed;
-	DX8Wrapper_IsWindowed = false;
+	// Keep assert handling in headless mode after TheGlobalData has been destroyed.
+	DebugSetHeadlessMode(true);
 
 	return 1;
 }

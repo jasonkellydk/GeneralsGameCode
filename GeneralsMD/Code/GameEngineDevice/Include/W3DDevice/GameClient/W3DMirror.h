@@ -25,12 +25,11 @@
 #pragma once
 
 #include "WWLib/always.h"
-#include "WW3D2/rendobj.h"
-#include "WW3D2/w3d_file.h"
-#include "WW3D2/dx8vertexbuffer.h"
-#include "WW3D2/dx8indexbuffer.h"
-#include "WW3D2/shader.h"
-#include "WW3D2/vertmaterial.h"
+#include "WW3D2/RendObj.h"
+#include "WW3D2/W3DFile.h"
+#include "WW3D2/Backend/IRenderBackend.h"
+#include "WW3D2/Shader.h"
+#include "WW3D2/VertMaterial.h"
 #include "Lib/BaseType.h"
 #include "Common/GameType.h"
 
@@ -71,7 +70,7 @@ public:
 	void toggleCloudLayer(Bool state)	{	m_useCloudLayer=state;}	///<enables/disables the cloud layer
 
 protected:
-	DX8IndexBufferClass			*m_indexBuffer;	///<indices defining quad
+	RenderBackendIndexBuffer			*m_indexBuffer;	///<indices defining quad
 	SceneClass							*m_parentScene;	///<scene to be reflected
 	ShaderClass m_shaderClass; ///<shader or rendering state for heightmap
 	VertexMaterialClass	  		*m_vertexMaterialClass;	///<vertex lighting material
@@ -96,11 +95,11 @@ protected:
 		TextureClass	*waterTexture;
 		Int				waterRepeatCount;
 		Int				skyRepeatCount;
-		DWORD			vertex00Diffuse;
-		DWORD			vertex10Diffuse;
-		DWORD			vertex11Diffuse;
-		DWORD			vertex01Diffuse;
-		DWORD			waterDiffuse;
+		unsigned int	vertex00Diffuse;
+		unsigned int	vertex10Diffuse;
+		unsigned int	vertex11Diffuse;
+		unsigned int	vertex01Diffuse;
+		unsigned int	waterDiffuse;
 		Real			uScrollPerMs;
 		Real			vScrollPerMs;
 	};

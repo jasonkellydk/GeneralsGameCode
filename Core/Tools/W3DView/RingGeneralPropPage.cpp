@@ -23,8 +23,8 @@
 #include "W3DView.h"
 #include "RingGeneralPropPage.h"
 #include "Utils.h"
-#include "WW3D2/assetmgr.h"
-#include "WW3D2/texture.h"
+#include "WW3D2/AssetMgr.h"
+#include "WW3D2/Texture.h"
 
 #ifdef RTS_DEBUG
 #define new DEBUG_NEW

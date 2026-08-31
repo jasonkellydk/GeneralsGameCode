@@ -24,8 +24,9 @@
 
 #pragma once
 
-#include "WW3D2/matpass.h"
-#include "WW3D2/IRenderBackend.h"
+#include "WW3D2/MatPass.h"
+#include "WW3D2/TextureFilter.h"
+#include "WW3D2/Backend/IRenderBackend.h"
 
 class AABoxClass;
 class WorldHeightMap;

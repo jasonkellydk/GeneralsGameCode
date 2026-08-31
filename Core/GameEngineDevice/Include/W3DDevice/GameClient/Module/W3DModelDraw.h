@@ -49,7 +49,7 @@ public:
 };
 
 #else
-#include "WW3D2/rendobj.h"
+#include "WW3D2/RendObj.h"
 #endif
 #include "Common/SparseMatchFinder.h"
 #include "GameClient/ParticleSys.h"

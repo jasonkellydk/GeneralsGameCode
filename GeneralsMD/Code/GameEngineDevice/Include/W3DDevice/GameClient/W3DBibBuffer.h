@@ -48,12 +48,11 @@
 //           Includes
 //-----------------------------------------------------------------------------
 #include "WWLib/always.h"
-#include "WW3D2/rendobj.h"
-#include "WW3D2/w3d_file.h"
-#include "WW3D2/dx8vertexbuffer.h"
-#include "WW3D2/dx8indexbuffer.h"
-#include "WW3D2/shader.h"
-#include "WW3D2/vertmaterial.h"
+#include "WW3D2/RendObj.h"
+#include "WW3D2/W3DFile.h"
+#include "WW3D2/Backend/IRenderBackend.h"
+#include "WW3D2/Shader.h"
+#include "WW3D2/VertMaterial.h"
 #include "Lib/BaseType.h"
 #include "Common/GameType.h"
 #include "Common/AsciiString.h"
@@ -106,9 +105,9 @@ protected:
 	enum { INITIAL_BIB_VERTEX=256,
 					INITIAL_BIB_INDEX=384,
 					MAX_BIBS=1000};
-	DX8VertexBufferClass	*m_vertexBib;	///<Bib vertex buffer.
+	RenderBackendVertexBuffer	*m_vertexBib;	///<Bib vertex buffer owned by the active render backend.
 	Int										m_vertexBibSize; ///< Num vertices in bib buffer.
-	DX8IndexBufferClass		*m_indexBib;	///<indices defining a triangles for the bib drawing.
+	RenderBackendIndexBuffer		*m_indexBib;	///<indices defining triangles for the bib drawing.
 	Int							  		m_indexBibSize;	///<indices available in m_indexBib.
 	TextureClass *m_bibTexture;	///<Bibs texture
 	TextureClass *m_highlightBibTexture;	///<Bibs texture

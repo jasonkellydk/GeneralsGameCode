@@ -34,16 +34,16 @@
 #include "StdAfx.h"
 #include "ScreenCursor.h"
 #include "Utils.h"
-#include "WW3D2/ww3d.h"
-#include "WW3D2/vertmaterial.h"
-#include "WW3D2/shader.h"
-#include "WW3D2/scene.h"
-#include "WW3D2/rinfo.h"
-#include "WW3D2/texture.h"
-#include "WW3D2/dx8wrapper.h"
-#include "WW3D2/dx8vertexbuffer.h"
-#include "WW3D2/dx8indexbuffer.h"
-#include "WW3D2/sortingrenderer.h"
+#include "WW3D2/WW3D.h"
+#include "WW3D2/VertMaterial.h"
+#include "WW3D2/Shader.h"
+#include "WW3D2/Scene.h"
+#include "WW3D2/RInfo.h"
+#include "WW3D2/Texture.h"
+#include "WW3D2/Backend/IRenderBackend.h"
+#include "WW3D2/VertexBuffer.h"
+#include "WW3D2/IndexBuffer.h"
+#include "WW3D2/SortingRenderer.h"
 
 
 ///////////////////////////////////////////////////////////////////
@@ -246,7 +246,7 @@ ScreenCursorClass::Render (RenderInfoClass &rinfo)
 	/*
 	** Dump the vertices into the dynamic sorting vertex buffer.
 	*/
-	DynamicVBAccessClass vbaccess(BUFFER_TYPE_DYNAMIC_SORTING,dynamic_fvf_type,VERTEX_COUNT);
+	DynamicVBAccessClass vbaccess(BUFFER_TYPE_DYNAMIC_SORTING,RenderBackend_Dynamic_Vertex_Format,VERTEX_COUNT);
 	{
 		DynamicVBAccessClass::WriteLockClass lock(&vbaccess);
 		VertexFormatXYZNDUV2* vb=lock.Get_Formatted_Vertex_Array();

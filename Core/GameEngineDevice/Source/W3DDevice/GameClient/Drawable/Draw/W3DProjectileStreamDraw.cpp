@@ -33,8 +33,8 @@
 #include "W3DDevice/GameClient/Module/W3DProjectileStreamDraw.h"
 #include "W3DDevice/GameClient/W3DDisplay.h"
 #include "W3DDevice/GameClient/W3DScene.h"
-#include "WW3D2/assetmgr.h"
-#include "WW3D2/segline.h"
+#include "WW3D2/AssetMgr.h"
+#include "WW3D2/SegLine.h"
 #include "WWMath/vector3.h"
 
 //-------------------------------------------------------------------------------------------------

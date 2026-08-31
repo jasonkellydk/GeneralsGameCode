@@ -25,13 +25,13 @@
 #pragma once
 
 #include "WWLib/always.h"
-#include "WW3D2/rendobj.h"
-#include "WW3D2/w3d_file.h"
-#include "WW3D2/dx8vertexbuffer.h"
-#include "WW3D2/dx8indexbuffer.h"
-#include "WW3D2/dx8wrapper.h"
-#include "WW3D2/shader.h"
-#include "WW3D2/vertmaterial.h"
+#include "WW3D2/RendObj.h"
+#include "WW3D2/W3DFile.h"
+#include "WW3D2/VertexBuffer.h"
+#include "WW3D2/IndexBuffer.h"
+#include "WW3D2/Shader.h"
+#include "WW3D2/VertMaterial.h"
+#include "WW3D2/Backend/IRenderBackend.h"
 #include "Lib/BaseType.h"
 #include "Common/GameType.h"
 #include "W3DDevice/GameClient/WorldHeightMap.h"
@@ -72,7 +72,7 @@ class W3DDynamicLight;
 #define DO_ROADS 1
 
 #define VERTEX_FORMAT VertexFormatXYZDUV2
-#define DX8_VERTEX_FORMAT DX8_FVF_XYZDUV2
+#define BASE_HEIGHT_MAP_VERTEX_FORMAT RenderBackendVertexFormat::PositionDiffuseTexture2
 
 /// Custom render object that draws the heightmap and handles intersection tests.
 /**
@@ -80,7 +80,7 @@ Custom W3D render object that's used to process the terrain.  It handles
 virtually everything to do with the terrain, including: drawing, lighting,
 scorchmarks and intersection tests.
 */
-class BaseHeightMapRenderObjClass : public RenderObjClass, public DX8_CleanupHook, public Snapshot
+class BaseHeightMapRenderObjClass : public RenderObjClass, public RenderBackendCleanupHook, public Snapshot
 {
 
 public:
@@ -88,8 +88,8 @@ public:
 	BaseHeightMapRenderObjClass();
 	virtual ~BaseHeightMapRenderObjClass() override;
 
-	// DX8_CleanupHook methods
-	virtual void ReleaseResources() override;	///< Release all dx8 resources so the device can be reset.
+	// RenderBackendCleanupHook methods
+	virtual void ReleaseResources() override;	///< Release all dx9 resources so the device can be reset.
 	virtual void ReAcquireResources() override;  ///< Reacquire all resources after device reset.
 
 

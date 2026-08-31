@@ -40,27 +40,27 @@
 // USER INCLUDES //////////////////////////////////////////////////////////////
 #include "WWLib/always.h"
 #include "GameClient/View.h"
-#include "WW3D2/camera.h"
-#include "WW3D2/light.h"
-#include "WW3D2/IRenderBackend.h"
-#include "WW3D2/hlod.h"
-#include "WW3D2/mesh.h"
-#include "WW3D2/meshmdl.h"
+#include "WW3D2/Camera.h"
+#include "WW3D2/Light.h"
+#include "WW3D2/Backend/IRenderBackend.h"
+#include "WW3D2/HLOD.h"
+#include "WW3D2/Mesh.h"
+#include "WW3D2/MeshMdl.h"
 #include "Lib/BaseType.h"
 #include "W3DDevice/GameClient/HeightMap.h"
 #include "Common/GlobalData.h"
 #include "Common/DrawModule.h"
 #include "W3DDevice/GameClient/W3DVolumetricShadow.h"
 #include "W3DDevice/GameClient/W3DShadow.h"
-#include "WW3D2/statistics.h"
-#include "WW3D2/ww3d.h"
+#include "WW3D2/Statistics.h"
+#include "WW3D2/WW3D.h"
+#include "WW3D2/VertexFormat.h"
 #include "WWMath/vector4.h"
 #include "GameLogic/TerrainLogic.h"
-#include "WW3D2/dx8caps.h"
 #include "GameClient/Drawable.h"
 #ifdef USE_WWSHADE
-#include "wwshade/shdmesh.h"
-#include "wwshade/shdsubmesh.h"
+#include "wwshade/shdMesh.h"
+#include "wwshade/shdsubMesh.h"
 #endif
 
 
@@ -1361,16 +1361,20 @@ void W3DVolumetricShadow::RenderMeshVolume(Int meshIndex, Int lightIndex, const 
 	DEBUG_ASSERTCRASH(ibSlot->m_size >= numIndex,("Overflowing Shadow Index Buffer Slot"));
 
 	backend->Set_Transform(RenderBackendTransform::World, *meshXform);
-	backend->Set_Vertex_Buffer(vbSlot->m_VB->m_DX8VertexBuffer);
-	backend->Set_Index_Buffer(ibSlot->m_IB->m_DX8IndexBuffer,
-		static_cast<unsigned short>(vbSlot->m_start));
+	const RenderBackendVertexFormat format =
+		W3DBufferManager::getRenderBackendFormat(vbSlot->m_VB->m_format);
+	const unsigned stride = RenderBackend_Vertex_Format_Stride(format);
+	backend->Set_Vertex_Buffer(vbSlot->m_VB->m_vertexBuffer,
+		static_cast<unsigned>(vbSlot->m_start) * stride, stride);
+	backend->Set_Vertex_Format(format);
+	backend->Set_Index_Buffer(ibSlot->m_IB->m_indexBuffer);
 
 	if (backend->Is_Triangle_Draw_Enabled())
 	{
-		Debug_Statistics::Record_DX8_Polys_And_Vertices(numPolys,numVerts,ShaderClass::_PresetOpaqueShader);
-		backend->Draw_Triangles(static_cast<unsigned short>(ibSlot->m_start),
-			static_cast<unsigned short>(numPolys), 0,
-			static_cast<unsigned short>(numVerts));
+		Debug_Statistics::Record_Polys_And_Vertices(numPolys,numVerts,ShaderClass::_PresetOpaqueShader);
+		backend->Draw_Indexed_Primitives(RenderBackendPrimitiveType::TriangleList,
+			0, 0, static_cast<unsigned>(numVerts),
+			static_cast<unsigned>(ibSlot->m_start), static_cast<unsigned>(numPolys));
 	}
 
 }
@@ -1479,7 +1483,7 @@ void W3DVolumetricShadow::RenderDynamicMeshVolume(Int meshIndex, Int lightIndex,
 
 	if (backend->Is_Triangle_Draw_Enabled())
 	{
-		Debug_Statistics::Record_DX8_Polys_And_Vertices(numPolys,numVerts,ShaderClass::_PresetOpaqueShader);
+		Debug_Statistics::Record_Polys_And_Vertices(numPolys,numVerts,ShaderClass::_PresetOpaqueShader);
 		backend->Draw_Indexed_Primitives(RenderBackendPrimitiveType::TriangleList,
 			nShadowStartBatchVertex, 0, numVerts, nShadowStartBatchIndex, numPolys);
 	}
@@ -1785,7 +1789,6 @@ void W3DVolumetricShadow::Update()
 	// changes or when the object rotation sufficiently changes
 	//
 
-//	currentTime = timeGetTime();
 //	if( currentTime - lastTime >= delay )
 	{
 		pos=m_robj->Get_Position();
@@ -2980,14 +2983,31 @@ void W3DVolumetricShadow::constructVolumeVB( Vector3 *lightPosObject,Real shadow
 
 	geomMesh = m_geometry->getMesh(meshIndex);
 
-	DX8VertexBufferClass::AppendLockClass lockVtxBuffer(vbSlot->m_VB->m_DX8VertexBuffer,vbSlot->m_start,vertexCount);
-	VertexFormatXYZ *vb = (VertexFormatXYZ*)lockVtxBuffer.Get_Vertex_Array();
+	IRenderBackend *backend = WW3D::Get_Render_Backend();
+	if (backend == nullptr) {
+		return;
+	}
+	const RenderBackendVertexFormat format =
+		W3DBufferManager::getRenderBackendFormat(vbSlot->m_VB->m_format);
+	const unsigned stride = RenderBackend_Vertex_Format_Stride(format);
+	RenderBackendVertexBufferLock lockVtxBuffer(backend,
+		vbSlot->m_VB->m_vertexBuffer,
+		static_cast<unsigned>(vbSlot->m_start) * stride,
+		static_cast<unsigned>(vertexCount) * stride,
+		RenderBackendBufferLockMode::Normal);
+	VertexFormatXYZ *vb = lockVtxBuffer.Is_Locked() ?
+		(VertexFormatXYZ*)lockVtxBuffer.Get_Data() : nullptr;
 
 	if (vb == nullptr)
 		return;
 
-	DX8IndexBufferClass::AppendLockClass lockIdxBuffer(ibSlot->m_IB->m_DX8IndexBuffer,ibSlot->m_start,polygonCount*3);
-	UnsignedShort *ib = (UnsignedShort*)lockIdxBuffer.Get_Index_Array();
+	RenderBackendIndexBufferLock lockIdxBuffer(backend,
+		ibSlot->m_IB->m_indexBuffer,
+		static_cast<unsigned>(ibSlot->m_start) * sizeof(UnsignedShort),
+		static_cast<unsigned>(polygonCount * 3) * sizeof(UnsignedShort),
+		RenderBackendBufferLockMode::Normal);
+	UnsignedShort *ib = lockIdxBuffer.Is_Locked() ?
+		(UnsignedShort*)lockIdxBuffer.Get_Data() : nullptr;
 
 	if (ib == nullptr)
 		return;
@@ -3518,8 +3538,6 @@ void W3DVolumetricShadowManager::renderShadows( Bool forceStencilFill )
 		backend->Set_Vertex_Format(SHADOW_DYNAMIC_VOLUME_FORMAT);
 
 		WW3D::Get_Render_Backend()->Set_Cull_Mode(RenderBackendCullMode::Clockwise);
-//		m_pDev->SetRenderState(D3DRS_ZBIAS,1);	///@todo: See if this helps or makes things worse.
-		//m_pDev->SetRenderState(D3DRS_FILLMODE,D3DFILL_WIREFRAME);
 
 
 		m_dynamicShadowVolumesToRender=nullptr;	//clear list of pending dynamic shadows
@@ -3600,8 +3618,6 @@ void W3DVolumetricShadowManager::renderShadows( Bool forceStencilFill )
 		}
 
 		WW3D::Get_Render_Backend()->Set_Cull_Mode(RenderBackendCullMode::Clockwise);
-//		m_pDev->SetRenderState(D3DRS_ZBIAS,0);	///@todo: See if this helps or makes things worse.
-		//m_pDev->SetRenderState(D3DRS_FILLMODE,D3DFILL_SOLID);
 
 
 		if (oldColorWriteMaskValid)

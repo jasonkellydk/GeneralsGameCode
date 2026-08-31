@@ -30,8 +30,8 @@
 
 #pragma once
 
-#include "WW3D2/ww3d.h"
-#include "WW3D2/texturefilter.h"
+#include "WW3D2/WW3D.h"
+#include "WW3D2/TextureFilter.h"
 
 #include "Common/UserPreferences.h"
 

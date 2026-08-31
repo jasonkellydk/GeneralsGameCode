@@ -20,10 +20,14 @@
 #include "Common/GlobalData.h"
 #include "GameClient/GameText.h"
 #include "GameClient/InGameUI.h"
-#include "WW3D2/dx8wrapper.h"
-#include "WW3D2/surfaceclass.h"
+#include "WW3D2/Backend/IRenderBackend.h"
+#include "WW3D2/WW3D.h"
+#include "WW3D2/SurfaceClass.h"
 #include "WWLib/mpsc_intrusive_queue.h"
 #include <stb_image_write.h>
+#include <SDL3/SDL.h>
+#include <cstdio>
+#include <filesystem>
 
 struct ScreenshotThreadData
 {
@@ -42,8 +46,8 @@ struct ScreenshotThreadData
 	unsigned int height;
 	unsigned int pitch;
 	bool is16Bit;
-	char userDataDirectory[_MAX_PATH];
-	char leafname[_MAX_FNAME];
+	std::string userDataDirectory;
+	std::string leafname;
 	int quality;
 	ScreenshotFormat format;
 };
@@ -55,21 +59,19 @@ struct ScreenshotThreadData
 struct ScreenshotWrittenMessage
 {
 	ScreenshotWrittenMessage* next;
-	char leafname[_MAX_FNAME];
+	char leafname[64];
 };
 static MPSCIntrusiveQueue<ScreenshotWrittenMessage> s_screenshotWrittenQueue;
 
-static DWORD WINAPI screenshotThreadFunc(LPVOID param)
+static int SDLCALL screenshotThreadFunc(void *param)
 {
 	ScreenshotThreadData* data = static_cast<ScreenshotThreadData*>(param);
 
 	// TheSuperHackers @feature bobtista 08/07/2026 Save screenshots into a Screenshots subfolder
 	// to keep the user data root folder tidy.
-	char pathname[_MAX_PATH];
-	strlcpy(pathname, data->userDataDirectory, ARRAY_SIZE(pathname));
-	strlcat(pathname, "Screenshots\\", ARRAY_SIZE(pathname));
-	CreateDirectory(pathname, nullptr);
-	strlcat(pathname, data->leafname, ARRAY_SIZE(pathname));
+	const std::filesystem::path screenshotDirectory = std::filesystem::path(data->userDataDirectory) / "Screenshots";
+	std::filesystem::create_directories(screenshotDirectory);
+	const std::string pathname = (screenshotDirectory / data->leafname).string();
 
 	const unsigned int width = data->width;
 	const unsigned int height = data->height;
@@ -114,22 +116,22 @@ static DWORD WINAPI screenshotThreadFunc(LPVOID param)
 	switch (data->format)
 	{
 		case SCREENSHOT_JPEG:
-			success = stbi_write_jpg(pathname, width, height, 3, image, data->quality);
+			success = stbi_write_jpg(pathname.c_str(), width, height, 3, image, data->quality);
 			break;
 		case SCREENSHOT_PNG:
-			success = stbi_write_png(pathname, width, height, 3, image, width * 3);
+			success = stbi_write_png(pathname.c_str(), width, height, 3, image, width * 3);
 			break;
 	}
 
 	if (success)
 	{
 		ScreenshotWrittenMessage* message = new ScreenshotWrittenMessage;
-		strlcpy(message->leafname, data->leafname, ARRAY_SIZE(message->leafname));
+		std::snprintf(message->leafname, sizeof(message->leafname), "%s", data->leafname.c_str());
 		s_screenshotWrittenQueue.Push(message);
 	}
 	else
 	{
-		DEBUG_LOG(("Failed to write screenshot %s", pathname));
+		DEBUG_LOG(("Failed to write screenshot %s", pathname.c_str()));
 	}
 
 	delete[] image;
@@ -158,18 +160,20 @@ void W3D_TakeCompressedScreenshot(ScreenshotFormat format, Int jpegQuality)
 	static_assert(ARRAY_SIZE(ScreenshotFormatExtensions) == SCREENSHOT_FORMAT_COUNT, "Incorrect array size");
 
 	// The filename is created here so the timestamp matches the capture time.
-	char leafname[_MAX_FNAME];
+	char leafname[64];
 	const char* extension = ScreenshotFormatExtensions[format];
 
-	SYSTEMTIME st;
-	GetLocalTime(&st);
+	SDL_Time currentTime;
+	SDL_DateTime st{};
+	SDL_GetCurrentTime(&currentTime);
+	SDL_TimeToDateTime(currentTime, &st, true);
 	sprintf(leafname, "sshot_%04d%02d%02d_%02d%02d%02d_%03d.%s",
-		st.wYear, st.wMonth, st.wDay, st.wHour, st.wMinute, st.wSecond, st.wMilliseconds, extension);
+		st.year, st.month, st.day, st.hour, st.minute, st.second, st.nanosecond / 1000000, extension);
 
 	// TheSuperHackers @bugfix xezon 21/05/2025 Get the back buffer and create a copy of the surface.
 	// Originally this code took the front buffer and tried to lock it. This does not work when the
 	// render view clips outside the desktop boundaries. It crashed the game.
-	SurfaceClass* surface = DX8Wrapper::_Get_DX8_Back_Buffer();
+	SurfaceClass* surface = WW3D::Get_Render_Backend()->Get_Back_Buffer_Surface();
 	SurfaceClass::SurfaceDescription surfaceDesc;
 	surface->Get_Description(surfaceDesc);
 
@@ -185,8 +189,13 @@ void W3D_TakeCompressedScreenshot(ScreenshotFormat format, Int jpegQuality)
 		return;
 	}
 
-	SurfaceClass* surfaceCopy = NEW_REF(SurfaceClass, (DX8Wrapper::_Create_DX8_Surface(surfaceDesc.Width, surfaceDesc.Height, surfaceDesc.Format)));
-	DX8Wrapper::_Copy_DX8_Rects(surface->Peek_D3D_Surface(), nullptr, 0, surfaceCopy->Peek_D3D_Surface(), nullptr);
+	SurfaceClass* surfaceCopy = WW3D::Get_Render_Backend()->Create_Surface(surfaceDesc.Width, surfaceDesc.Height, surfaceDesc.Format);
+	if (surfaceCopy == nullptr)
+	{
+		surface->Release_Ref();
+		return;
+	}
+	WW3D::Get_Render_Backend()->Copy_Surface(surface, surfaceCopy);
 
 	surface->Release_Ref();
 	surface = nullptr;
@@ -211,8 +220,8 @@ void W3D_TakeCompressedScreenshot(ScreenshotFormat format, Int jpegQuality)
 	threadData->is16Bit = is16Bit;
 	threadData->quality = jpegQuality;
 	threadData->format = format;
-	strlcpy(threadData->userDataDirectory, TheGlobalData->getPath_UserData().str(), ARRAY_SIZE(threadData->userDataDirectory));
-	strlcpy(threadData->leafname, leafname, ARRAY_SIZE(threadData->leafname));
+	threadData->userDataDirectory = TheGlobalData->getPath_UserData().str();
+	threadData->leafname = leafname;
 
 	// Copy the locked surface with a single memcpy, including any row padding. The pixel
 	// conversion and all file operations are done on the screenshot thread to keep the
@@ -224,10 +233,10 @@ void W3D_TakeCompressedScreenshot(ScreenshotFormat format, Int jpegQuality)
 	surfaceCopy->Release_Ref();
 	surfaceCopy = nullptr;
 
-	const HANDLE hThread = CreateThread(nullptr, 0, screenshotThreadFunc, threadData, 0, nullptr);
-	if (hThread)
+	SDL_Thread *thread = SDL_CreateThread(screenshotThreadFunc, "Screenshot", threadData);
+	if (thread)
 	{
-		CloseHandle(hThread);
+		SDL_DetachThread(thread);
 	}
 	else
 	{
