@@ -78,11 +78,10 @@
 #include "W3DDevice/GameClient/W3DBridgeBuffer.h"
 #include "W3DDevice/GameClient/W3DWaypointBuffer.h"
 #include "W3DDevice/GameClient/WorldHeightMap.h"
-#include "W3DDevice/GameClient/W3DShaderManager.h"
 #include "W3DDevice/GameClient/W3DShadow.h"
 #include "W3DDevice/GameClient/W3DWater.h"
 #include "W3DDevice/GameClient/W3DShroud.h"
-#include "WW3D2/Backend/IRenderBackend.h"
+#include "WW3D2/Backend/RenderBackend.h"
 #include "WW3D2/Light.h"
 #include "WW3D2/Scene.h"
 #include "W3DDevice/GameClient/W3DPoly.h"
@@ -98,12 +97,6 @@ HeightMapRenderObjClass *TheHeightMap = nullptr;
 //-----------------------------------------------------------------------------
 //         Private Data
 //-----------------------------------------------------------------------------
-#define SC_DETAIL_BLEND ( SHADE_CNST(ShaderClass::PASS_LEQUAL, ShaderClass::DEPTH_WRITE_ENABLE, ShaderClass::COLOR_WRITE_ENABLE, ShaderClass::SRCBLEND_ONE, \
-	ShaderClass::DSTBLEND_ZERO, ShaderClass::FOG_DISABLE, ShaderClass::GRADIENT_MODULATE, ShaderClass::SECONDARY_GRADIENT_DISABLE, ShaderClass::TEXTURING_ENABLE, \
-	ShaderClass::ALPHATEST_DISABLE, ShaderClass::CULL_MODE_ENABLE, ShaderClass::DETAILCOLOR_SCALE, ShaderClass::DETAILALPHA_DISABLE) )
-
-static ShaderClass detailOpaqueShader(SC_DETAIL_BLEND);
-
 #define DEFAULT_MAX_FRAME_EXTRABLEND_TILES		256	//default number of terrain tiles rendered per call (must fit in one VB)
 #define DEFAULT_MAX_MAP_EXTRABLEND_TILES		2048	//default size of array allocated to hold all map extra blend tiles.
 #define DEFAULT_MAX_BATCH_SHORELINE_TILES		512	//maximum number of terrain tiles rendered per call (must fit in one VB)
@@ -365,7 +358,6 @@ Int HeightMapRenderObjClass::updateVB(VertexBufferClass	*pVB, VERTEX_FORMAT *dat
 
 				pMap->getUVData(mapX, mapY, U, V);
 				pMap->getAlphaUVData(mapX, mapY, UA, VA, alpha, &flipForBlend);
-
 				//top-left sample
 				l2r.Set(2*MAP_XY_FACTOR,0,MAP_HEIGHT_SCALE*(pMap->getDisplayHeight(mapX+cellOffset, mapY) - pMap->getDisplayHeight(un0, mapY)));
 				n2f.Set(0,2*MAP_XY_FACTOR,MAP_HEIGHT_SCALE*(pMap->getDisplayHeight(mapX, (mapY+cellOffset)) - pMap->getDisplayHeight(mapX, vn0)));
@@ -975,7 +967,7 @@ Int HeightMapRenderObjClass::updateBlock(Int x0, Int y0, Int x1, Int y1,  WorldH
 	DEBUG_ASSERTCRASH(y0<=y1, ("HeightMapRenderObjClass::UpdateBlock parameters have inside-out rectangle (on Y)."));
 #endif
 	Invalidate_Cached_Bounding_Volumes();
-	if (pMap && m_treeBuffer != nullptr) {
+	if (pMap) {
 		REF_PTR_SET(m_stageZeroTexture, pMap->getTerrainTexture());
 		REF_PTR_SET(m_stageOneTexture, pMap->getAlphaTerrainTexture());
 	}
@@ -1116,6 +1108,7 @@ void HeightMapRenderObjClass::adjustTerrainLOD(Int adj)
 //=============================================================================
 void HeightMapRenderObjClass::ReleaseResources()
 {
+	m_terrainMaterial.Shutdown();
 	BaseHeightMapRenderObjClass::ReleaseResources();
 }
 
@@ -1127,6 +1120,7 @@ void HeightMapRenderObjClass::ReleaseResources()
 void HeightMapRenderObjClass::ReAcquireResources()
 {
 	BaseHeightMapRenderObjClass::ReAcquireResources();
+	m_terrainMaterial.ReacquireResources();
 }
 
 //=============================================================================
@@ -1298,7 +1292,6 @@ Int HeightMapRenderObjClass::initHeightData(Int x, Int y, WorldHeightMap *pMap, 
 				ib+=6;	//skip the 6 indices we just filled
 			}
 		}
-
 		//Get number of vertex buffers needed to hold current map
 		//First round dimensions to next multiple of VERTEX_BUFFER_TILE_LENGTH since that's our block size
 		m_numVBTilesX=1;
@@ -1874,14 +1867,12 @@ void HeightMapRenderObjClass::Render(RenderInfoClass & rinfo)
 	//USE_PERF_TIMER(Terrain_Render)
 
 	Int i,j,devicePasses;
-	W3DShaderManager::ShaderTypes st;
 	const Bool doCloud = useCloud();
-
 	if (doCloud)
 	{
 		// TheSuperHackers @tweak Updates the cloud movement before applying it to the world.
 		// Is now decoupled from logic step.
-		W3DShaderManager::updateCloud();
+		m_stageTwoTexture->Update_Animation(WW3D::Get_Logic_Frame_Time_Seconds());
 	}
 
 	Matrix3D tm(Transform);
@@ -1920,8 +1911,7 @@ void HeightMapRenderObjClass::Render(RenderInfoClass & rinfo)
 
 	WW3D::Get_Render_Backend()->Set_Light_Environment(rinfo.light_environment);
 
-	// Force shaders to update.
-	m_stageTwoTexture->restore();
+	// The terrain material owns its explicit shader and texture bindings.
 	WW3D::Get_Render_Backend()->Set_Texture(0,nullptr);
 	WW3D::Get_Render_Backend()->Set_Texture(1,nullptr);
 	ShaderClass::Invalidate();
@@ -1934,6 +1924,17 @@ void HeightMapRenderObjClass::Render(RenderInfoClass & rinfo)
 	WW3D::Get_Render_Backend()->Set_Index_Buffer(m_indexBuffer,0);
 
 	Bool doMultiPassWireFrame=FALSE;
+	TerrainMaterialParameters terrain_parameters = {
+		Vector4(0.0f, 0.0f, 0.0f, 0.0f),
+		Vector4(0.0f, 0.0f, 0.0f, 0.0f),
+		Vector4(0.0f, 0.0f, 0.0f, 0.0f),
+		Vector4(0.0f, 0.0f, 0.0f, 0.0f),
+		Vector4(0.0f, 0.0f, 0.0f, 0.0f),
+		Vector4(0.0f, 0.0f, 0.0f, 0.0f),
+		Vector4(0.0f, 0.0f, 0.0f, 0.0f)};
+	bool terrain_material_pending = false;
+	bool terrain_material_applied = false;
+	TextureBaseClass *terrain_shroud_texture = nullptr;
 
 	if (((RTS3DScene *)rinfo.Camera.Get_User_Data())->getCustomPassMode() == SCENE_PASS_ALPHA_MASK ||
 		((SceneClass *)rinfo.Camera.Get_User_Data())->Get_Extra_Pass_Polygon_Mode() == SceneClass::EXTRA_PASS_CLEAR_LINE)
@@ -1972,62 +1973,51 @@ void HeightMapRenderObjClass::Render(RenderInfoClass & rinfo)
 	}
 	else
 	{
-		WW3D::Get_Render_Backend()->Set_Material(m_vertexMaterialClass);
-		WW3D::Get_Render_Backend()->Set_Shader(m_shaderClass);
+		devicePasses=1;
 
- 		st=W3DShaderManager::ST_TERRAIN_BASE; //set default shader
-
- 		//set correct shader based on current settings
- 		if (!ShaderClass::Is_Backface_Culling_Inverted())
- 		{	//not reflection pass
- 			if (TheGlobalData->m_useLightMap && doCloud)
-			{	st=W3DShaderManager::ST_TERRAIN_BASE_NOISE12;
- 			}
- 			else
- 			if (TheGlobalData->m_useLightMap)
- 			{	//lightmap only
- 				st=W3DShaderManager::ST_TERRAIN_BASE_NOISE2;
- 			}
- 			else
- 			if (doCloud)
- 			{	//cloudmap only
- 				st=W3DShaderManager::ST_TERRAIN_BASE_NOISE1;
- 			}
- 		}
- 		else
- 		{	//reflection pass, just do base texture
- 			st=W3DShaderManager::ST_TERRAIN_BASE;
- 		}
-
-		//Find number of passes required to render current shader
- 		devicePasses=W3DShaderManager::getShaderPasses(st);
-
- 		if (m_disableTextures)
- 			devicePasses=1;	//force to 1 lighting-only pass
-
-		//Specify all textures that this shader may need.
-		W3DShaderManager::setTexture(0,m_stageZeroTexture);
-		W3DShaderManager::setTexture(1,m_stageZeroTexture);
-		W3DShaderManager::setTexture(2,m_stageTwoTexture);	//cloud
-		W3DShaderManager::setTexture(3,m_stageThreeTexture);//noise
-		//Disable writes to destination alpha channel (if there is one)
-		if (WW3D::Get_Render_Backend()->Get_Back_Buffer_Format() == WW3D_FORMAT_A8R8G8B8)
-			WW3D::Get_Render_Backend()->Set_Color_Write_Mask(RenderBackendColorWriteMask::RGB);
+		const float stretch = 1.0f / (63.0f * MAP_XY_FACTOR / 2.0f);
+		Vector4 shroud_projection(0.0f, 0.0f, 0.0f, 0.0f);
+		if (m_shroud != nullptr && m_shroud->getShroudTexture() != nullptr)
+		{
+			const Real cell_width = m_shroud->getCellWidth();
+			const Real cell_height = m_shroud->getCellHeight();
+			const Int texture_width = m_shroud->getTextureWidth();
+			const Int texture_height = m_shroud->getTextureHeight();
+			if (cell_width > 0.0f && cell_height > 0.0f &&
+				texture_width > 0 && texture_height > 0)
+			{
+				const float shroud_scale_x = 1.0f /
+					(static_cast<float>(cell_width) * static_cast<float>(texture_width));
+				const float shroud_scale_y = 1.0f /
+					(static_cast<float>(cell_height) * static_cast<float>(texture_height));
+				terrain_shroud_texture = m_shroud->getShroudTexture();
+				shroud_projection = Vector4(shroud_scale_x, shroud_scale_y,
+					(-static_cast<float>(m_shroud->getDrawOriginX()) +
+						static_cast<float>(cell_width)) * shroud_scale_x,
+					(-static_cast<float>(m_shroud->getDrawOriginY()) +
+						static_cast<float>(cell_height)) * shroud_scale_y);
+			}
+		}
+		terrain_parameters = TerrainMaterialParameters{
+			Vector4(stretch, stretch,
+				doCloud ? m_stageTwoTexture->Get_X_Offset() : 0.0f,
+				doCloud ? m_stageTwoTexture->Get_Y_Offset() : 0.0f),
+			Vector4(stretch, stretch, 0.0f, 0.0f),
+			shroud_projection,
+			Vector4(0.0f, 0.0f, 0.0f, 0.0f),
+			Vector4(doCloud ? 1.0f : 0.0f,
+				(TheGlobalData && TheGlobalData->m_useLightMap) ? 1.0f : 0.0f,
+				m_disableTextures ? 1.0f : 0.0f, 0.0f),
+			Vector4(1.0f, 1.0f, 1.0f, 1.0f),
+			Vector4(0.0f, terrain_shroud_texture != nullptr ? 1.0f : 0.0f, 0.0f, 0.0f)};
+		terrain_material_pending = true;
 	}
 
 	Int pass;
  	for (pass=0; pass<devicePasses; pass++) {
 #ifdef TIMING_TESTS
 #endif
-		if (!doMultiPassWireFrame)	//multi-pass wireframe doesn't use regular shaders.
-		{
- 			if (m_disableTextures ) {
- 				WW3D::Get_Render_Backend()->Set_Shader(ShaderClass::_PresetOpaque2DShader);
- 				WW3D::Get_Render_Backend()->Set_Texture(0,nullptr);
-			} else {
-				W3DShaderManager::setShader(st, pass);
-			}
-		}
+		// The regular terrain pass is fully owned by TerrainMaterialClass.
 		for (j=0; j<m_numVBTilesY; j++)
 			for (i=0; i<m_numVBTilesX; i++)
 			{
@@ -2043,19 +2033,30 @@ void HeightMapRenderObjClass::Render(RenderInfoClass & rinfo)
 					// Note - m_xformedVertexBuffer should only be used for non T&L hardware.  jba.
 					WW3D::Get_Render_Backend()->Apply_Render_State_Changes();
 					WW3D::Get_Render_Backend()->Set_Vertex_Buffer(m_xformedVertexBuffer[j*m_numVBTilesX+i]);
-					WW3D::Get_Render_Backend()->Set_Vertex_Format(RenderBackendVertexFormat::TransformedPositionDiffuseTexture2);
+					WW3D::Get_Render_Backend()->Set_Vertex_Format(RenderBackendVertexFormat::PositionDiffuseTexture2);
 				}
 #endif
-				if (Is_Hidden() == 0) {
-					WW3D::Get_Render_Backend()->Draw_Triangles(0, HEIGHTMAP_POLYGON_NUM, 0, HEIGHTMAP_VERTEX_NUM);
+				if (terrain_material_pending)
+				{
+					terrain_material_applied = m_terrainMaterial.Apply(
+						m_disableTextures ? nullptr : m_stageZeroTexture,
+						m_disableTextures ? nullptr : m_stageOneTexture,
+						doCloud ? m_stageTwoTexture : nullptr,
+						(TheGlobalData && TheGlobalData->m_useLightMap) ? m_stageThreeTexture : nullptr,
+						terrain_shroud_texture, terrain_parameters);
+					terrain_material_pending = false;
+				}
+				if (terrain_material_applied && Is_Hidden() == 0) {
+					WW3D::Get_Render_Backend()->Draw_Indexed_Primitives(
+						RenderBackendPrimitiveType::TriangleList, 0, 0,
+						HEIGHTMAP_VERTEX_NUM, 0, HEIGHTMAP_POLYGON_NUM);
 				}
 
 				}
 	}
 	if (!doMultiPassWireFrame)
 	{
-		if (pass)	//shader was applied at least once?
- 			W3DShaderManager::resetShader(st);
+		m_terrainMaterial.Reset();
 
 		//Draw feathered shorelines
 		renderShoreLines(&rinfo.Camera);
@@ -2071,8 +2072,6 @@ void HeightMapRenderObjClass::Render(RenderInfoClass & rinfo)
 #ifdef DO_ROADS
 		WW3D::Get_Render_Backend()->Set_Texture(0,nullptr);
 		WW3D::Get_Render_Backend()->Set_Texture(1,nullptr);
-		m_stageTwoTexture->restore();
-
 		ShaderClass::Invalidate();
 		if (!ShaderClass::Is_Backface_Culling_Inverted()) {
 			WW3D::Get_Render_Backend()->Set_Material(m_vertexMaterialClass);
@@ -2089,13 +2088,10 @@ void HeightMapRenderObjClass::Render(RenderInfoClass & rinfo)
 	}
 		WW3D::Get_Render_Backend()->Set_Texture(0,nullptr);
 		WW3D::Get_Render_Backend()->Set_Texture(1,nullptr);
-		m_stageTwoTexture->restore();
-
 		drawScorches();
 
 		WW3D::Get_Render_Backend()->Set_Texture(0,nullptr);
 		WW3D::Get_Render_Backend()->Set_Texture(1,nullptr);
-		m_stageTwoTexture->restore();
 		ShaderClass::Invalidate();
 		WW3D::Get_Render_Backend()->Apply_Render_State_Changes();
 
@@ -2103,13 +2099,6 @@ void HeightMapRenderObjClass::Render(RenderInfoClass & rinfo)
 
 		if (TheTerrainTracksRenderObjClassSystem)
 			TheTerrainTracksRenderObjClassSystem->flush();
-
-		if (m_shroud && rinfo.Additional_Pass_Count())
-		{
-			rinfo.Peek_Additional_Pass(0)->Install_Materials();
-			renderTerrainPass(&rinfo.Camera);
-			rinfo.Peek_Additional_Pass(0)->UnInstall_Materials();
-		}
 
 		ShaderClass::Invalidate();
 		WW3D::Get_Render_Backend()->Apply_Render_State_Changes();
@@ -2125,7 +2114,6 @@ void HeightMapRenderObjClass::Render(RenderInfoClass & rinfo)
 	// We do some custom blending, so tell the shader class to reset everything.
 	WW3D::Get_Render_Backend()->Set_Texture(0,nullptr);
 	WW3D::Get_Render_Backend()->Set_Texture(1,nullptr);
-	m_stageTwoTexture->restore();
 	ShaderClass::Invalidate();
 	WW3D::Get_Render_Backend()->Set_Material(nullptr);
 
@@ -2136,11 +2124,47 @@ void HeightMapRenderObjClass::Render(RenderInfoClass & rinfo)
 ///Performs additional terrain rendering pass, blending in the black shroud texture.
 void HeightMapRenderObjClass::renderTerrainPass(CameraClass *pCamera)
 {
-	WW3D::Get_Render_Backend()->Set_Transform(RenderBackendTransform::World,Matrix3D(true));
+	if (m_shroud == nullptr || m_shroud->getShroudTexture() == nullptr)
+	{
+		m_terrainMaterial.Reset();
+		return;
+	}
 
-	//Apply the shader and material
+	const Real cell_width = m_shroud->getCellWidth();
+	const Real cell_height = m_shroud->getCellHeight();
+	const Int texture_width = m_shroud->getTextureWidth();
+	const Int texture_height = m_shroud->getTextureHeight();
+	if (cell_width <= 0.0f || cell_height <= 0.0f ||
+		texture_width <= 0 || texture_height <= 0)
+	{
+		m_terrainMaterial.Reset();
+		return;
+	}
 
+	const float shroud_scale_x = 1.0f /
+		(static_cast<float>(cell_width) * static_cast<float>(texture_width));
+	const float shroud_scale_y = 1.0f /
+		(static_cast<float>(cell_height) * static_cast<float>(texture_height));
+	const TerrainMaterialParameters shroud_parameters = {
+		Vector4(0.0f, 0.0f, 0.0f, 0.0f),
+		Vector4(0.0f, 0.0f, 0.0f, 0.0f),
+		Vector4(shroud_scale_x, shroud_scale_y,
+			(-static_cast<float>(m_shroud->getDrawOriginX()) +
+				static_cast<float>(cell_width)) * shroud_scale_x,
+			(-static_cast<float>(m_shroud->getDrawOriginY()) +
+				static_cast<float>(cell_height)) * shroud_scale_y),
+		Vector4(0.0f, 0.0f, 0.0f, 0.0f),
+		Vector4(0.0f, 0.0f, 0.0f, 2.0f),
+		Vector4(1.0f, 1.0f, 1.0f, 1.0f),
+		Vector4(0.0f, 1.0f, 0.0f, 0.0f)};
+
+	// The regular terrain pass uses the render object's transform.  Reusing it
+	// here is required both for depth-equal compositing and for projected
+	// shroud coordinates; an identity transform can make the pass miss the
+	// terrain entirely when the heightmap is translated or scaled.
+	WW3D::Get_Render_Backend()->Set_Transform(RenderBackendTransform::World,Transform);
 	WW3D::Get_Render_Backend()->Set_Index_Buffer(m_indexBuffer,0);
+	bool shroud_material_pending = true;
 
 	for (Int j=0; j<m_numVBTilesY; j++)
 		for (Int i=0; i<m_numVBTilesX; i++)
@@ -2157,13 +2181,26 @@ void HeightMapRenderObjClass::renderTerrainPass(CameraClass *pCamera)
 				// Note - m_xformedVertexBuffer should only be used for non T&L hardware.  jba.
 				WW3D::Get_Render_Backend()->Apply_Render_State_Changes();
 				WW3D::Get_Render_Backend()->Set_Vertex_Buffer(m_xformedVertexBuffer[j*m_numVBTilesX+i]);
-				WW3D::Get_Render_Backend()->Set_Vertex_Format(RenderBackendVertexFormat::TransformedPositionDiffuseTexture2);
+			WW3D::Get_Render_Backend()->Set_Vertex_Format(RenderBackendVertexFormat::PositionDiffuseTexture2);
 			}
 #endif
+			if (shroud_material_pending)
+			{
+				if (!m_terrainMaterial.Apply_Shroud(m_shroud->getShroudTexture(),
+					shroud_parameters))
+				{
+					m_terrainMaterial.Reset();
+					return;
+				}
+				shroud_material_pending = false;
+			}
 			if (Is_Hidden() == 0) {
-				WW3D::Get_Render_Backend()->Draw_Triangles(0, HEIGHTMAP_POLYGON_NUM, 0, HEIGHTMAP_VERTEX_NUM);
+				WW3D::Get_Render_Backend()->Draw_Indexed_Primitives(
+					RenderBackendPrimitiveType::TriangleList, 0, 0,
+					HEIGHTMAP_VERTEX_NUM, 0, HEIGHTMAP_POLYGON_NUM);
 			}
 		}
+	m_terrainMaterial.Reset();
 }
 
 //=============================================================================
@@ -2318,61 +2355,58 @@ void HeightMapRenderObjClass::renderExtraBlendTiles()
 		if (vertexCount == (maxBlendTiles*4))
 			maxBlendTiles += 16;	//enlarge by 16 to reduce trashing.
 
-		ShaderClass::Invalidate();	//invalidate to force shader to reset since we directly changed states
 		WW3D::Get_Render_Backend()->Set_Index_Buffer(ib_access,0);
 		WW3D::Get_Render_Backend()->Set_Vertex_Buffer(vb_access);
-		VertexMaterialClass *vmat=VertexMaterialClass::Get_Preset(VertexMaterialClass::PRELIT_DIFFUSE);
-		WW3D::Get_Render_Backend()->Set_Material(vmat);
-		REF_PTR_RELEASE(vmat);
-		ShaderClass shader=ShaderClass::_PresetOpaqueShader;
-		shader.Set_Depth_Mask(ShaderClass::DEPTH_WRITE_DISABLE);	//disable writes to z
-		WW3D::Get_Render_Backend()->Set_Shader(shader);
 
 		if (TheGlobalData->m_use3WayTerrainBlends == 2)
 		{
-			shader.Set_Primary_Gradient(ShaderClass::GRADIENT_DISABLE);	//disable lighting.
-			shader.Set_Texturing(ShaderClass::TEXTURING_DISABLE);		//disable texturing.
-			WW3D::Get_Render_Backend()->Set_Shader(shader);
-			WW3D::Get_Render_Backend()->Set_Texture(0,nullptr);	//debug mode which draws terrain tiles in white.
-			if (Is_Hidden() == 0) {
-				WW3D::Get_Render_Backend()->Draw_Triangles(	0,indexCount/3, 0,	vertexCount);	//draw a quad, 2 triangles, 4 verts
+			const TerrainMaterialParameters solid_parameters = {
+				Vector4(0.0f, 0.0f, 0.0f, 0.0f),
+				Vector4(0.0f, 0.0f, 0.0f, 0.0f),
+				Vector4(0.0f, 0.0f, 0.0f, 0.0f),
+				Vector4(0.0f, 0.0f, 0.0f, 0.0f),
+				Vector4(0.0f, 0.0f, 1.0f, 1.0f),
+				Vector4(1.0f, 1.0f, 1.0f, 1.0f),
+				Vector4(1.0f, 0.0f, 0.0f, 0.0f)};
+			if (m_terrainMaterial.Apply(nullptr, nullptr, nullptr, nullptr,
+				nullptr, solid_parameters, true) && Is_Hidden() == 0)
+			{
+				WW3D::Get_Render_Backend()->Draw_Indexed_Primitives(
+					RenderBackendPrimitiveType::TriangleList, 0, 0, vertexCount,
+					0, indexCount / 3);
 				m_numVisibleExtraBlendTiles += indexCount/6;
 			}
+			m_terrainMaterial.Reset();
 		}
 		else
 		{
-			W3DShaderManager::setTexture(0,m_stageOneTexture);
-			W3DShaderManager::setTexture(1,m_stageTwoTexture);	//cloud
-			W3DShaderManager::setTexture(2,m_stageThreeTexture);	//noise/lightmap
-
-			W3DShaderManager::ShaderTypes st = W3DShaderManager::ST_ROAD_BASE;
-
 			const Bool doCloud = useCloud();
-
-			if (TheGlobalData->m_useLightMap && doCloud)
- 			{
-				st = W3DShaderManager::ST_ROAD_BASE_NOISE12;
- 			}
- 			else if (TheGlobalData->m_useLightMap)
- 			{	//lightmap only
- 				st = W3DShaderManager::ST_ROAD_BASE_NOISE2;
- 			}
- 			else if (doCloud)
- 			{	//cloudmap only
- 				st = W3DShaderManager::ST_ROAD_BASE_NOISE1;
- 			}
-
-			Int devicePasses=W3DShaderManager::getShaderPasses(st);
-
-			for (Int pass=0; pass < devicePasses; pass++)
+			const float stretch = 1.0f / (63.0f * MAP_XY_FACTOR / 2.0f);
+			const TerrainMaterialParameters terrain_parameters = {
+				Vector4(stretch, stretch,
+					doCloud ? m_stageTwoTexture->Get_X_Offset() : 0.0f,
+					doCloud ? m_stageTwoTexture->Get_Y_Offset() : 0.0f),
+				Vector4(stretch, stretch, 0.0f, 0.0f),
+				Vector4(0.0f, 0.0f, 0.0f, 0.0f),
+				Vector4(0.0f, 0.0f, 0.0f, 0.0f),
+				Vector4(doCloud ? 1.0f : 0.0f,
+					(TheGlobalData && TheGlobalData->m_useLightMap) ? 1.0f : 0.0f,
+					0.0f, 3.0f),
+				Vector4(1.0f, 1.0f, 1.0f, 1.0f),
+				Vector4(0.0f, 0.0f, 0.0f, 0.0f)};
+			if (m_terrainMaterial.Apply(m_stageOneTexture, nullptr,
+				doCloud ? m_stageTwoTexture : nullptr,
+				(TheGlobalData && TheGlobalData->m_useLightMap) ? m_stageThreeTexture : nullptr,
+				nullptr, terrain_parameters, true))
 			{
-				W3DShaderManager::setShader(st, pass);
 				if (Is_Hidden() == 0) {
-					WW3D::Get_Render_Backend()->Draw_Triangles(	0,indexCount/3, 0,	vertexCount);	//draw a quad, 2 triangles, 4 verts
+					WW3D::Get_Render_Backend()->Draw_Indexed_Primitives(
+						RenderBackendPrimitiveType::TriangleList, 0, 0, vertexCount,
+						0, indexCount / 3);	//draw a quad, 2 triangles, 4 verts
 					m_numVisibleExtraBlendTiles += indexCount/6;
 				}
 			}
-			W3DShaderManager::resetShader(st);
+			m_terrainMaterial.Reset();
 		}
   }
 }

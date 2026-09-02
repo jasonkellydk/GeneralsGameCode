@@ -41,7 +41,7 @@
 
 #include "Texture.h"
 #include "WW3D.h"
-#include "Backend/IRenderBackend.h"
+#include "Backend/RenderBackend.h"
 #include "WWLib/TARGA.h"
 #include <WWLib/nstrdup.h>
 #include "W3DFile.h"
@@ -328,6 +328,13 @@ void TextureBaseClass::Set_Render_Backend_Texture(RenderBackendTextureHandle tex
 	LastAccessed=WW3D::Get_Sync_Time();
 	if (BackendTexture == texture)
 	{
+		// A zero handle is the canonical released state.  Keep the engine-side
+		// flag cleared even when the backend is asked to release an already
+		// released resource.
+		if (texture == 0)
+		{
+			Initialized = false;
+		}
 		return;
 	}
 	if (BackendTexture != 0)
@@ -335,6 +342,14 @@ void TextureBaseClass::Set_Render_Backend_Texture(RenderBackendTextureHandle tex
 		WW3D::Get_Render_Backend()->Release_Texture_Handle(BackendTexture);
 	}
 	BackendTexture = texture;
+	// A zero handle means that the native resource was released.  Keep the
+	// engine-side initialization bit in sync with the opaque backend handle so
+	// Ensure_Render_Backend_Texture() can recreate file-backed resources after a
+	// device reset instead of treating the cleared object as still initialized.
+	if (texture == 0)
+	{
+		Initialized = false;
+	}
 }
 
 //**********************************************************************************************
@@ -711,6 +726,12 @@ TextureClass::TextureClass
 	if (pool==POOL_DEFAULT)
 	{
 		Set_Dirty();
+	}
+	// DX11 has no managed-resource pool. Every procedural texture owns a
+	// native resource that must be released and recreated across a device
+	// reset, including procedural textures whose legacy pool was managed.
+	if (IsProcedural)
+	{
 		WW3D::Get_Render_Backend()->Register_Texture(this, RenderBackendTextureKind::Texture2D,
 			width, height, 1, format, WW3D_ZFORMAT_UNKNOWN, mip_level_count, rendertarget);
 	}

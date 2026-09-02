@@ -48,7 +48,7 @@
 #include "WWLib/wwstring.h"
 #include "WWMath/vector3.h"
 #include "TextureFilter.h"
-#include "Backend/IRenderBackend.h"
+#include "Backend/RenderBackend.h"
 
 class TextureLoader;
 class LoaderThreadClass;

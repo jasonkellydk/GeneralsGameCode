@@ -26,32 +26,19 @@
 
 #pragma once
 
-#include <cstdint>
-
-static_assert(sizeof(uintptr_t) == sizeof(void*), "uintptr_t must hold opaque shader handles");
-
 #include "WWLib/always.h"
 #include "WW3D2/RendObj.h"
-#include "WW3D2/Backend/IRenderBackend.h"
+#include "WW3D2/Backend/RenderBackend.h"
 #include "WW3D2/W3DFile.h"
 #include "WW3D2/VertexBuffer.h"
 #include "WW3D2/IndexBuffer.h"
 #include "WW3D2/Shader.h"
-#include "WW3D2/VertMaterial.h"
-#include "WW3D2/Light.h"
 #include "Lib/BaseType.h"
 #include "Common/GameType.h"
 #include "Common/Snapshot.h"
+#include "W3DDevice/GameClient/WaterMaterial.h"
 
 #define INVALID_WATER_HEIGHT 0.0f	///water height guaranteed to be below all terrain.
-
-#define NUM_BUMP_FRAMES 32	///number of animation frames in bump map
-//Offsets in constant register file to Vertex shader constants
-#define CV_ZERO 0
-#define CV_ONE 1
-#define CV_WORLDVIEWPROJ_0 2
-#define CV_TEXPROJ_0 6
-#define CV_PATCH_SCALE_OFFSET 10
 
 class PolygonTrigger;
 class WaterTracksRenderSystem;
@@ -71,10 +58,10 @@ public:
 
 	enum WaterType
 	{
-		WATER_TYPE_0_TRANSLUCENT = 0,	//translucent water, no reflection
-		WATER_TYPE_1_FB_REFLECTION,		//legacy frame buffer reflection (non translucent)
-		WATER_TYPE_2_PVSHADER,		//pixel/vertex shader, texture reflection
-		WATER_TYPE_3_GRIDMESH,		//3D Mesh based water
+		WATER_TYPE_SURFACE = 0,		//polygon-trigger surface geometry
+		WATER_TYPE_SURFACE_VARIANT,	//alternate polygon-trigger geometry
+		WATER_TYPE_OCEAN,			//tiled ocean patch geometry
+		WATER_TYPE_GRID,			//interactive grid geometry
 	};
 
 	WaterRenderObjClass();
@@ -110,6 +97,7 @@ public:
 	void setTimeOfDay(TimeOfDay tod); ///<change sky/water for time of day
 	void toggleCloudLayer(Bool state)	{	m_useCloudLayer=state;}	///<enables/disables the cloud layer
 	void updateRenderTargetTextures(CameraClass *cam);	///< renders into any required textures.
+	void Capture_Refraction_Texture();	///< captures the opaque scene before water is drawn.
 	void ReleaseResources();	///< Release all backend resources so the device can be reset.
 	void ReAcquireResources();  ///< Reacquire all resources after device reset.
 	Real getWaterHeight(Real x, Real y);	///<return water height at given point - for use by WB.
@@ -132,10 +120,6 @@ public:
 protected:
 	IndexBufferClass			*m_indexBuffer;	///<indices defining quad
 	SceneClass							*m_parentScene;	///<scene to be reflected
-	ShaderClass m_shaderClass; ///<shader or rendering state for heightmap
-	VertexMaterialClass	  		*m_vertexMaterialClass;	///<vertex lighting material
-	VertexMaterialClass			*m_meshVertexMaterialClass; ///<vertex lighting marial for 3D water.
-	LightClass					*m_meshLight;				///<light used for 3D Mesh Water.
 	TextureClass *m_alphaClippingTexture;	///<used for faked clipping using alpha
 	Real	m_dx;	///<x extent of water surface (offset from local center)
 	Real	m_dy;	///<y extent of water surface (offset from local center)
@@ -161,15 +145,10 @@ protected:
 		float tu, tv;
 	};
 
-	uintptr_t				m_wavePixelShader;			///<opaque pixel shader handle
-	uintptr_t				m_waveVertexShader;			///<opaque vertex shader handle
 	Int	m_numVertices;				///<number of vertices in the vertex buffer
 	Int m_numIndices;				///<number of indices in the index buffer
-	RenderBackendTextureHandle m_bumpTexture[NUM_BUMP_FRAMES]; ///<animation frames
-	RenderBackendTextureHandle m_bumpTexture2[NUM_BUMP_FRAMES]; ///<animation frames
-	Real				m_fBumpFrame;	///<current animation frame
-	Real				m_fBumpScale;	///<scales bump map uv perturbation
 	TextureClass * m_pReflectionTexture;	///<render target for reflection
+	TextureClass * m_pRefractionTexture;	///<full-resolution opaque scene color for refraction
 	RenderObjClass	*m_skyBox;		///<box around level
 	WaterTracksRenderSystem *m_waterTrackSystem;	///<object responsible for rendering water wakes
 
@@ -209,15 +188,19 @@ protected:
 	TextureClass *m_riverTexture;
 	TextureClass *m_whiteTexture;		///< a texture containing only white used for null pixel shader stages.
 	TextureClass *m_waterNoiseTexture;
-	uintptr_t	m_waterPixelShader;		///<opaque pixel shader handle
-	uintptr_t	m_riverWaterPixelShader;		///<opaque pixel shader handle
-	uintptr_t	m_trapezoidWaterPixelShader;	///<opaque pixel shader handle
+	TextureClass *m_waterOceanHeightTexture;
+	TextureClass *m_waterOceanNormalTexture;
+	TextureClass *m_waterEnvironmentTexture;
+	TextureClass *m_waterCausticsTexture;
+	TextureClass *m_waterDepthLutTexture;
 	TextureClass *m_waterSparklesTexture;
 	Real m_riverXOffset;
 	Real m_riverYOffset;
 	Bool m_drawingRiver;
 	Bool m_disableRiver;
+	Bool m_renderingOffscreen;
 	TextureClass *m_riverAlphaEdge;
+	WaterMaterialClass m_waterMaterial;
 
 	TimeOfDay m_tod;	///<time of day setting for reflected cloud layer
 
@@ -245,15 +228,12 @@ protected:
 	void testCurvedWater();	///<draw the sky layer (clouds, stars, etc.)
 	void renderSkyBody(Matrix3D *mat);	///<draw the sky body (sun, moon, etc.)
 	void renderWaterMesh(void);			///<draw the water surface mesh (deformed 3d mesh).
-	bool initBumpMap(RenderBackendTextureHandle *texture, TextureClass *bump_source);	///<copies data into a backend bump-map resource.
 	void renderMirror(CameraClass *cam);	///< Draw reflected scene into texture
 	void drawSea(RenderInfoClass & rinfo);	///< Draw the surface of the water
 	///bounding box of frustum clipped polygon plane
 	Bool getClippedWaterPlane(CameraClass *cam, AABoxClass *box);
-
-	void setupFlatWaterShader();
-	void setupJbaWaterShader();
-	void cleanupJbaWaterShader();
+	WaterMaterialParameters makeWaterMaterialParameters(bool river,
+		bool reflection, bool underwater) const;
 
 	// Methods used for the optional shader-based water path.
 	bool generateIndexBuffer(int sizeX, int sizeY);	///<Generate the grid index buffer

@@ -38,6 +38,7 @@
  * - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
 
 #include "MeshMdl.h"
+#include "MeshRenderer.h"
 #include "MatInfo.h"
 #include "AABTree.h"
 #include "HTree.h"
@@ -118,7 +119,7 @@ MeshModelClass & MeshModelClass::operator = (const MeshModelClass & that)
 	if (this != &that) {
 		// Remove all polygon renderers, this will remove the mesh from the rendering system.
 		// The mesh will be initialized to rendering system the next time it is rendered.
-		WW3D::Get_Render_Backend()->Unregister_Mesh_Type(this);
+		TheMeshRenderer.Unregister_Mesh_Type(this);
 
 		MeshGeometryClass::operator = (that);
 
@@ -155,7 +156,7 @@ void MeshModelClass::Reset(int polycount,int vertcount,int passcount)
 
 	// Release everything we have and reset to initial state
 
-	WW3D::Get_Render_Backend()->Unregister_Mesh_Type(this);
+	TheMeshRenderer.Unregister_Mesh_Type(this);
 
 	MatInfo->Reset();
 	DefMatDesc->Reset(polycount,vertcount,passcount);
@@ -189,7 +190,7 @@ void MeshModelClass::Register_For_Rendering()
 		}
 	}
 
-	WW3D::Get_Render_Backend()->Register_Mesh_Type(this);
+	TheMeshRenderer.Register_Mesh_Type(this);
 }
 
 void MeshModelClass::Delete_Gap_Filler()
@@ -218,7 +219,7 @@ void MeshModelClass::Replace_Texture(TextureClass* texture,TextureClass* new_tex
 			}
 			// If this mesh model has been initialized for rendering, update the
 			// backend-owned material batches as well.
-			WW3D::Get_Render_Backend()->Update_Mesh_Texture(this, texture, new_texture, pass, stage);
+			TheMeshRenderer.Update_Mesh_Texture(this, texture, new_texture, pass, stage);
 		}
 	}
 }
@@ -243,13 +244,13 @@ void MeshModelClass::Replace_VertexMaterial(VertexMaterialClass* vmat,VertexMate
 		}
 		// If this mesh model has been initialized for rendering, update the
 		// backend-owned material batches as well.
-		WW3D::Get_Render_Backend()->Update_Mesh_Material(this, vmat, new_vmat, pass);
+		TheMeshRenderer.Update_Mesh_Material(this, vmat, new_vmat, pass);
 	}
 }
 
 bool MeshModelClass::Has_Polygon_Renderers() const
 {
-	return WW3D::Get_Render_Backend()->Has_Mesh_Renderers(this);
+	return TheMeshRenderer.Has_Mesh_Renderers(this);
 }
 
 void MeshModelClass::Shadow_Render(SpecialRenderInfoClass & rinfo,const Matrix3D & tm,const HTreeClass * htree)
@@ -311,7 +312,7 @@ void MeshModelClass::Enable_Alternate_Material_Description(bool onoff)
 				modify_for_overbright();
 
 			// TODO: Invalidate just this meshes DX9 data!!!
-			WW3D::Get_Render_Backend()->Invalidate_Mesh_Renderer();
+			TheMeshRenderer.Invalidate();
 		}
 	} else {
 		if (CurMatDesc != DefMatDesc) {
@@ -324,7 +325,7 @@ void MeshModelClass::Enable_Alternate_Material_Description(bool onoff)
 				modify_for_overbright();
 
 			// TODO: Invalidate this meshes DX9 data!!!
-			WW3D::Get_Render_Backend()->Invalidate_Mesh_Renderer();
+			TheMeshRenderer.Invalidate();
 		}
 	}
 }

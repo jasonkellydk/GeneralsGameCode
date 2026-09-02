@@ -90,7 +90,7 @@ static void drawFramerateBar();
 #include "WW3D2/PredLod.h"
 #include "WW3D2/PartEmt.h"
 #include "WW3D2/PartLdr.h"
-#include "WW3D2/Backend/IRenderBackend.h"
+#include "WW3D2/Backend/RenderBackend.h"
 #include "WW3D2/WW3DFormat.h"
 #include "WW3D2/AggDef.h"
 #include "WW3D2/Render2DSentence.h"
@@ -861,7 +861,7 @@ void W3DDisplay::init()
 
 		if (TheGlobalData->m_incrementalAGPBuf)
 		{
-			WW3D::Get_Render_Backend()->Set_Sorting_Min_Vertex_Buffer_Size(1);
+			SortingRendererClass::SetMinVertexBufferSize(1);
 		}
 		if (WW3D::Init( SDLPlatformWindow::nativeHandle() ) != WW3D_ERROR_OK)
 			throw ERROR_INVALID_D3D;	//failed to initialize.  User probably doesn't have DX 8.1
@@ -1733,7 +1733,6 @@ void W3DDisplay::calculateTerrainLOD()
 
 	Int64 freq64 = getPerformanceCounterFrequency();
 
-	char buf[256];
 	float frameTime = 0;
 	float maxTimeLimit = TheGlobalData->m_terrainLODTargetTimeMS/1000.0f;
 	TerrainLOD goodLOD = TERRAIN_LOD_MIN;
@@ -1774,8 +1773,6 @@ void W3DDisplay::calculateTerrainLOD()
 			}
 			Int64 time64 = getPerformanceCounter();
 			timeForFrame = (float)((double)(time64-startTime64) / (double)(freq64));
-			sprintf(buf, "%.2fms ", timeForFrame*1000.0f);
-			SDL_Log("%s", buf);
 			if (i>=NUM_TO_DISCARD) {
 				frameTime += timeForFrame;
 				if (i>NUM_TO_DISCARD+1 &&
@@ -1787,8 +1784,6 @@ void W3DDisplay::calculateTerrainLOD()
 		}
 		frameTime /= ((i)-NUM_TO_DISCARD);
 		count++;
-		sprintf(buf, "\n LOD %d, time %.2fms\n", curLOD, frameTime*1000.0f);
-		SDL_Log("%s", buf);
 		if (frameTime<maxTimeLimit && goodLOD<curLOD) {
 			goodLOD = curLOD;
 		}
@@ -1993,7 +1988,7 @@ AGAIN:
                                            //-LORENZEN
 
 
-			if (TheWaterRenderObj && TheGlobalData->m_waterType == 2)
+			if (TheWaterRenderObj)
 				TheWaterRenderObj->updateRenderTargetTextures(primaryW3DView->get3DCamera());	//do a render into each texture
 
 			//Can't render into textures while rendering to screen so these textures need to be updated

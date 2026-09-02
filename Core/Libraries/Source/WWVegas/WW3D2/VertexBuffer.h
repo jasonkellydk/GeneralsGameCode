@@ -14,7 +14,7 @@
 #include "WWDebug/wwdebug.h"
 #include "Buffer.h"
 #include "VertexFormat.h"
-#include "Backend/IRenderBackend.h"
+#include "Backend/RenderBackend.h"
 
 class Vector2;
 class Vector3;

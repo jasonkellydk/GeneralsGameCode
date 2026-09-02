@@ -217,17 +217,56 @@ set_target_properties(z_ww3d2 PROPERTIES OUTPUT_NAME ww3d2)
 
 target_sources(z_ww3d2 PRIVATE ${WW3D2_SRC})
 
+target_sources(z_ww3d2 PRIVATE
+    "${CMAKE_SOURCE_DIR}/Core/Libraries/Source/WWVegas/WW3D2/ProgrammableShader.cpp"
+    "${CMAKE_SOURCE_DIR}/Core/Libraries/Source/WWVegas/WW3D2/ProgrammableShader.h"
+    "${CMAKE_SOURCE_DIR}/Core/Libraries/Source/WWVegas/WW3D2/ProgrammableMaterial.cpp"
+    "${CMAKE_SOURCE_DIR}/Core/Libraries/Source/WWVegas/WW3D2/ProgrammableMaterial.h"
+)
+
+# GeneralsMD uses the standalone programmable backend. Its shader sources and
+# Slang build are owned by WW3D2; the backend only consumes compiled artifacts.
+target_sources(z_ww3d2 PRIVATE
+    "${CMAKE_SOURCE_DIR}/Core/Libraries/Source/WWVegas/WW3D2/Backend/dx11/DX11Backend.cpp"
+    "${CMAKE_SOURCE_DIR}/Core/Libraries/Source/WWVegas/WW3D2/Backend/dx11/DX11Backend.h"
+    "${CMAKE_SOURCE_DIR}/Core/Libraries/Source/WWVegas/WW3D2/Backend/dx11/core/DX11BackendRuntime.cpp"
+    "${CMAKE_SOURCE_DIR}/Core/Libraries/Source/WWVegas/WW3D2/Backend/dx11/core/DX11BackendRuntime.h"
+    "${CMAKE_SOURCE_DIR}/Core/Libraries/Source/WWVegas/WW3D2/Backend/dx11/core/DX11BackendInternals.h"
+    "${CMAKE_SOURCE_DIR}/Core/Libraries/Source/WWVegas/WW3D2/Backend/dx11/core/DX11BackendComponent.h"
+    "${CMAKE_SOURCE_DIR}/Core/Libraries/Source/WWVegas/WW3D2/Backend/dx11/core/DX11BackendState.h"
+    "${CMAKE_SOURCE_DIR}/Core/Libraries/Source/WWVegas/WW3D2/Backend/dx11/device/DX11BackendDevice.cpp"
+    "${CMAKE_SOURCE_DIR}/Core/Libraries/Source/WWVegas/WW3D2/Backend/dx11/device/DX11DeviceBackend.h"
+    "${CMAKE_SOURCE_DIR}/Core/Libraries/Source/WWVegas/WW3D2/Backend/dx11/state/DX11BackendState.cpp"
+    "${CMAKE_SOURCE_DIR}/Core/Libraries/Source/WWVegas/WW3D2/Backend/dx11/state/DX11RenderStateBackend.h"
+    "${CMAKE_SOURCE_DIR}/Core/Libraries/Source/WWVegas/WW3D2/Backend/dx11/resources/DX11BackendResources.cpp"
+    "${CMAKE_SOURCE_DIR}/Core/Libraries/Source/WWVegas/WW3D2/Backend/dx11/resources/DX11ResourceBackend.h"
+    "${CMAKE_SOURCE_DIR}/Core/Libraries/Source/WWVegas/WW3D2/Backend/dx11/resources/DX11Resources.cpp"
+    "${CMAKE_SOURCE_DIR}/Core/Libraries/Source/WWVegas/WW3D2/Backend/dx11/resources/DX11Resources.h"
+    "${CMAKE_SOURCE_DIR}/Core/Libraries/Source/WWVegas/WW3D2/Backend/dx11/draw/DX11BackendDraw.cpp"
+    "${CMAKE_SOURCE_DIR}/Core/Libraries/Source/WWVegas/WW3D2/Backend/dx11/draw/DX11DrawBackend.h"
+    "${CMAKE_SOURCE_DIR}/Core/Libraries/Source/WWVegas/WW3D2/Backend/dx11/draw/processvertices/DX11ProcessVertices.cpp"
+    "${CMAKE_SOURCE_DIR}/Core/Libraries/Source/WWVegas/WW3D2/Backend/dx11/draw/processvertices/DX11ProcessVertices.h"
+    "${CMAKE_SOURCE_DIR}/Core/Libraries/Source/WWVegas/WW3D2/Backend/dx11/shaders/DX11BackendShaders.cpp"
+    "${CMAKE_SOURCE_DIR}/Core/Libraries/Source/WWVegas/WW3D2/Backend/dx11/shaders/DX11ShaderBackend.h"
+)
+
+# WW3D2 owns Slang source compilation. The active backend only consumes
+# the precompiled artifacts emitted by this target.
+include("${CMAKE_SOURCE_DIR}/Core/Libraries/Source/WWVegas/WW3D2/ShaderBuild.cmake")
+add_dependencies(z_ww3d2 ww3d2_shaders)
+
 target_include_directories(z_ww3d2 PRIVATE
     "${CMAKE_CURRENT_SOURCE_DIR}"
 )
 
-target_compile_definitions(z_ww3d2 PRIVATE
+target_compile_definitions(z_ww3d2 PUBLIC
     $<$<BOOL:${IS_VS6_BUILD}>:WINVER=0x0500>
+    SLANG_STATIC
 )
 
 target_precompile_headers(z_ww3d2 PRIVATE
     [["Utility/CppMacros.h"]] # Must be first, to be removed when abandoning VC6
-    [["Backend/IRenderBackend.h"]]
+    [["Backend/RenderBackend.h"]]
     [["WWLib/always.h"]]
     [["WWLib/STLUtils.h"]]
     [["WWLib/WWCommon.h"]]
@@ -240,4 +279,6 @@ target_link_libraries(z_ww3d2 PRIVATE
     z_wwcommon
     zi_always
     SDL3::SDL3
+    d3d11
+    dxgi
 )

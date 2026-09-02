@@ -40,7 +40,7 @@
 #include "WW3D.h"
 #include "WWDebug/wwprofile.h"
 #include "WWDebug/wwmemlog.h"
-#include "Backend/IRenderBackend.h"
+#include "Backend/RenderBackend.h"
 
 #include <algorithm>
 #include <cstring>

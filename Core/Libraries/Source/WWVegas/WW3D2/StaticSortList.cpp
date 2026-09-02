@@ -43,6 +43,7 @@
 
 #include "RendObj.h"
 #include "WW3D.h"
+#include "MeshRenderer.h"
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 // Initialization Functions ////////////////////////////////////////////////////////////////////////
@@ -91,7 +92,7 @@ void DefaultStaticSortListClass::Render_And_Clear(RenderInfoClass & rinfo)
 				render = true;
 			}
 		}
-		if (render) WW3D::Get_Render_Backend()->Flush_Mesh_Renderer();
+		if (render) TheMeshRenderer.Flush();
 	}
 }
 

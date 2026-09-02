@@ -57,7 +57,7 @@
 #include "WWLib/inisup.h"
 #include "WWSaveLoad/persistfactory.h"
 #include "WW3DIds.h"
-#include "WW3D2/Backend/IRenderBackend.h"
+#include "WW3D2/Backend/RenderBackend.h"
 #include "WW3D2/VertexBuffer.h"
 #include "WW3D2/IndexBuffer.h"
 #include "SortingRenderer.h"
@@ -1227,21 +1227,24 @@ void DazzleRenderObjClass::Render_Dazzle(CameraClass* camera)
 		WW3D::Get_Render_Backend()->Set_Index_Buffer(ib_access,dazzle_vertex_count);
 		WW3D::Get_Render_Backend()->Set_Shader(default_halo_shader);
 		WW3D::Get_Render_Backend()->Set_Texture(0,types[type]->Get_Halo_Texture());
-		WW3D::Get_Render_Backend()->Draw_Triangles(0,halo_poly_count,0,vertex_count);
+		WW3D::Get_Render_Backend()->Draw_Indexed_Primitives(
+			RenderBackendPrimitiveType::TriangleList, 0, 0, vertex_count, 0, halo_poly_count);
 	}
 
 	if (dazzle_poly_count) {
 		WW3D::Get_Render_Backend()->Set_Index_Buffer(ib_access,0);
 		WW3D::Get_Render_Backend()->Set_Shader(default_dazzle_shader);
 		WW3D::Get_Render_Backend()->Set_Texture(0,types[type]->Get_Dazzle_Texture());
-		WW3D::Get_Render_Backend()->Draw_Triangles(0,dazzle_poly_count,0,vertex_count);
+		WW3D::Get_Render_Backend()->Draw_Indexed_Primitives(
+			RenderBackendPrimitiveType::TriangleList, 0, 0, vertex_count, 0, dazzle_poly_count);
 	}
 
 	if (lensflare_poly_count) {
 		WW3D::Get_Render_Backend()->Set_Index_Buffer(ib_access,dazzle_vertex_count+halo_vertex_count);
 		WW3D::Get_Render_Backend()->Set_Shader(default_dazzle_shader);
 		WW3D::Get_Render_Backend()->Set_Texture(0,lensflare->Get_Texture());
-		WW3D::Get_Render_Backend()->Draw_Triangles(0,lensflare_poly_count,0,vertex_count);
+		WW3D::Get_Render_Backend()->Draw_Indexed_Primitives(
+			RenderBackendPrimitiveType::TriangleList, 0, 0, vertex_count, 0, lensflare_poly_count);
 	}
 
 	WW3D::Get_Render_Backend()->Set_Transform(RenderBackendTransform::Projection,old_projection_transform);

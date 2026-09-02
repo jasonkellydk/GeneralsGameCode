@@ -5,7 +5,7 @@
 
 #pragma once
 
-#include "Backend/IRenderBackend.h"
+#include "Backend/RenderBackend.h"
 #include "IndexBuffer.h"
 #include "Shader.h"
 #include "Texture.h"

@@ -42,7 +42,8 @@
 #include "WW3D2/MeshMdl.h"
 #include "WW3D2/AssetMgr.h"
 #include "WW3D2/TexProject.h"
-#include "WW3D2/Backend/IRenderBackend.h"
+#include "WW3D2/Backend/RenderBackend.h"
+#include "WW3D2/MeshRenderer.h"
 #include "WW3D2/VertexFormat.h"
 #include "Lib/BaseType.h"
 #include "W3DDevice/GameClient/HeightMap.h"
@@ -1328,7 +1329,7 @@ Int W3DProjectedShadowManager::renderShadows(RenderInfoClass & rinfo)
 	if (TheGlobalData->m_useShadowDecals)
 	{
 		// Render the object
-		WW3D::Get_Render_Backend()->Set_Mesh_Renderer_Camera(&rinfo.Camera);
+		TheMeshRenderer.Set_Camera(&rinfo.Camera);
 
 		//keep track of active decal texture so we can render all decals at once.
 		W3DShadowTexture *lastShadowDecalTexture=nullptr;
@@ -1446,7 +1447,7 @@ Int W3DProjectedShadowManager::renderShadows(RenderInfoClass & rinfo)
 		}
 
 		flushDecals(lastShadowDecalTexture,lastShadowType);	//make sure there are not any unrendered decals left over.
-		WW3D::Get_Render_Backend()->Flush_Mesh_Renderer();	//draw all the shadow receiving objects
+		TheMeshRenderer.Flush();	//draw all the shadow receiving objects
 	}
 	if (m_decalList)
 	{

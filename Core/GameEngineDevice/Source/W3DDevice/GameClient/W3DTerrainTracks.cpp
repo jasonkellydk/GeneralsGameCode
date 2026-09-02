@@ -54,7 +54,7 @@
 #include "WW3D2/RInfo.h"
 #include "WW3D2/Camera.h"
 #include "WW3D2/AssetMgr.h"
-#include "WW3D2/Backend/IRenderBackend.h"
+#include "WW3D2/Backend/RenderBackend.h"
 #include "WW3D2/WW3D.h"
 #include "WW3D2/Scene.h"
 #include "GameLogic/TerrainLogic.h"
@@ -903,7 +903,9 @@ Try improving the fit to vertical surfaces like cliffs.
 			{
 				WW3D::Get_Render_Backend()->Set_Texture(0,mod->m_stageZeroTexture);
 				WW3D::Get_Render_Backend()->Set_Index_Buffer_Index_Offset(trackStartIndex);
-				WW3D::Get_Render_Backend()->Draw_Triangles(	0,(mod->m_activeEdgeCount-1)*2, 0, mod->m_activeEdgeCount*2);
+				WW3D::Get_Render_Backend()->Draw_Indexed_Primitives(
+					RenderBackendPrimitiveType::TriangleList, 0, 0,
+					mod->m_activeEdgeCount * 2, 0, (mod->m_activeEdgeCount - 1) * 2);
 
 				trackStartIndex += mod->m_activeEdgeCount*2;
 			}

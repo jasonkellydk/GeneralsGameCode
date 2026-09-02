@@ -27,7 +27,7 @@
 #include "WWLib/always.h"
 #include "WW3D2/RendObj.h"
 #include "WW3D2/W3DFile.h"
-#include "WW3D2/Backend/IRenderBackend.h"
+#include "WW3D2/Backend/RenderBackend.h"
 #include "WW3D2/Shader.h"
 #include "WW3D2/VertMaterial.h"
 #include "Lib/BaseType.h"

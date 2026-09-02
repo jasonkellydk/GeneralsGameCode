@@ -22,7 +22,7 @@
 #include <WW3D2/RInfo.h>
 #include <WW3D2/Camera.h>
 #include <WW3D2/Light.h>
-#include "WW3D2/Backend/IRenderBackend.h"
+#include "WW3D2/Backend/RenderBackend.h"
 #include <WW3D2/WW3D.h>
 
 #include "StdAfx.h"

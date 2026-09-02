@@ -300,7 +300,8 @@ void Line3DClass::Render(RenderInfoClass & rinfo)
 
 	WW3D::Get_Render_Backend()->Set_Vertex_Buffer(vb);
 	WW3D::Get_Render_Backend()->Set_Index_Buffer(ib,0);
-	WW3D::Get_Render_Backend()->Draw_Triangles(0,36/3,0,8);
+	WW3D::Get_Render_Backend()->Draw_Indexed_Primitives(
+		RenderBackendPrimitiveType::TriangleList, 0, 0, 8, 0, 36 / 3);
 }
 
 /**************************************************************************

@@ -42,7 +42,7 @@
 #include "Texture.h"
 #include "VertMaterial.h"
 #include "WW3D.h"
-#include "WW3D2/Backend/IRenderBackend.h"
+#include "WW3D2/Backend/RenderBackend.h"
 #include "WWMath/wwmath.h"
 #include "RInfo.h"
 #include "Camera.h"
@@ -470,9 +470,10 @@ void	LineGroupClass::Render(RenderInfoClass &rinfo)
 	WW3D::Get_Render_Backend()->Set_Vertex_Buffer(vba);
 
 	if (sort) {
-		WW3D::Get_Render_Backend()->Insert_Sorted_Triangles(0, num_tris, 0, num_vertices);
+		SortingRendererClass::Insert_Triangles(0, num_tris, 0, num_vertices);
 	} else {
-		WW3D::Get_Render_Backend()->Draw_Triangles(0, num_tris, 0, num_vertices);
+		WW3D::Get_Render_Backend()->Draw_Indexed_Primitives(
+			RenderBackendPrimitiveType::TriangleList, 0, 0, num_vertices, 0, num_tris);
 	}
 
 	// restore the matrices

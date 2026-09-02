@@ -21,23 +21,13 @@ set(WW3D2_SRC
 	AssetStatus.cpp
 	AssetStatus.h
 	StringUtilities.h
-        Backend/dx9/DX9Backend.cpp
-        Backend/dx9/DX9Backend.h
-        Backend/dx9/Caps.cpp
-        Backend/dx9/Caps.h
-	Backend/dx9/FormatConverter.cpp
-	Backend/dx9/FormatConverter.h
-	Backend/dx9/VertexFormatMapper.cpp
-	Backend/dx9/VertexFormatMapper.h
-        Backend/dx9/List.h
-        Backend/dx9/PolygonRenderer.cpp
-        Backend/dx9/PolygonRenderer.h
-        Backend/dx9/Renderer.cpp
-        Backend/dx9/Renderer.h
-        Backend/dx9/RendererDebugger.cpp
-        Backend/dx9/RendererDebugger.h
-        Backend/dx9/TextureManager.cpp
-        Backend/dx9/TextureManager.h
+	MeshRenderLists.h
+	MeshPolygonRenderer.cpp
+	MeshPolygonRenderer.h
+	MeshRenderer.cpp
+	MeshRenderer.h
+	RendererDebugger.cpp
+	RendererDebugger.h
     Backend/RenderBackend.h
     BitmapHandler.cpp
     BitmapHandler.h
@@ -94,6 +84,7 @@ set(WW3D2_SRC
     #HTreeMgr.cpp
     #HTreeMgr.h
         Backend/IRenderBackend.h
+        Backend/RenderBackendTypes.h
     Intersec.cpp
     Intersec.h
     Intersec.inl

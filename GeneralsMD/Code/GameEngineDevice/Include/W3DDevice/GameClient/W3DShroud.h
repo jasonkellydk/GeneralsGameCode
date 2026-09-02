@@ -26,7 +26,7 @@
 
 #include "WW3D2/MatPass.h"
 #include "WW3D2/TextureFilter.h"
-#include "WW3D2/Backend/IRenderBackend.h"
+#include "WW3D2/Backend/RenderBackend.h"
 
 class AABoxClass;
 class WorldHeightMap;

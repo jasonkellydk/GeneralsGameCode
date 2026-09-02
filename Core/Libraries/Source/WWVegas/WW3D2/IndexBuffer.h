@@ -13,7 +13,7 @@
 #include "WWLib/always.h"
 #include "WWDebug/wwdebug.h"
 #include "Buffer.h"
-#include "Backend/IRenderBackend.h"
+#include "Backend/RenderBackend.h"
 
 class IndexBufferClass;
 

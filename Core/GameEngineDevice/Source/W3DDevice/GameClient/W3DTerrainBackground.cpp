@@ -172,6 +172,8 @@ void W3DTerrainBackground::doPartialUpdate(const IRegion2D &partialRange, WorldH
 			pos.Y = (j)*MAP_XY_FACTOR - m_map->getBorderSizeInline()*MAP_XY_FACTOR;
 			curVb->u1 = (float)(i-minX)/(float)(m_width);
 			curVb->v1 = 1.0f - (float)(j-minY)/(float)(m_width);
+			curVb->u2 = curVb->u1;
+			curVb->v2 = curVb->v1;
 			curVb->x = pos.X;
 			curVb->y = pos.Y;
 			curVb->z = pos.Z;
@@ -188,8 +190,10 @@ void W3DTerrainBackground::doPartialUpdate(const IRegion2D &partialRange, WorldH
 		REF_PTR_RELEASE(m_terrainTexture4X);
 		m_terrainTexture = m_map->getFlatTexture(m_xOrigin, m_yOrigin, m_width, PIXELS_PER_GRID);
 		//	DEBUG ONLY. jba. m_terrainTexture =  (TerrainTextureClass *)NEW_REF(TextureClass, ("TBBib.tga"));
-		m_terrainTexture->Get_Filter().Set_U_Addr_Mode(TextureFilterClass::TEXTURE_ADDRESS_CLAMP);
-		m_terrainTexture->Get_Filter().Set_V_Addr_Mode(TextureFilterClass::TEXTURE_ADDRESS_CLAMP);
+		if (m_terrainTexture != nullptr) {
+			m_terrainTexture->Get_Filter().Set_U_Addr_Mode(TextureFilterClass::TEXTURE_ADDRESS_CLAMP);
+			m_terrainTexture->Get_Filter().Set_V_Addr_Mode(TextureFilterClass::TEXTURE_ADDRESS_CLAMP);
+		}
 	}
 
 	if (m_curNumTerrainIndices == 0) {
@@ -528,6 +532,8 @@ void W3DTerrainBackground::doTesselatedUpdate(const IRegion2D &partialRange, Wor
 				pos.Y = (j)*MAP_XY_FACTOR - m_map->getBorderSizeInline()*MAP_XY_FACTOR;
 				curVb->u1 = (float)(i-minX)/(float)(m_width);
 				curVb->v1 = 1.0f - (float)(j-minY)/(float)(m_width);
+				curVb->u2 = curVb->u1;
+				curVb->v2 = curVb->v1;
 				curVb->x = pos.X;
 				curVb->y = pos.Y;
 				curVb->z = pos.Z;
@@ -581,8 +587,10 @@ void W3DTerrainBackground::doTesselatedUpdate(const IRegion2D &partialRange, Wor
 		REF_PTR_RELEASE(m_terrainTexture4X);
 		m_terrainTexture = m_map->getFlatTexture(m_xOrigin, m_yOrigin, m_width, PIXELS_PER_GRID);
 		//	DEBUG ONLY. jba. m_terrainTexture =  (TerrainTextureClass *)NEW_REF(TextureClass, ("TBBib.tga"));
-		m_terrainTexture->Get_Filter().Set_U_Addr_Mode(TextureFilterClass::TEXTURE_ADDRESS_CLAMP);
-		m_terrainTexture->Get_Filter().Set_V_Addr_Mode(TextureFilterClass::TEXTURE_ADDRESS_CLAMP);
+		if (m_terrainTexture != nullptr) {
+			m_terrainTexture->Get_Filter().Set_U_Addr_Mode(TextureFilterClass::TEXTURE_ADDRESS_CLAMP);
+			m_terrainTexture->Get_Filter().Set_V_Addr_Mode(TextureFilterClass::TEXTURE_ADDRESS_CLAMP);
+		}
 	}
 
 }
@@ -732,15 +740,19 @@ void W3DTerrainBackground::updateTexture()
 		REF_PTR_RELEASE(m_terrainTexture2X);
 		if (m_terrainTexture4X == nullptr) {
 			m_terrainTexture4X = m_map->getFlatTexture(m_xOrigin, m_yOrigin, m_width, 4*PIXELS_PER_GRID);
-			m_terrainTexture4X->Get_Filter().Set_U_Addr_Mode(TextureFilterClass::TEXTURE_ADDRESS_CLAMP);
-			m_terrainTexture4X->Get_Filter().Set_V_Addr_Mode(TextureFilterClass::TEXTURE_ADDRESS_CLAMP);
+			if (m_terrainTexture4X != nullptr) {
+				m_terrainTexture4X->Get_Filter().Set_U_Addr_Mode(TextureFilterClass::TEXTURE_ADDRESS_CLAMP);
+				m_terrainTexture4X->Get_Filter().Set_V_Addr_Mode(TextureFilterClass::TEXTURE_ADDRESS_CLAMP);
+			}
 		}
 	} else if (m_texMultiplier == TEX2X) {
 		REF_PTR_RELEASE(m_terrainTexture4X);
 		if (m_terrainTexture2X == nullptr) {
 			m_terrainTexture2X = m_map->getFlatTexture(m_xOrigin, m_yOrigin, m_width, 2*PIXELS_PER_GRID);
-			m_terrainTexture2X->Get_Filter().Set_U_Addr_Mode(TextureFilterClass::TEXTURE_ADDRESS_CLAMP);
-			m_terrainTexture2X->Get_Filter().Set_V_Addr_Mode(TextureFilterClass::TEXTURE_ADDRESS_CLAMP);
+			if (m_terrainTexture2X != nullptr) {
+				m_terrainTexture2X->Get_Filter().Set_U_Addr_Mode(TextureFilterClass::TEXTURE_ADDRESS_CLAMP);
+				m_terrainTexture2X->Get_Filter().Set_V_Addr_Mode(TextureFilterClass::TEXTURE_ADDRESS_CLAMP);
+			}
 		}
 	} else {
 		REF_PTR_RELEASE(m_terrainTexture4X);
@@ -749,53 +761,30 @@ void W3DTerrainBackground::updateTexture()
 
 }
 
-//=============================================================================
-// W3DTerrainBackground::renderTerrain
-//=============================================================================
-//=============================================================================
-void W3DTerrainBackground::drawVisiblePolys(RenderInfoClass & rinfo, Bool disableTextures)
+TextureClass *W3DTerrainBackground::getRenderTexture()
 {
-#if 1
-	if (m_curNumTerrainIndices == 0) {
-		return;
+	TerrainTextureClass *selected_texture = m_terrainTexture;
+	if (m_texMultiplier == TEX4X)
+	{
+		selected_texture = m_terrainTexture4X;
 	}
-	if (m_cullStatus==CULL_STATUS_INVISIBLE) {
-		return;
+	else if (m_texMultiplier == TEX2X)
+	{
+		selected_texture = m_terrainTexture2X;
 	}
-	// Setup the vertex buffer, shader & texture.
-	WW3D::Get_Render_Backend()->Set_Index_Buffer(m_indexTerrain,0);
-	WW3D::Get_Render_Backend()->Set_Vertex_Buffer(m_vertexTerrain);
-  if (!disableTextures) {
-		if (m_terrainTexture4X) {
-			WW3D::Get_Render_Backend()->Set_Texture(1, m_terrainTexture4X);
-		}	else if (m_terrainTexture2X) {
-			WW3D::Get_Render_Backend()->Set_Texture(1, m_terrainTexture2X);
-		}	else {
-			WW3D::Get_Render_Backend()->Set_Texture(1, m_terrainTexture);
-		}
+
+	if (selected_texture != nullptr &&
+		selected_texture->Ensure_Render_Backend_Texture())
+	{
+		return selected_texture;
 	}
-	WW3D::Get_Render_Backend()->Draw_Triangles(	0, m_curNumTerrainIndices/3, 0,	m_curNumTerrainVertices);
-#else
-	if (m_curNumTerrainIndices == 0) {
-		return;
+	if (m_terrainTexture != selected_texture &&
+		m_terrainTexture != nullptr &&
+		m_terrainTexture->Ensure_Render_Backend_Texture())
+	{
+		return m_terrainTexture;
 	}
-	if (m_cullStatus==CULL_STATUS_INVISIBLE) {
-		return;
-	}
-	// Setup the vertex buffer, shader & texture.
-	WW3D::Get_Render_Backend()->Set_Index_Buffer(m_indexTerrain,0);
-	WW3D::Get_Render_Backend()->Set_Vertex_Buffer(m_vertexTerrain);
-  if (!disableTextures) {
-		if (m_terrainTexture4X) {
-			WW3D::Get_Render_Backend()->Set_Texture(0, m_terrainTexture4X);
-		}	else if (m_terrainTexture2X) {
-			WW3D::Get_Render_Backend()->Set_Texture(0, m_terrainTexture2X);
-		}	else {
-			WW3D::Get_Render_Backend()->Set_Texture(0, m_terrainTexture);
-		}
-	}
-	WW3D::Get_Render_Backend()->Draw_Triangles(	0, m_curNumTerrainIndices/3, 0,	m_curNumTerrainVertices);
-#endif
+	return nullptr;
 }
 
 

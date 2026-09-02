@@ -20,7 +20,7 @@
 #include "Common/GlobalData.h"
 #include "GameClient/GameText.h"
 #include "GameClient/InGameUI.h"
-#include "WW3D2/Backend/IRenderBackend.h"
+#include "WW3D2/Backend/RenderBackend.h"
 #include "WW3D2/WW3D.h"
 #include "WW3D2/SurfaceClass.h"
 #include "WWLib/mpsc_intrusive_queue.h"

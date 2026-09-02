@@ -29,13 +29,14 @@
 #include "WW3D2/W3DFile.h"
 #include "WW3D2/VertexBuffer.h"
 #include "WW3D2/IndexBuffer.h"
-#include "WW3D2/Backend/IRenderBackend.h"
+#include "WW3D2/Backend/RenderBackend.h"
 #include "WW3D2/Shader.h"
 #include "WW3D2/VertMaterial.h"
 #include "Lib/BaseType.h"
 #include "Common/GameType.h"
 #include "W3DDevice/GameClient/WorldHeightMap.h"
 #include "W3DDevice/GameClient/BaseHeightMap.h"
+#include "W3DDevice/GameClient/TerrainMaterial.h"
 
 class W3DTerrainBackground;
 /// Custom render object that draws the heightmap and handles intersection tests.
@@ -86,6 +87,7 @@ protected:
 					STATE_MOVING2, 					 // second moving state
 					STATE_UPDATE_TEXTURES		 // Camera stopped, updating textures.
 	} m_updateState;
+	TerrainMaterialClass m_terrainMaterial;
 
 protected:
 	void releaseTiles();

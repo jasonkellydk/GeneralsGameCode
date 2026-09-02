@@ -37,7 +37,7 @@
 #pragma once
 
 #include "WWLib/always.h"
-#include "Backend/IRenderBackend.h"
+#include "Backend/RenderBackend.h"
 #include "WWMath/vector3.h"
 #include "WW3D2/Layer.h"
 #include "WW3D2/W3DErr.h"

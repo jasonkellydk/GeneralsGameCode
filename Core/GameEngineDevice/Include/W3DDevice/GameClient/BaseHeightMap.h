@@ -31,7 +31,7 @@
 #include "WW3D2/IndexBuffer.h"
 #include "WW3D2/Shader.h"
 #include "WW3D2/VertMaterial.h"
-#include "WW3D2/Backend/IRenderBackend.h"
+#include "WW3D2/Backend/RenderBackend.h"
 #include "Lib/BaseType.h"
 #include "Common/GameType.h"
 #include "W3DDevice/GameClient/WorldHeightMap.h"
@@ -251,7 +251,6 @@ protected:
 	std::vector<bool> m_showAsVisibleCliff;
 
 
-	ShaderClass m_shaderClass; ///<shader or rendering state for heightmap
 	VertexMaterialClass	  	  *m_vertexMaterialClass;	///< vertex shader (lighting) for terrain
 	TextureClass *m_stageZeroTexture;	///<primary texture
 	TextureClass *m_stageOneTexture;	///<transparent edging texture

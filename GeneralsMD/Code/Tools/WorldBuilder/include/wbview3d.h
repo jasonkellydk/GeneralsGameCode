@@ -33,7 +33,7 @@
 #include "Common/GameType.h"
 #include "Common/GlobalData.h"
 #include "Common/ModelState.h"
-#include "WW3D2/Backend/IRenderBackend.h"
+#include "WW3D2/Backend/RenderBackend.h"
 
 //#include "GameLogic/Module/BodyModule.h" -- Yikes... not necessary to include this! (KM)
 enum BodyDamageType CPP_11(: Int); //Ahhhh much better!

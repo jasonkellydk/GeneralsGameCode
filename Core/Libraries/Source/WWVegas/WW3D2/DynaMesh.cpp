@@ -329,10 +329,11 @@ void DynamicMeshModel::Render(RenderInfoClass & rinfo)
 		// If no texture, shader or material arrays for this pass just draw and go to next pass
 		if (!texture_array0 && !texture_array1 && !material_array && !shader_array) {
 			if (buffer_type==BUFFER_TYPE_DYNAMIC_SORTING) {
-				WW3D::Get_Render_Backend()->Insert_Sorted_Triangles(sphere,0, DynamicMeshPNum, 0, DynamicMeshVNum);
+				SortingRendererClass::Insert_Triangles(sphere,0, DynamicMeshPNum, 0, DynamicMeshVNum);
 			}
 			else {
-				WW3D::Get_Render_Backend()->Draw_Triangles(0, DynamicMeshPNum, 0, DynamicMeshVNum);
+				WW3D::Get_Render_Backend()->Draw_Indexed_Primitives(
+					RenderBackendPrimitiveType::TriangleList, 0, 0, DynamicMeshVNum, 0, DynamicMeshPNum);
 			}
 			continue;
 		}
@@ -364,7 +365,7 @@ void DynamicMeshModel::Render(RenderInfoClass & rinfo)
 			// If run ends (mesh ends or state changes) draw, reset indices, set state for next run.
 			if (done || texture_changed || material_changed || shader_changed) {
 				if (buffer_type==BUFFER_TYPE_DYNAMIC_SORTING) {
-					WW3D::Get_Render_Backend()->Insert_Sorted_Triangles(
+					SortingRendererClass::Insert_Triangles(
 						sphere,
 						(start_tri_idx * 3),
 						(1 + cur_tri_idx - start_tri_idx),
@@ -372,11 +373,10 @@ void DynamicMeshModel::Render(RenderInfoClass & rinfo)
 						1 + max_vert_idx - min_vert_idx);
 				}
 				else {
-					WW3D::Get_Render_Backend()->Draw_Triangles(
-						(start_tri_idx * 3),
-						(1 + cur_tri_idx - start_tri_idx),
-						min_vert_idx,
-						1 + max_vert_idx - min_vert_idx);
+					WW3D::Get_Render_Backend()->Draw_Indexed_Primitives(
+						RenderBackendPrimitiveType::TriangleList, 0,
+						min_vert_idx, 1 + max_vert_idx - min_vert_idx,
+						(start_tri_idx * 3), 1 + cur_tri_idx - start_tri_idx);
 				}
 				start_tri_idx = next_tri_idx;
 				min_vert_idx = DynamicMeshVNum - 1;

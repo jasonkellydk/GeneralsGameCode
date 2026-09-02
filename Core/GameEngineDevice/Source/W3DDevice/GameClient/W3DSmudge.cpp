@@ -41,7 +41,7 @@
 #include "WW3D2/VertMaterial.h"
 #include "WW3D2/VertexFormat.h"
 #include "WW3D2/IndexBuffer.h"
-#include "WW3D2/Backend/IRenderBackend.h"
+#include "WW3D2/Backend/RenderBackend.h"
 #include "WW3D2/RInfo.h"
 #include "WW3D2/Camera.h"
 #include "WW3D2/SortingRenderer.h"
@@ -313,7 +313,7 @@ void W3DSmudgeManager::render(RenderInfoClass &rinfo)
 	Int count = 0;
 
 	// make sure background particles have finished drawing.
-	WW3D::Get_Render_Backend()->Flush_Sorting_Renderer();	//draw sorted translucent polys like particles.
+	SortingRendererClass::Flush();	//draw sorted translucent polys like particles.
 
 	for(; setIt != m_usedSmudgeSetList.end(); ++setIt)
 	{
@@ -483,7 +483,9 @@ void W3DSmudgeManager::render(RenderInfoClass &rinfo)
 flushSmudges:
 		WW3D::Get_Render_Backend()->Set_Vertex_Buffer(vb_access);
 
-		WW3D::Get_Render_Backend()->Draw_Triangles(0,smudgesInRenderBatch*4, 0, smudgesInRenderBatch*5);
+		WW3D::Get_Render_Backend()->Draw_Indexed_Primitives(
+			RenderBackendPrimitiveType::TriangleList, 0, 0,
+			smudgesInRenderBatch * 5, 0, smudgesInRenderBatch * 4);
 
 	// Optional debug outline rendering is disabled.
 		smudgesRemaining -= smudgesInRenderBatch;

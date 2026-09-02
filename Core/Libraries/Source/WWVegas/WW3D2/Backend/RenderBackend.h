@@ -18,8 +18,25 @@
 
 #pragma once
 
-class IRenderBackend;
+#include "IRenderBackend.h"
+#include "dx11/DX11Backend.h"
 
-// The selected backend owns the legacy renderer lifecycle. Keep backend
-// selection here so WW3D does not depend on a concrete implementation.
-IRenderBackend *Create_Render_Backend(void * window, bool lite);
+// This is the only active-backend binding. IRenderBackend.h remains API
+// neutral; this header is the modern GenMD build's concrete selection point.
+using IRenderBackend = IRenderBackendType<DX11Backend>;
+
+using RenderBackendVertexBufferLock =
+	RenderBackendVertexBufferLockT<IRenderBackend>;
+using RenderBackendIndexBufferLock =
+	RenderBackendIndexBufferLockT<IRenderBackend>;
+
+template <typename BackendT>
+inline BackendT *Create_Render_Backend_Instance(void * window, bool lite)
+{
+	return BackendT::Create(window, lite);
+}
+
+inline IRenderBackend *Create_Render_Backend(void * window, bool lite)
+{
+	return Create_Render_Backend_Instance<IRenderBackend>(window, lite);
+}

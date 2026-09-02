@@ -45,6 +45,7 @@
 #include "WWMath/rect.h"
 #include "WW3D2/Mesh.h"
 #include "WW3D2/MeshMdl.h"
+#include "WW3D2/MeshRenderer.h"
 #include "WW3D2/Line3D.h"
 #include "WW3D2/DynaMesh.h"
 #include "WW3D2/SphereObj.h"
@@ -2089,13 +2090,13 @@ void WbView3d::render()
 		}
 		if (m_showObjToolTrackingObj && m_objectToolTrackingObj) {
 			m_transparentObjectsScene->Add_Render_Object(m_objectToolTrackingObj);
-			WW3D::Get_Render_Backend()->Set_Force_Multiply(true);
-			WW3D::Get_Render_Backend()->Set_Mesh_Renderer_Lighting(false);
+			MeshTextureCategoryClass::SetForceMultiply(true);
+			TheMeshRenderer.Enable_Lighting(false);
 			Real lightLevel = 1.0f;
 			m_transparentObjectsScene->Set_Ambient_Light(Vector3(lightLevel,lightLevel,lightLevel));
 			WW3D::Render(m_transparentObjectsScene, m_camera);
-			WW3D::Get_Render_Backend()->Set_Mesh_Renderer_Lighting(true);
-			WW3D::Get_Render_Backend()->Set_Force_Multiply(false);
+			TheMeshRenderer.Enable_Lighting(true);
+			MeshTextureCategoryClass::SetForceMultiply(false);
 			m_transparentObjectsScene->Remove_Render_Object(m_objectToolTrackingObj);
 		}
 

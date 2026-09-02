@@ -103,6 +103,8 @@
 #include "WWLib/chunkio.h"
 #include "W3DUtil.h"
 #include "MeshMdl.h"
+#include "MeshRenderer.h"
+#include "RendererDebugger.h"
 #include "MeshGeometry.h"
 #include "WW3D.h"
 #include "Camera.h"
@@ -739,7 +741,7 @@ void MeshClass::Render(RenderInfoClass & rinfo)
 				/*
 				** Link each polygon renderer for this mesh into the visible list
 				*/
-				WW3D::Get_Render_Backend()->Add_Mesh_Render_Tasks(Model, this);
+				TheMeshRenderer.Add_Mesh_Render_Tasks(Model, this);
 
 				rendered_something = true;
 
@@ -759,7 +761,7 @@ void MeshClass::Render(RenderInfoClass & rinfo)
 					** If the base pass for this mesh has been disabled, we have to make sure
 					** the procedural material pass is rendered after everything else has rendered
 					*/
-					WW3D::Get_Render_Backend()->Add_Mesh_Material_Pass(Model, matpass, this,
+					TheMeshRenderer.Add_Mesh_Material_Pass(Model, matpass, this,
 						(rinfo.Current_Override_Flags() & RenderInfoClass::RINFO_OVERRIDE_ADDITIONAL_PASSES_ONLY) != 0);
 					rendered_something = true;
 				}
@@ -770,7 +772,7 @@ void MeshClass::Render(RenderInfoClass & rinfo)
 			** to tell the mesh rendering system to process this skin
 			*/
 			if (rendered_something && Model->Get_Flag(MeshGeometryClass::SKIN)) {
-				WW3D::Get_Render_Backend()->Add_Mesh_Skin(Model, this);
+				TheMeshRenderer.Add_Mesh_Skin(Model, this);
 			}
 
 			/*
@@ -783,11 +785,11 @@ void MeshClass::Render(RenderInfoClass & rinfo)
 				Vector3 cam_space_sphere_center;
 				rinfo.Camera.Transform_To_View_Space(cam_space_sphere_center,ws_sphere.Center);
 				if (-cam_space_sphere_center.Z - ws_sphere.Radius < WW3D::Get_Decal_Rejection_Distance()) {
-					WW3D::Get_Render_Backend()->Add_Decal_Mesh(DecalMesh);
+					TheMeshRenderer.Add_To_Render_List(DecalMesh);
 				}
 			}
 
-			WW3D::Get_Render_Backend()->Add_Renderer_Debug_Mesh(this);
+			RendererDebuggerClass::Add_Mesh(this);
 		}
 	}
 }
@@ -843,7 +845,7 @@ void MeshClass::Render_Material_Pass(MaterialPassClass * pass,IndexBufferClass *
 		SNAPSHOT_SAY(("Set_World_Identity"));
 		WW3D::Get_Render_Backend()->Set_World_Identity();
 
-		WW3D::Get_Render_Backend()->Render_Mesh_Pass(Model, BaseVertexOffset);
+		TheMeshRenderer.Render_Mesh_Pass(Model, BaseVertexOffset);
 
 		if (oldOpacity >= 0)
 		{	//opacity was modified for this mesh instance, so need to restore the material setting which may be shared
@@ -924,17 +926,15 @@ void MeshClass::Render_Material_Pass(MaterialPassClass * pass,IndexBufferClass *
 			** Render
 			*/
 			int vertex_offset = static_cast<int>(
-				WW3D::Get_Render_Backend()->Get_Mesh_Renderer_Vertex_Offset(Model));
+				TheMeshRenderer.Get_Mesh_Renderer_Vertex_Offset(Model));
 			pass->Install_Materials();
 
 			WW3D::Get_Render_Backend()->Set_Transform(RenderBackendTransform::World,Get_Transform());
 			WW3D::Get_Render_Backend()->Set_Index_Buffer(dynamic_ib,vertex_offset);
 
-			WW3D::Get_Render_Backend()->Draw_Triangles(
-				0,
-				temp_apt.Count(),
-				min_v,
-				max_v-min_v+1);
+			WW3D::Get_Render_Backend()->Draw_Indexed_Primitives(
+				RenderBackendPrimitiveType::TriangleList, 0, min_v,
+				max_v - min_v + 1, 0, temp_apt.Count());
 			//MW: Need uninstall custom materials in case they leave D3D in unknown state
 			pass->UnInstall_Materials();
 		}
@@ -965,7 +965,7 @@ void MeshClass::Render_Material_Pass(MaterialPassClass * pass,IndexBufferClass *
 		SNAPSHOT_SAY(("Set_World_Transform"));
 		WW3D::Get_Render_Backend()->Set_Transform(RenderBackendTransform::World,Transform);
 
-		WW3D::Get_Render_Backend()->Render_Mesh_Pass(Model, BaseVertexOffset);
+		TheMeshRenderer.Render_Mesh_Pass(Model, BaseVertexOffset);
 
 		if (oldOpacity >= 0)
 		{	//opacity was modified for this mesh instance, so need to restore the material setting which may be shared
@@ -1552,7 +1552,7 @@ int MeshClass::Get_Draw_Call_Count() const
 	if (Model != nullptr) {
 		// Prefer to return the number of polygon renderers
 		int prcount = static_cast<int>(
-			WW3D::Get_Render_Backend()->Get_Mesh_Renderer_Count(Model));
+			TheMeshRenderer.Get_Mesh_Renderer_Count(Model));
 		if (prcount > 0) {
 			return prcount;
 		}

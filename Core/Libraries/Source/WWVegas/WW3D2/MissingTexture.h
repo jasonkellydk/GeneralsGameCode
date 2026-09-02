@@ -19,7 +19,7 @@
 #pragma once
 
 #include "WWLib/always.h"
-#include "Backend/IRenderBackend.h"
+#include "Backend/RenderBackend.h"
 
 class MissingTexture
 {

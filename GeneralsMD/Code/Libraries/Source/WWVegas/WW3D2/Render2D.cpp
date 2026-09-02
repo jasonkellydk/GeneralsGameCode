@@ -47,7 +47,7 @@
 #include "Texture.h"
 #include "WWMath/matrix4.h"
 #include "WWMath/matrix3d.h"
-#include "WW3D2/Backend/IRenderBackend.h"
+#include "WW3D2/Backend/RenderBackend.h"
 #include "WW3D2/IndexBuffer.h"
 #include "WW3D2/VertexBuffer.h"
 #include "SortingRenderer.h"
@@ -56,9 +56,9 @@
 #include "WWDebug/wwprofile.h"
 #include "WWDebug/wwmemlog.h"
 #include "AssetMgr.h"
+#include <cstring>
 
 RectClass							Render2DClass::ScreenResolution( 0,0,0,0 );
-
 
 /*
 ** Render2DClass
@@ -638,8 +638,10 @@ void Render2DClass::Render()
 
 		for (i=0; i<Vertices.Count(); i++)
 		{
+			std::memset(va, 0, fi.Get_Vertex_Size());
 			Vector3 temp(Vertices[i].X,Vertices[i].Y,ZValue);
 			*(Vector3*)(va+fi.Get_Location_Offset())=temp;
+			*(Vector3*)(va+fi.Get_Normal_Offset())=Vector3(0.0f,0.0f,1.0f);
 			*(unsigned int*)(va+fi.Get_Diffuse_Offset())=Colors[i];
 			*(Vector2*)(va+fi.Get_Tex_Offset(0))=UVCoordinates[i];
 			va+=fi.Get_Vertex_Size();
@@ -686,7 +688,9 @@ void Render2DClass::Render()
 	}
 	else
 		WW3D::Get_Render_Backend()->Set_Shader(Shader);
-	WW3D::Get_Render_Backend()->Draw_Triangles(0,Indices.Count()/3,0,Vertices.Count());
+	WW3D::Get_Render_Backend()->Draw_Indexed_Primitives(
+		RenderBackendPrimitiveType::TriangleList, 0, 0, Vertices.Count(),
+		0, Indices.Count() / 3);
 
 	WW3D::Get_Render_Backend()->Set_Transform(RenderBackendTransform::View,view);
 	WW3D::Get_Render_Backend()->Set_Transform(RenderBackendTransform::Projection,proj);

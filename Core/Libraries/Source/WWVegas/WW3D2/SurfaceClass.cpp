@@ -48,7 +48,7 @@
  * - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
 
 #include "SurfaceClass.h"
-#include "Backend/IRenderBackend.h"
+#include "Backend/RenderBackend.h"
 #include "WWMath/vector2i.h"
 #include "ColorSpace.h"
 #include "WWLib/bound.h"

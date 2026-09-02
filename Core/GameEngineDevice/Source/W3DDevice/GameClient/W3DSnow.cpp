@@ -22,7 +22,7 @@
 #include "W3DDevice/GameClient/W3DSnow.h"
 #include "W3DDevice/GameClient/HeightMap.h"
 #include "GameClient/View.h"
-#include "WW3D2/Backend/IRenderBackend.h"
+#include "WW3D2/Backend/RenderBackend.h"
 #include "WW3D2/RInfo.h"
 #include "WW3D2/Camera.h"
 #include "WW3D2/AssetMgr.h"
@@ -554,7 +554,9 @@ flush_particles:
 		if (numberInBatch)
 		{
 			WW3D::Get_Render_Backend()->Set_Vertex_Buffer(vb_access);
-			WW3D::Get_Render_Backend()->Draw_Triangles(	0,numberInBatch*2, 0, numberInBatch*4);
+			WW3D::Get_Render_Backend()->Draw_Indexed_Primitives(
+				RenderBackendPrimitiveType::TriangleList, 0, 0,
+				numberInBatch * 4, 0, numberInBatch * 2);
 			totalPart -= numberInBatch;
 		}
 	}

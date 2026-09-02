@@ -88,7 +88,7 @@
 #include "Camera.h"
 #include "Statistics.h"
 #include "PredLod.h"
-#include "Backend/IRenderBackend.h"
+#include "Backend/RenderBackend.h"
 #include "WW3D2/IndexBuffer.h"
 #include "WW3D2/VertexBuffer.h"
 #include "SortingRenderer.h"
@@ -590,9 +590,11 @@ void RingRenderObjClass::render_ring(RenderInfoClass & rinfo,const Vector3 & cen
 	WW3D::Get_Render_Backend()->Set_Index_Buffer(ib,0);
 
 	if (sort) {
-		WW3D::Get_Render_Backend()->Insert_Sorted_Triangles(Get_Bounding_Sphere(), 0, ring.face_ct, 0, ring.Vertex_ct);
+		SortingRendererClass::Insert_Triangles(Get_Bounding_Sphere(), 0, ring.face_ct, 0, ring.Vertex_ct);
 	} else {
-		WW3D::Get_Render_Backend()->Draw_Triangles(0, ring.face_ct, 0, ring.Vertex_ct);
+		WW3D::Get_Render_Backend()->Draw_Indexed_Primitives(
+			RenderBackendPrimitiveType::TriangleList, 0, 0,
+			ring.Vertex_ct, 0, ring.face_ct);
 	}
 
 }

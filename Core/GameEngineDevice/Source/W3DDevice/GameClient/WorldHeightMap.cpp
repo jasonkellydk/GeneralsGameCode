@@ -2245,9 +2245,6 @@ TextureClass *WorldHeightMap::getTerrainTexture()
 		if (m_terrainTexHeight == 0 && m_terrainTex->Ensure_Render_Backend_Texture()) {
 			m_terrainTexHeight = m_terrainTex->Get_Height();
 		}
-		char buf[64];
-		sprintf(buf, "Base tex height %d", pow2Height);
-		DEBUG_LOG((buf));
 		REF_PTR_RELEASE(m_alphaTerrainTex);
 		m_alphaTerrainTex = MSGNEW("WorldHeightMap_getTerrainTexture") AlphaTerrainTextureClass(m_terrainTex);
 
@@ -2332,8 +2329,13 @@ TerrainTextureClass *WorldHeightMap::getFlatTexture(Int xCell, Int yCell, Int ce
 		pow2Height *=2;
 	}
 	TerrainTextureClass *newTexture = MSGNEW("WorldHeightMap_getTerrainTexture") TerrainTextureClass(pow2Height, pow2Height);
-	newTexture->updateFlat(this, xCell, yCell, cellWidth, pixelsPerCell);
-	newTexture->Ensure_Render_Backend_Texture();
+	if (newTexture == nullptr ||
+		newTexture->updateFlat(this, xCell, yCell, cellWidth, pixelsPerCell) == 0 ||
+		!newTexture->Ensure_Render_Backend_Texture())
+	{
+		REF_PTR_RELEASE(newTexture);
+		return nullptr;
+	}
 	return newTexture;
 }
 

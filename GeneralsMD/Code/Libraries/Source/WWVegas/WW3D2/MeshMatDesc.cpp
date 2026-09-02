@@ -41,7 +41,7 @@
 #include "VertMaterial.h"
 #include "WW3D.h"
 #include "WWLib/realcrc.h"
-#include "WW3D2/Backend/IRenderBackend.h"
+#include "WW3D2/Backend/RenderBackend.h"
 #include "MeshMdl.h"
 
 

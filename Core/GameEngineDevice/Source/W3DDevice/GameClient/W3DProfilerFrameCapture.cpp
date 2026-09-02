@@ -19,8 +19,9 @@
 #ifdef PROFILER_ENABLED
 
 #include "W3DDevice/GameClient/W3DProfilerFrameCapture.h"
+#include "W3DDevice/GameClient/W3DShaderManager.h"
 
-#include "WW3D2/Backend/IRenderBackend.h"
+#include "WW3D2/Backend/RenderBackend.h"
 #include "WW3D2/SurfaceClass.h"
 #include "WW3D2/Texture.h"
 #include "WW3D2/WW3D.h"
@@ -69,17 +70,8 @@ void W3DProfilerFrameCapture::Capture(UnsignedInt displayWidth, UnsignedInt disp
 	// Compile the swizzle shader used to convert BGRA to RGBA.
 	if (!m_swizzleShader)
 	{
-		const char *shader =
-			"ps.1.4\n"
-			"texld r0, t0\n"
-			"mov r1.a, r0.r\n"
-			"mov r2.a, r0.g\n"
-			"mov r3.a, r0.b\n"
-			"mul r0.rgb, r3.a, c0\n"
-			"mad r0.rgb, r2.a, c1, r0\n"
-			"mad r0.rgb, r1.a, c2, r0\n";
-
-		if (!backend->Create_Pixel_Shader_From_Source(shader, &m_swizzleShader))
+		if (!W3DShaderManager::LoadAndCreateShader(
+			"shaders/profiler_swizzle.pso", false, &m_swizzleShader))
 			return;
 	}
 

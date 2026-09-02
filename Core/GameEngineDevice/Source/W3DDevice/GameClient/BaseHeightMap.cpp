@@ -82,7 +82,7 @@
 #include "W3DDevice/GameClient/W3DShadow.h"
 #include "W3DDevice/GameClient/W3DWater.h"
 #include "W3DDevice/GameClient/W3DShroud.h"
-#include "WW3D2/Backend/IRenderBackend.h"
+#include "WW3D2/Backend/RenderBackend.h"
 #include "WW3D2/Light.h"
 #include "WW3D2/Scene.h"
 #include "W3DDevice/GameClient/W3DPoly.h"
@@ -92,22 +92,9 @@
 #include "W3DDevice/GameClient/BaseHeightMap.h"
 
 #include "W3DDevice/GameClient/HeightMap.h"
-#include "W3DDevice/GameClient/FlatHeightMap.h"
 #include "W3DDevice/GameClient/W3DSmudge.h"
 #include "W3DDevice/GameClient/W3DSnow.h"
 
-
-extern FlatHeightMapRenderObjClass *TheFlatHeightMap;
-extern HeightMapRenderObjClass *TheHeightMap;
-
-//-----------------------------------------------------------------------------
-//         Private Data
-//-----------------------------------------------------------------------------
-#define SC_DETAIL_BLEND ( SHADE_CNST(ShaderClass::PASS_LEQUAL, ShaderClass::DEPTH_WRITE_ENABLE, ShaderClass::COLOR_WRITE_ENABLE, ShaderClass::SRCBLEND_ONE, \
-	ShaderClass::DSTBLEND_ZERO, ShaderClass::FOG_DISABLE, ShaderClass::GRADIENT_MODULATE, ShaderClass::SECONDARY_GRADIENT_DISABLE, ShaderClass::TEXTURING_ENABLE, \
-	ShaderClass::ALPHATEST_DISABLE, ShaderClass::CULL_MODE_ENABLE, ShaderClass::DETAILCOLOR_SCALE, ShaderClass::DETAILALPHA_DISABLE) )
-
-static ShaderClass detailOpaqueShader(SC_DETAIL_BLEND);
 
 //-----------------------------------------------------------------------------
 //         Global Functions & Data
@@ -170,6 +157,9 @@ Int BaseHeightMapRenderObjClass::freeMapResources()
 //=============================================================================
 void BaseHeightMapRenderObjClass::drawScorches()
 {
+	// Temporary isolation of scorch/decal rendering while diagnosing the DX11
+	// terrain pass and the unexplained circular map marks.
+	return;
 	ShaderClass::Invalidate();
 	if (m_map && Is_Hidden() == 0 && !ShaderClass::Is_Backface_Culling_Inverted()) {
 		m_staticScorches->drawScorches(*m_map);
@@ -342,44 +332,30 @@ void BaseHeightMapRenderObjClass::adjustTerrainLOD(Int adj)
 		TheWritableGlobalData->m_terrainLOD=TERRAIN_LOD_MAX;
 	}
 
-	if (m_map==nullptr) return;
-	if (m_shroud)
-		m_shroud->reset();	//need reset here since initHeightData will load new shroud.
-
-	BaseHeightMapRenderObjClass *newROBJ = nullptr;
-	if (TheGlobalData->m_terrainLOD == TERRAIN_LOD_MAX) {
-		newROBJ = TheHeightMap;
-		if (newROBJ==nullptr) {
-			newROBJ = NEW_REF( HeightMapRenderObjClass, () );
-		}
-	}	else {
-		newROBJ = TheFlatHeightMap;
-		if (newROBJ==nullptr) {
-			newROBJ = NEW_REF( FlatHeightMapRenderObjClass, () );
-		}
+	// LOD is a material feature selection in the modern terrain pipeline.  The
+	// render object, atlas textures, vertex buffers, and scene registration are
+	// persistent; changing LOD must not replace or reinitialize any of them.
+	switch (TheGlobalData->m_terrainLOD)
+	{
+		case TERRAIN_LOD_MIN:
+		case TERRAIN_LOD_NO_CLOUDS:
+			TheWritableGlobalData->m_useCloudMap = false;
+			TheWritableGlobalData->m_useLightMap = false;
+			TheWritableGlobalData->m_useWaterPlane = false;
+			break;
+		case TERRAIN_LOD_NO_WATER:
+			TheWritableGlobalData->m_useCloudMap = true;
+			TheWritableGlobalData->m_useLightMap = true;
+			TheWritableGlobalData->m_useWaterPlane = false;
+			break;
+		case TERRAIN_LOD_MAX:
+		default:
+			TheWritableGlobalData->m_useCloudMap = true;
+			TheWritableGlobalData->m_useLightMap = true;
+			TheWritableGlobalData->m_useWaterPlane = true;
+			break;
 	}
 
-	RTS3DScene *pMyScene = (RTS3DScene *)Scene;
-	if (pMyScene) {
-		pMyScene->Remove_Render_Object(this);
-		pMyScene->Unregister(this, SceneClass::ON_FRAME_UPDATE);
-		// add our terrain render object to the scene
-		if (newROBJ) {
-			pMyScene->Add_Render_Object( newROBJ );
-			pMyScene->Register(newROBJ,SceneClass::ON_FRAME_UPDATE);
-		}
-	}
-
-	if (newROBJ) {
-		// apply the heightmap to the terrain render object
-		newROBJ->initHeightData( m_map->getDrawWidth(),
-																					 m_map->getDrawHeight(),
-																					 m_map,
-																					 nullptr);
-		TheTerrainRenderObject = newROBJ;
-		newROBJ->staticLightingChanged();
-		newROBJ->m_roadBuffer->loadRoads();
-	}
 	if (TheTacticalView) {
 		TheTacticalView->forceRedraw();
 	}
@@ -1856,8 +1832,6 @@ Int BaseHeightMapRenderObjClass::initHeightData(Int x, Int y, WorldHeightMap *pM
 		m_staticScorches->allocateBuffers();
 
 		m_vertexMaterialClass=VertexMaterialClass::Get_Preset(VertexMaterialClass::PRELIT_DIFFUSE);
-
-		m_shaderClass = detailOpaqueShader;	//		ShaderClass::_PresetOpaqueShader;
 	}
 
 	return 0;
@@ -2426,7 +2400,9 @@ void BaseHeightMapRenderObjClass::renderShoreLines(CameraClass *pCamera)
 		{
 			backend->Set_Index_Buffer(ib_access,0);
 			backend->Set_Vertex_Buffer(vb_access);
-			backend->Draw_Triangles(	0,indexCount/3, 0,	vertexCount);	//draw a quad, 2 triangles, 4 verts
+			backend->Draw_Indexed_Primitives(
+				RenderBackendPrimitiveType::TriangleList, 0, 0, vertexCount,
+				0, indexCount / 3);	//draw a quad, 2 triangles, 4 verts
 			m_numVisibleShoreLineTiles += indexCount/6;
 		}
 
@@ -2771,7 +2747,9 @@ flushVertexBuffer1:
 		{
 			backend->Set_Index_Buffer(ib_access,0);
 			backend->Set_Vertex_Buffer(vb_access);
-			backend->Draw_Triangles(	0,indexCount/3, 0,	vertexCount);	//draw a quad, 2 triangles, 4 verts
+			backend->Draw_Indexed_Primitives(
+				RenderBackendPrimitiveType::TriangleList, 0, 0, vertexCount,
+				0, indexCount / 3);	//draw a quad, 2 triangles, 4 verts
 			m_numVisibleShoreLineTiles += indexCount/6;
 		}
 

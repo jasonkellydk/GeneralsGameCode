@@ -34,7 +34,7 @@
 #include "W3DDevice/GameClient/HeightMap.h"
 #include "W3DDevice/GameClient/W3DAssetManager.h"
 #include "W3DDevice/GameClient/W3DWater.h"
-#include "WW3D2/Backend/IRenderBackend.h"
+#include "WW3D2/Backend/RenderBackend.h"
 #include "WW3D2/Mesh.h"
 #include "WW3D2/MeshMdl.h"
 #include "WW3D2/Shader.h"
@@ -158,7 +158,7 @@ DrawObject::DrawObject() :
 	m_feedbackPoint.y = 20;
 	initData();
 	m_waterDrawObject = new WaterRenderObjClass;
-	m_waterDrawObject->init(0, 0, 0, nullptr, WaterRenderObjClass::WATER_TYPE_0_TRANSLUCENT);
+	m_waterDrawObject->init(0, 0, 0, nullptr, WaterRenderObjClass::WATER_TYPE_SURFACE);
 	TheWaterRenderObj=m_waterDrawObject;
 
 	//(gth) this was needed to fix the extents bug that is based off water and too small for our maps
@@ -2239,9 +2239,13 @@ if (pMapObj->isSelected()) {
 
 			backend->Set_Transform(RenderBackendTransform::World,tm);
 			if (isTree) {
-				backend->Draw_Triangles(	NUM_TRI*3,polyCount, 0,	(m_numTriangles*3));
+				backend->Draw_Indexed_Primitives(
+					RenderBackendPrimitiveType::TriangleList, 0, 0,
+					m_numTriangles * 3, NUM_TRI * 3, polyCount);
 			} else {
-				backend->Draw_Triangles(	0,polyCount, 0,	(m_numTriangles*3));
+				backend->Draw_Indexed_Primitives(
+					RenderBackendPrimitiveType::TriangleList, 0, 0,
+					m_numTriangles * 3, 0, polyCount);
 			}
 
 			count++;
@@ -2296,7 +2300,9 @@ if (pMapObj->isSelected()) {
 
 					backend->Set_Index_Buffer(m_indexBuffer,0);
 					backend->Set_Transform(RenderBackendTransform::World,tm);
-					backend->Draw_Triangles(	0,polyCount, 0,	(m_numTriangles*3));
+					backend->Draw_Indexed_Primitives(
+						RenderBackendPrimitiveType::TriangleList, 0, 0,
+						m_numTriangles * 3, 0, polyCount);
 				}
 				Matrix3D tmReset(Transform);
 				backend->Set_Transform(RenderBackendTransform::World,tmReset);
@@ -2305,7 +2311,9 @@ if (pMapObj->isSelected()) {
 	 			backend->Set_Vertex_Buffer(m_vertexFeedback);
 				if (m_feedbackIndexCount>0) {
 					backend->Set_Index_Buffer(m_indexFeedback,0);
-					backend->Draw_Triangles(	0, m_feedbackIndexCount/3, 0,	m_feedbackVertexCount);
+					backend->Draw_Indexed_Primitives(
+						RenderBackendPrimitiveType::TriangleList, 0, 0,
+						m_feedbackVertexCount, 0, m_feedbackIndexCount / 3);
 				}
 			}
 			backend->Set_Index_Buffer(m_indexBuffer,0);
@@ -2352,7 +2360,9 @@ if (pMapObj->isSelected()) {
 
 #if 1
 			backend->Set_Transform(RenderBackendTransform::World,tmXX);
-			backend->Draw_Triangles(	0,polyCountA, 0,	(m_numTriangles*3));
+			backend->Draw_Indexed_Primitives(
+				RenderBackendPrimitiveType::TriangleList, 0, 0,
+				m_numTriangles * 3, 0, polyCountA);
 #endif
 
 		}
@@ -2369,7 +2379,9 @@ if (pMapObj->isSelected()) {
 	 			backend->Set_Vertex_Buffer(m_vertexFeedback);
 			backend->Set_Index_Buffer(m_indexFeedback,0);
 			backend->Set_Shader(m_shaderClass);
-			backend->Draw_Triangles(	0, m_feedbackIndexCount/3, 0,	m_feedbackVertexCount);
+			backend->Draw_Indexed_Primitives(
+				RenderBackendPrimitiveType::TriangleList, 0, 0,
+				m_feedbackVertexCount, 0, m_feedbackIndexCount / 3);
 			backend->Set_Index_Buffer(m_indexBuffer,0);
 		 	backend->Set_Vertex_Buffer(m_vertexBufferWater);
 		}
@@ -2385,7 +2397,9 @@ if (pMapObj->isSelected()) {
 			backend->Set_Index_Buffer(m_indexFeedback,0);
 			backend->Set_Shader(SC_OPAQUE_Z);
 			backend->Set_Fill_Mode(RenderBackendFillMode::Wireframe);
-			backend->Draw_Triangles(	0, m_feedbackIndexCount/3, 0,	m_feedbackVertexCount);
+			backend->Draw_Indexed_Primitives(
+				RenderBackendPrimitiveType::TriangleList, 0, 0,
+				m_feedbackVertexCount, 0, m_feedbackIndexCount / 3);
 		}
 	} else if (m_toolWantsFeedback && !m_disableFeedback) {
 		updateFeedbackVB();
@@ -2393,7 +2407,9 @@ if (pMapObj->isSelected()) {
 	 			backend->Set_Vertex_Buffer(m_vertexFeedback);
 			backend->Set_Index_Buffer(m_indexFeedback,0);
 			backend->Set_Shader(ShaderClass::_PresetAlpha2DShader);
-			backend->Draw_Triangles(	0, m_feedbackIndexCount/3, 0,	m_feedbackVertexCount);
+			backend->Draw_Indexed_Primitives(
+				RenderBackendPrimitiveType::TriangleList, 0, 0,
+				m_feedbackVertexCount, 0, m_feedbackIndexCount / 3);
 		}
 	}
 #endif
@@ -2407,7 +2423,9 @@ if (pMapObj->isSelected()) {
 			backend->Set_Shader(SC_OPAQUE_Z);
 			backend->Set_Fill_Mode(RenderBackendFillMode::Wireframe);	// we want a solid ramp
 			backend->Set_Lighting_Enabled(false);				// disable lighting
-			backend->Draw_Triangles(	0, m_feedbackIndexCount/3, 0,	m_feedbackVertexCount);
+			backend->Draw_Indexed_Primitives(
+				RenderBackendPrimitiveType::TriangleList, 0, 0,
+				m_feedbackVertexCount, 0, m_feedbackIndexCount / 3);
 		}
 	}
 #endif
@@ -2422,7 +2440,9 @@ if (pMapObj->isSelected()) {
 			backend->Set_Cull_Mode(RenderBackendCullMode::None);
 			backend->Set_Fill_Mode(RenderBackendFillMode::Solid);	// we want a solid ramp
 			backend->Set_Lighting_Enabled(false);				// disable lighting
-			backend->Draw_Triangles(	0, m_feedbackIndexCount/3, 0,	m_feedbackVertexCount);
+			backend->Draw_Indexed_Primitives(
+				RenderBackendPrimitiveType::TriangleList, 0, 0,
+				m_feedbackVertexCount, 0, m_feedbackIndexCount / 3);
 		}
 	}
 #endif
@@ -2440,7 +2460,9 @@ if (pMapObj->isSelected()) {
 			backend->Set_Cull_Mode(RenderBackendCullMode::None);
 			backend->Set_Fill_Mode(RenderBackendFillMode::Solid);	// we want a solid ramp
 			backend->Set_Lighting_Enabled(false);				// disable lighting
-			backend->Draw_Triangles(	0, m_feedbackIndexCount/3, 0,	m_feedbackVertexCount);
+			backend->Draw_Indexed_Primitives(
+				RenderBackendPrimitiveType::TriangleList, 0, 0,
+				m_feedbackVertexCount, 0, m_feedbackIndexCount / 3);
 		}
 	}
 

@@ -64,7 +64,7 @@
 #include "WW3D2/Camera.h"
 #include "WW3D2/VertexFormat.h"
 #include "WW3D2/WW3D.h"
-#include "WW3D2/Backend/IRenderBackend.h"
+#include "WW3D2/Backend/RenderBackend.h"
 #include "WW3D2/Mesh.h"
 #include "WW3D2/MeshMdl.h"
 
@@ -3407,7 +3407,9 @@ void W3DRoadBuffer::drawRoads(CameraClass * camera, TextureClass *cloudTexture, 
 			}
 			WW3D::Get_Render_Backend()->Set_Shader(detailAlphaShader);
 			//Draw all the roads.
-			WW3D::Get_Render_Backend()->Draw_Triangles(	0, m_curNumRoadIndices/3, 0,	m_curNumRoadVertices);
+			WW3D::Get_Render_Backend()->Draw_Indexed_Primitives(
+				RenderBackendPrimitiveType::TriangleList, 0, 0,
+				m_curNumRoadVertices, 0, m_curNumRoadIndices / 3);
 		}
 	}
 #endif

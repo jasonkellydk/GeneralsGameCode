@@ -24,7 +24,7 @@
 #include "Common/MapObject.h"
 #include "W3DDevice/GameClient/TerrainTex.h"
 #include "W3DDevice/GameClient/WorldHeightMap.h"
-#include "WW3D2/Backend/IRenderBackend.h"
+#include "WW3D2/Backend/RenderBackend.h"
 #include "WW3D2/IndexBuffer.h"
 #include "WW3D2/Shader.h"
 #include "WW3D2/VertexBuffer.h"
@@ -131,7 +131,9 @@ void W3DScorch::drawScorches(WorldHeightMap& map)
 	WW3D::Get_Render_Backend()->Set_Shader(ShaderClass::_PresetAlphaShader);
 
 	WW3D::Get_Render_Backend()->Set_Texture(0, m_scorchTexture);
-	WW3D::Get_Render_Backend()->Draw_Triangles(0, m_curNumScorchIndices / 3, 0, m_curNumScorchVertices);
+	WW3D::Get_Render_Backend()->Draw_Indexed_Primitives(
+		RenderBackendPrimitiveType::TriangleList, 0, 0,
+		m_curNumScorchVertices, 0, m_curNumScorchIndices / 3);
 }
 
 static Real getMapHeight(WorldHeightMap& map, Int x, Int y)

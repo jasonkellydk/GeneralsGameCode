@@ -84,7 +84,7 @@ enum
 #include "W3DDevice/GameClient/W3DShroud.h"
 #include "W3DDevice/GameClient/W3DProjectedShadow.h"
 #include "WW3D2/Camera.h"
-#include "WW3D2/Backend/IRenderBackend.h"
+#include "WW3D2/Backend/RenderBackend.h"
 #include "WW3D2/MatInfo.h"
 #include "WW3D2/Mesh.h"
 #include "WW3D2/MeshMdl.h"
@@ -1644,7 +1644,8 @@ void W3DTreeBuffer::drawTrees(CameraClass * camera, RefRenderObjListIterator *pD
 	Matrix3D tm(1);
 	WW3D::Get_Render_Backend()->Set_Transform(RenderBackendTransform::World,tm);
 
-	WW3D::Get_Render_Backend()->Draw_Triangles(	0,2, 0,	4);	//draw a quad, 2 triangles, 4 verts
+	WW3D::Get_Render_Backend()->Draw_Indexed_Primitives(
+		RenderBackendPrimitiveType::TriangleList, 0, 0, 4, 0, 2);	//draw a quad, 2 triangles, 4 verts
 #endif
 
 
@@ -1739,7 +1740,9 @@ void W3DTreeBuffer::drawTrees(CameraClass * camera, RefRenderObjListIterator *pD
 		WW3D::Get_Render_Backend()->Set_Texture_Coordinate_Source(1, RenderBackendTextureCoordinateSource::PassThrough, 1);
 		WW3D::Get_Render_Backend()->Set_Texture_Transform_Flags(1, RenderBackendTextureTransformFlags::Disabled);
 		}
-		WW3D::Get_Render_Backend()->Draw_Triangles(	0, m_curNumTreeIndices[bNdx]/3, 0,	m_curNumTreeVertices[bNdx]);
+		WW3D::Get_Render_Backend()->Draw_Indexed_Primitives(
+			RenderBackendPrimitiveType::TriangleList, 0, 0,
+			m_curNumTreeVertices[bNdx], 0, m_curNumTreeIndices[bNdx] / 3);
 	}
 
 	WW3D::Get_Render_Backend()->Set_Vertex_Format(RenderBackendVertexFormat::PositionNormalDiffuseTexture);

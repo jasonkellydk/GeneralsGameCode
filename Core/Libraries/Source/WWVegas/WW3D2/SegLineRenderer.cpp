@@ -1184,9 +1184,10 @@ void SegLineRendererClass::Render
 		WW3D::Get_Render_Backend()->Set_Shader(shader);
 
 		if (sorting) {
-			WW3D::Get_Render_Backend()->Insert_Sorted_Triangles(obj_sphere,0,tidx,0,vnum);
+			SortingRendererClass::Insert_Triangles(obj_sphere,0,tidx,0,vnum);
 		} else {
-			WW3D::Get_Render_Backend()->Draw_Triangles(0,tidx,0,vnum);
+			WW3D::Get_Render_Backend()->Draw_Indexed_Primitives(
+				RenderBackendPrimitiveType::TriangleList, 0, 0, vnum, 0, tidx);
 		}
 
 		REF_PTR_RELEASE(mat);

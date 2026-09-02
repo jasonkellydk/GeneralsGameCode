@@ -31,7 +31,7 @@
 #include <SDL3/SDL.h>
 #include "WW3D2/Camera.h"
 #include "WWLib/simplevec.h"
-#include "WW3D2/Backend/IRenderBackend.h"
+#include "WW3D2/Backend/RenderBackend.h"
 #include "WW3D2/WW3D.h"
 #include "WW3D2/SurfaceClass.h"
 #include "Common/MapObject.h"
@@ -206,6 +206,7 @@ void W3DShroud::init(WorldHeightMap *pMap, Real worldCellSizeX, Real worldCellSi
 	//Force a refresh of shroud data since we just created a new source texture.
 	if (ThePartitionManager)
 		ThePartitionManager->refreshShroudForLocalPlayer();
+
 }
 
 //-----------------------------------------------------------------------------

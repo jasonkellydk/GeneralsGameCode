@@ -85,7 +85,7 @@
 #include "WWLib/wwstring.h"
 #include "Camera.h"
 #include "Statistics.h"
-#include "Backend/IRenderBackend.h"
+#include "Backend/RenderBackend.h"
 #include "WW3D2/VertexBuffer.h"
 #include "WW3D2/IndexBuffer.h"
 #include "SortingRenderer.h"
@@ -521,9 +521,11 @@ void SphereRenderObjClass::render_sphere()
 	WW3D::Get_Render_Backend()->Set_Index_Buffer(ib,0);
 
 	if (sort) {
-		WW3D::Get_Render_Backend()->Insert_Sorted_Triangles(Get_Bounding_Sphere(), 0, mesh.face_ct, 0, mesh.Vertex_ct);
+		SortingRendererClass::Insert_Triangles(Get_Bounding_Sphere(), 0, mesh.face_ct, 0, mesh.Vertex_ct);
 	} else {
-		WW3D::Get_Render_Backend()->Draw_Triangles(0,mesh.face_ct,0,mesh.Vertex_ct);
+		WW3D::Get_Render_Backend()->Draw_Indexed_Primitives(
+			RenderBackendPrimitiveType::TriangleList, 0, 0,
+			mesh.Vertex_ct, 0, mesh.face_ct);
 	}
 
 }

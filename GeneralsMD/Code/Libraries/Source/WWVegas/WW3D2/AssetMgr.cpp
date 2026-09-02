@@ -106,7 +106,7 @@
 #include "WWLib/wwstring.h"
 #include "WWDebug/wwmemlog.h"
 #include "Dazzle.h"
-#include "WW3D2/Backend/IRenderBackend.h"
+#include "WW3D2/Backend/RenderBackend.h"
 #include "MetalMap.h"
 #include "W3DExclusionList.h"
 #include <WWLib/INI.h>

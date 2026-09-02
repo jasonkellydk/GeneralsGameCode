@@ -40,7 +40,7 @@
 #include "WW3D2/Scene.h"
 #include "WW3D2/RInfo.h"
 #include "WW3D2/Texture.h"
-#include "WW3D2/Backend/IRenderBackend.h"
+#include "WW3D2/Backend/RenderBackend.h"
 #include "WW3D2/VertexBuffer.h"
 #include "WW3D2/IndexBuffer.h"
 #include "WW3D2/SortingRenderer.h"

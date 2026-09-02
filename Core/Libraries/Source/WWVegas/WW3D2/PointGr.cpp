@@ -988,7 +988,9 @@ void PointGroupClass::Render(RenderInfoClass &rinfo)
 		}
 		else
 		{
-			WW3D::Get_Render_Backend()->Draw_Triangles(0, delta / verticesperprimitive, 0, delta);
+			WW3D::Get_Render_Backend()->Draw_Indexed_Primitives(
+				RenderBackendPrimitiveType::TriangleList, 0, 0, delta, 0,
+				delta / verticesperprimitive);
 		}
 
 		current+=delta;
@@ -1912,7 +1914,9 @@ void PointGroupClass::RenderVolumeParticle(RenderInfoClass &rinfo, unsigned int 
 			if ( sort )
 					SortingRendererClass::Insert_Triangles (0, delta / verticesperprimitive, 0, delta);
 			else
-				WW3D::Get_Render_Backend()->Draw_Triangles(0, delta / verticesperprimitive, 0, delta);
+				WW3D::Get_Render_Backend()->Draw_Indexed_Primitives(
+					RenderBackendPrimitiveType::TriangleList, 0, 0, delta, 0,
+					delta / verticesperprimitive);
 
 
 			current+=delta;

@@ -38,7 +38,7 @@
 
 #pragma once
 
-#include "Backend/IRenderBackend.h"
+#include "Backend/RenderBackend.h"
 #include "WW3D.h"
 #include <WWMath/wwmath.h>
 #include <WWMath/vector4.h>

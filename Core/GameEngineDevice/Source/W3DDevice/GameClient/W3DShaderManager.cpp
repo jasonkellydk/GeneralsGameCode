@@ -71,8 +71,9 @@
 #include "GameLogic/GameLogic.h"
 #include "Common/GlobalData.h"
 #include "Common/GameLOD.h"
-#include "WW3D2/Backend/IRenderBackend.h"
+#include "WW3D2/Backend/RenderBackend.h"
 #include "WW3D2/VertMaterial.h"
+#include "WW3D2/VertexFormat.h"
 #include "WWLib/cpudetect.h"
 #include "WWMath/matrix4.h"
 #include <cstdint>
@@ -97,6 +98,7 @@ Matrix4x4 Make_Translation(float x, float y, float z)
 		0.0f, 0.0f, 1.0f, z,
 		0.0f, 0.0f, 0.0f, 1.0f);
 }
+
 }
 
 // Turn this on to turn off pixel shaders. jba[4/3/2003]
@@ -145,6 +147,28 @@ static void DeletePixelShaderHandle(uintptr_t &handle)
 		backend->Release_Pixel_Shader(handle);
 	}
 	handle = 0;
+}
+
+static void DeleteVertexShaderHandle(uintptr_t &handle)
+{
+	if (!handle) return;
+	if (IRenderBackend *backend = WW3D::Get_Render_Backend())
+		backend->Release_Vertex_Shader(handle);
+	handle = 0;
+}
+
+static RenderBackendVertexShaderInputLayout MakeTerrainVertexShaderLayout()
+{
+	RenderBackendVertexShaderInputLayout layout;
+	layout.Add(0, offsetof(VertexFormatXYZDUV2, x), RenderBackendVertexInputType::Float3,
+		RenderBackendVertexInputSemantic::Position, 0, 0);
+	layout.Add(0, offsetof(VertexFormatXYZDUV2, diffuse), RenderBackendVertexInputType::Color,
+		RenderBackendVertexInputSemantic::Color, 0, 1);
+	layout.Add(0, offsetof(VertexFormatXYZDUV2, u1), RenderBackendVertexInputType::Float2,
+		RenderBackendVertexInputSemantic::TextureCoordinate, 0, 2);
+	layout.Add(0, offsetof(VertexFormatXYZDUV2, u2), RenderBackendVertexInputType::Float2,
+		RenderBackendVertexInputSemantic::TextureCoordinate, 1, 3);
+	return layout;
 }
 /*===========================================================================================*/
 /*=========      Screen Shaders	=============================================================*/
@@ -1510,6 +1534,7 @@ public:
 class FlatTerrainShaderPixelShader : public W3DShaderInterface
 {
 public:
+	uintptr_t m_dwVertexShader;
 	uintptr_t				m_dwBasePixelShader;	///<handle to terrain D3D pixel shader
 	uintptr_t				m_dwBaseNoise1PixelShader;	///<handle to terrain/single noise D3D pixel shader
 	uintptr_t				m_dwBaseNoise2PixelShader;	///<handle to terrain/double noise D3D pixel shader
@@ -1534,9 +1559,8 @@ class TerrainShader8Stage : public W3DShaderInterface
 ///Pixel shader based terrain shader - fastest method for the newest cards.
 class TerrainShaderPixelShader : public W3DShaderInterface
 {
+	uintptr_t m_dwVertexShader;
 	uintptr_t				m_dwBasePixelShader;	///<handle to terrain D3D pixel shader
-	uintptr_t				m_dwBaseNoise1PixelShader;	///<handle to terrain/single noise D3D pixel shader
-	uintptr_t				m_dwBaseNoise2PixelShader;	///<handle to terrain/double noise D3D pixel shader
 
 	virtual Int set(Int pass) override;		///<setup shader for the specified rendering pass.
 	virtual void reset() override;		///<do any custom resetting necessary to bring W3D in sync.
@@ -1929,18 +1953,11 @@ void TerrainShader8Stage::reset()
 
 Int TerrainShaderPixelShader::shutdown()
 {
+	DeleteVertexShaderHandle(m_dwVertexShader);
 	if (m_dwBasePixelShader)
 		DeletePixelShaderHandle(m_dwBasePixelShader);
 
-	if (m_dwBaseNoise1PixelShader)
-		DeletePixelShaderHandle(m_dwBaseNoise1PixelShader);
-
-	if (m_dwBaseNoise2PixelShader)
-		DeletePixelShaderHandle(m_dwBaseNoise2PixelShader);
-
 	m_dwBasePixelShader=0;
-	m_dwBaseNoise1PixelShader=0;
-	m_dwBaseNoise2PixelShader=0;
 
 	return TRUE;
 }
@@ -1956,16 +1973,14 @@ Int TerrainShaderPixelShader::init()
 	{
 		if (res >= DC_GENERIC_PIXEL_SHADER_1_1)
 		{
+			const RenderBackendVertexShaderInputLayout terrain_layout =
+				MakeTerrainVertexShaderLayout();
+			if (!W3DShaderManager::LoadAndCreateShader("shaders\\terrain.vso", true,
+				&m_dwVertexShader, &terrain_layout))
+				return FALSE;
+
 			//base version which doesn't apply any noise textures.
 			if (!W3DShaderManager::LoadAndCreateShader("shaders\\terrain.pso", false, &m_dwBasePixelShader))
-				return FALSE;
-
-			//version which blends 1 noise texture.
-			if (!W3DShaderManager::LoadAndCreateShader("shaders\\terrainnoise.pso", false, &m_dwBaseNoise1PixelShader))
-				return FALSE;
-
-			//version which blends 2 noise textures.
-			if (!W3DShaderManager::LoadAndCreateShader("shaders\\terrainnoise2.pso", false, &m_dwBaseNoise2PixelShader))
 				return FALSE;
 
 			W3DShaders[W3DShaderManager::ST_TERRAIN_BASE]=&terrainShaderPixelShader;
@@ -1984,8 +1999,16 @@ Int TerrainShaderPixelShader::init()
 
 Int TerrainShaderPixelShader::set(Int pass)
 {
+	const RenderBackendVertexShaderInputLayout terrain_layout =
+		MakeTerrainVertexShaderLayout();
+	WW3D::Get_Render_Backend()->Set_Vertex_Shader(m_dwVertexShader, &terrain_layout);
 	//force WW3D2 system to set it's states so it won't later overwrite our custom settings.
 	WW3D::Get_Render_Backend()->Apply_Render_State_Changes();
+	// Terrain base output is already resolved by the pixel shader.  The legacy
+	// terrain texture setup enables source-alpha blending for its fixed-function
+	// path, but ordinary terrain vertices use alpha as a tile-blend selector and
+	// may legitimately carry alpha zero.  The DX11 terrain pass is opaque here.
+	WW3D::Get_Render_Backend()->Set_Alpha_Blend_Enabled(false);
 	//setup base pass
 	WW3D::Get_Render_Backend()->Set_Texture_Resource(0, W3DShaderManager::getShaderTexture(0));
 	WW3D::Get_Render_Backend()->Set_Texture_Resource(1, W3DShaderManager::getShaderTexture(1));
@@ -2040,7 +2063,7 @@ Int TerrainShaderPixelShader::set(Int pass)
 
 			WW3D::Get_Render_Backend()->Set_Texture_Resource(2, W3DShaderManager::getShaderTexture(2));
 			WW3D::Get_Render_Backend()->Set_Texture_Resource(3, W3DShaderManager::getShaderTexture(3));
-			WW3D::Get_Render_Backend()->Set_Pixel_Shader(m_dwBaseNoise2PixelShader);
+			WW3D::Get_Render_Backend()->Set_Pixel_Shader(m_dwBasePixelShader);
 			terrainShader2Stage.updateNoise1(&curView,&inv);
 			WW3D::Get_Render_Backend()->Set_Transform(RenderBackendTransform::Texture2, curView);
 			terrainShader2Stage.updateNoise2(&curView,&inv);
@@ -2054,7 +2077,7 @@ Int TerrainShaderPixelShader::set(Int pass)
 		}
 		else
 		{	//single noise texture shader
-			WW3D::Get_Render_Backend()->Set_Pixel_Shader(m_dwBaseNoise1PixelShader);
+			WW3D::Get_Render_Backend()->Set_Pixel_Shader(m_dwBasePixelShader);
 
 			if (W3DShaderManager::getCurrentShader() == W3DShaderManager::ST_TERRAIN_BASE_NOISE1)
 			{	//cloud map
@@ -2083,6 +2106,7 @@ Int TerrainShaderPixelShader::set(Int pass)
 
 void TerrainShaderPixelShader::reset()
 {
+	WW3D::Get_Render_Backend()->Set_Vertex_Shader(0);
 	WW3D::Get_Render_Backend()->Set_Texture_Resource(2, nullptr);	//release reference to any texture
 	WW3D::Get_Render_Backend()->Set_Texture_Resource(3, nullptr);	//release reference to any texture
 
@@ -2937,8 +2961,9 @@ Bool W3DShaderManager::LoadAndCreateShader(const char* file_path, Bool vertex_sh
 		IRenderBackend *backend = WW3D::Get_Render_Backend();
 		const bool created = vertex_shader
 			? backend != nullptr && backend->Create_Vertex_Shader(
-				shader.data(), handle, input_layout)
-			: backend != nullptr && backend->Create_Pixel_Shader(shader.data(), handle);
+				shader.data(), static_cast<unsigned>(shader.size()), handle, input_layout)
+			: backend != nullptr && backend->Create_Pixel_Shader(
+				shader.data(), static_cast<unsigned>(shader.size()), handle);
 
 		if (!created)
 		{
@@ -3076,6 +3101,7 @@ Real W3DShaderManager::GetCPUBenchTime()
 			static_cast<double>(frequency))
 		: 0.0f;
 }
+
 
 
 // W3DShaderManager::setShroudTex =======================================================

@@ -63,7 +63,7 @@
 #include "WW3D2/IndexBuffer.h"
 #include "WWLib/simplevec.h"
 #include "Texture.h"
-#include "WW3D2/Backend/IRenderBackend.h"
+#include "WW3D2/Backend/RenderBackend.h"
 
 #define DISABLE_CLIPPING	0
 
@@ -356,10 +356,11 @@ void RigidDecalMeshClass::Render()
 
 		WW3D::Get_Render_Backend()->Set_Index_Buffer(dynamic_ib,0);
 		WW3D::Get_Render_Backend()->Set_Vertex_Buffer(dynamic_vb);
-		WW3D::Get_Render_Backend()->Draw_Triangles(	3*cur_poly_index,
-												(next_poly_index - cur_poly_index), // poly count
-												Polys[cur_poly_index].I,
-												1 + Polys[next_poly_index-1].K - Polys[cur_poly_index].I);
+		WW3D::Get_Render_Backend()->Draw_Indexed_Primitives(
+			RenderBackendPrimitiveType::TriangleList, 0,
+			Polys[cur_poly_index].I,
+			1 + Polys[next_poly_index-1].K - Polys[cur_poly_index].I,
+			3*cur_poly_index, next_poly_index - cur_poly_index);
 		cur_poly_index = next_poly_index;
 	}
 
@@ -854,10 +855,11 @@ void SkinDecalMeshClass::Render()
 
 		WW3D::Get_Render_Backend()->Set_Index_Buffer(dynamic_ib,0);
 		WW3D::Get_Render_Backend()->Set_Vertex_Buffer(dynamic_vb);
-		WW3D::Get_Render_Backend()->Draw_Triangles(3*cur_poly_index,
-											(next_poly_index - cur_poly_index), // poly count
-											Polys[cur_poly_index].I,
-											1 + Polys[next_poly_index-1].K - Polys[cur_poly_index].I);
+		WW3D::Get_Render_Backend()->Draw_Indexed_Primitives(
+			RenderBackendPrimitiveType::TriangleList, 0,
+			Polys[cur_poly_index].I,
+			1 + Polys[next_poly_index-1].K - Polys[cur_poly_index].I,
+			3*cur_poly_index, next_poly_index - cur_poly_index);
 
 		cur_poly_index = next_poly_index;
 	}

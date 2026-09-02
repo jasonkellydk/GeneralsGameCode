@@ -45,7 +45,7 @@
 #include "W3DErr.h"
 #include "WWLib/INI.h"
 #include "WWLib/XSTRAW.h"
-#include "WW3D2/Backend/IRenderBackend.h"
+#include "WW3D2/Backend/RenderBackend.h"
 #include "WW3D.h"
 
 

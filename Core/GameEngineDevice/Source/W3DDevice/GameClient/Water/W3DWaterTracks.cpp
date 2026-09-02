@@ -64,7 +64,7 @@
 #include "WW3D2/RInfo.h"
 #include "WW3D2/Camera.h"
 #include "WW3D2/AssetMgr.h"
-#include "WW3D2/Backend/IRenderBackend.h"
+#include "WW3D2/Backend/RenderBackend.h"
 
 //number of vertex pages allocated - allows double buffering of vertex updates.
 //while one is being rendered, another is being updated.  Improves HW parallelism.
@@ -484,7 +484,8 @@ Int WaterTracksObj::render(VertexBufferClass	*vertexBuffer, Int batchStart)
 		return batchStart;
 	backend->Set_Index_Buffer(TheWaterTracksRenderSystem->m_indexBuffer,
 		static_cast<unsigned short>(batchStart));
-	backend->Draw_Strip(0,idxCount-2,0,m_x*m_y);	//there are always n-2 primitives for n index strip.
+	backend->Draw_Indexed_Primitives(
+		RenderBackendPrimitiveType::TriangleStrip, 0, 0, m_x*m_y, 0, idxCount-2);	//there are always n-2 primitives for n index strip.
 
 	return batchStart+m_x*m_y;	//return new offset into unused area of vertex buffer
 }

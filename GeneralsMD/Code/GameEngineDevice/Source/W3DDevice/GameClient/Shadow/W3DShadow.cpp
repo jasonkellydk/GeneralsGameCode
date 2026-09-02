@@ -76,7 +76,7 @@ void DoShadows(RenderInfoClass & rinfo, Bool stencilPass)
 
 	//Projected shadows render first because they may fill the stencil buffer
 	//which will be used by the shadow volumes
-	if (stencilPass == FALSE  && TheW3DProjectedShadowManager)
+	if (false && stencilPass == FALSE  && TheW3DProjectedShadowManager)
 	{
 			if (TheW3DShadowManager->isShadowScene())
 				projectionCount=TheW3DProjectedShadowManager->renderShadows(rinfo);

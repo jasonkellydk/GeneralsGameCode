@@ -64,6 +64,7 @@
 class MeshClass;
 class WorldHeightMap;
 class TerrainTextureClass;
+class TextureClass;
 
 //-----------------------------------------------------------------------------
 //           Type Defines
@@ -80,8 +81,11 @@ public:
 
 	W3DTerrainBackground();
 	~W3DTerrainBackground();
-	/// Draws the terrain.
-	void drawVisiblePolys(RenderInfoClass & rinfo, Bool disableTextures);
+	VertexBufferClass *getVertexBuffer() const { return m_vertexTerrain; }
+	IndexBufferClass *getIndexBuffer() const { return m_indexTerrain; }
+	Int getVertexCount() const { return m_curNumTerrainVertices; }
+	Int getIndexCount() const { return m_curNumTerrainIndices; }
+	TextureClass *getRenderTexture();
 	void setFlip(WorldHeightMap *htMap); ///< Sets the flip bit for required vertices.
 	void doPartialUpdate(const IRegion2D &partialRange, WorldHeightMap *htMap, Bool doTextures );
 	void doTesselatedUpdate(const IRegion2D &partialRange, WorldHeightMap *htMap, Bool doTextures );

@@ -405,6 +405,12 @@ Int parseMapName(char *args[], int num)
 	{
 		TheWritableGlobalData->m_mapName.set( args[ 1 ] );
 		ConvertShortMapPathToLongMapPath(TheWritableGlobalData->m_mapName);
+	#if !defined(RTS_DEBUG)
+		// Release builds use the same direct-load handoff as -file.  Without
+		// this, -map only initializes the legacy map-name field and no new-game
+		// message is queued by GameEngine::init.
+		TheWritableGlobalData->m_initialFile = TheWritableGlobalData->m_mapName;
+	#endif
 	}
 	return 1;
 }
@@ -677,17 +683,6 @@ Int parseDisplayDebug(char *args[], int)
 	return 1;
 }
 
-Int parseFile(char *args[], int num)
-{
-	if (num > 1)
-	{
-		TheWritableGlobalData->m_initialFile = args[1];
-		ConvertShortMapPathToLongMapPath(TheWritableGlobalData->m_initialFile);
-	}
-	return 2;
-}
-
-
 Int parsePreloadEverything( char *args[], int num )
 {
 	TheWritableGlobalData->m_preloadAssets = TRUE;
@@ -725,6 +720,17 @@ Int parseLoadSave(char *args[], int num)
 		TheWritableGlobalData->m_shellMapOn = FALSE;
 		TheWritableGlobalData->m_playIntro = FALSE;
 		TheWritableGlobalData->m_playSizzle = FALSE;
+	}
+	return 2;
+}
+
+// Allow a map to be launched directly in every build configuration.
+Int parseFile(char *args[], int num)
+{
+	if (num > 1)
+	{
+		TheWritableGlobalData->m_initialFile = args[1];
+		ConvertShortMapPathToLongMapPath(TheWritableGlobalData->m_initialFile);
 	}
 	return 2;
 }
@@ -1157,6 +1163,7 @@ static CommandLineParam paramsForStartup[] =
 static CommandLineParam paramsForEngineInit[] =
 {
 	{ "-nologo", parseNoLogo }, // TheSuperHackers @tweak Is now available in Release builds.
+	{ "-novideo", parseNoVideo },
 	{ "-noshellmap", parseNoShellMap },
 	{ "-noShellAnim", parseNoWindowAnimation }, // TheSuperHackers @tweak Is now available in Release builds.
 	{ "-xres", parseXRes },
@@ -1168,6 +1175,7 @@ static CommandLineParam paramsForEngineInit[] =
 	{ "-mod", parseMod },
 	{ "-noshaders", parseNoShaders },
 	{ "-quickstart", parseQuickStart },
+	{ "-file", parseFile },
 	{ "-useWaveEditor", parseUseWaveEditor },
 
 	// TheSuperHackers @feature bobtista 22/07/2026 Load a save game file from the command line.
@@ -1175,12 +1183,13 @@ static CommandLineParam paramsForEngineInit[] =
 
 	// TheSuperHackers @feature xezon 03/08/2025 Force full viewport for 'Control Bar Pro' Addons like GenTool did it.
 	{ "-forcefullviewport", parseFullViewport },
-
+	// Allow direct map selection in Release builds as well as debug builds.
+	// parseMapName is configuration-independent; keeping this registration
+	// outside RTS_DEBUG makes -map usable for the win64 GeneralsMD executable.
+	{ "-map", parseMapName },
 #if defined(RTS_DEBUG)
 	{ "-noaudio", parseNoAudio },
-	{ "-map", parseMapName },
 	{ "-nomusic", parseNoMusic },
-	{ "-novideo", parseNoVideo },
 	{ "-noLogOrCrash", parseNoLogOrCrash },
 	{ "-FPUPreserve", parseFPUPreserve },
 	{ "-benchmark", parseBenchmark },
@@ -1266,7 +1275,6 @@ static CommandLineParam paramsForEngineInit[] =
 	{ "-jabber", parseJabber },
 	{ "-munkee", parseMunkee },
 	{ "-displayDebug", parseDisplayDebug },
-	{ "-file", parseFile },
 
 //	{ "-preload", parsePreload },
 

@@ -1199,6 +1199,12 @@ void GlobalData::parseGameDataDefinition( INI* ini )
 	// parse the ini weapon definition
 	ini->initFromINI( TheWritableGlobalData, s_GlobalDataFieldParseTable );
 
+	// The constructor initializes the active terrain-light arrays before the
+	// INI data has populated the time-of-day lighting table.  Re-select the
+	// active time of day after parsing so terrain vertex lighting does not
+	// continue using the constructor's zero values.
+	TheWritableGlobalData->setTimeOfDay( TheWritableGlobalData->m_timeOfDay );
+
 
 	// override INI values with user preferences
 	OptionPreferences optionPref;

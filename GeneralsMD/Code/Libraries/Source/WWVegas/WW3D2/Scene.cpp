@@ -68,7 +68,7 @@
 #include "WW3D.h"
 #include "RInfo.h"
 #include "WWLib/chunkio.h"
-#include "WW3D2/Backend/IRenderBackend.h"
+#include "WW3D2/Backend/RenderBackend.h"
 #include "SortingRenderer.h"
 #include "ColTest.h"
 

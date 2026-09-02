@@ -47,12 +47,51 @@
 //         Includes
 //-----------------------------------------------------------------------------
 #include <stdlib.h>
+#include <cstring>
 
 #include "W3DDevice/GameClient/TerrainTex.h"
 #include "W3DDevice/GameClient/WorldHeightMap.h"
 #include "W3DDevice/GameClient/TileData.h"
 #include "Common/GlobalData.h"
-#include "WW3D2/Backend/IRenderBackend.h"
+#include "WW3D2/Backend/RenderBackend.h"
+
+namespace
+{
+	// A terrain atlas is populated through partial tile writes.  DX11 creates
+	// the backing resource without initial data, so every byte outside those
+	// writes must still be initialized before mip generation.  Otherwise a
+	// generated mip can consume undefined memory after the first few frames.
+	void Initialize_Terrain_Atlas(const RenderBackendTextureDescription &description,
+		RenderBackendTextureLock &locked_texture)
+	{
+		if (description.format == WW3D_FORMAT_A1R5G5B5)
+		{
+			for (unsigned row = 0; row < description.height; ++row)
+			{
+				unsigned short *pixels = reinterpret_cast<unsigned short *>(
+					static_cast<unsigned char *>(locked_texture.bits) +
+					row * locked_texture.row_pitch);
+				for (unsigned column = 0; column < description.width; ++column)
+				{
+					pixels[column] = 0x8000u;
+				}
+			}
+		}
+		else if (description.format == WW3D_FORMAT_A8R8G8B8)
+		{
+			for (unsigned row = 0; row < description.height; ++row)
+			{
+				unsigned char *pixels = static_cast<unsigned char *>(locked_texture.bits) +
+					row * locked_texture.row_pitch;
+				std::memset(pixels, 0, description.width * 4u);
+				for (unsigned column = 0; column < description.width; ++column)
+				{
+					pixels[column * 4u + 3u] = 0xffu;
+				}
+			}
+		}
+	}
+}
 
 /******************************************************************************
 						TerrainTextureClass
@@ -87,7 +126,7 @@ texture of the desired height and mip level. */
 //=============================================================================
 TerrainTextureClass::TerrainTextureClass(int height, int width) :
 	TextureClass(width, height,
-		WW3D_FORMAT_A1R5G5B5, MIP_LEVELS_ALL ),
+		WW3D_FORMAT_A1R5G5B5, MIP_LEVELS_1 ),
 	m_sourceHeightMap(nullptr),
 	m_isFlatTexture(true),
 	m_flatXCell(0),
@@ -138,6 +177,7 @@ int TerrainTextureClass::update(WorldHeightMap *htMap)
 		!backend->Lock_Texture(texture, 0, locked_texture, false)) {
 		return 0;
 	}
+	Initialize_Terrain_Atlas(texture_description, locked_texture);
 
 	Int tilePixelExtent = TERRAIN_TILE_PIXEL_EXTENT;
 	Int tilesPerRow = texture_description.width/(2*TERRAIN_TILE_PIXEL_EXTENT+TERRAIN_TILE_OFFSET);
@@ -147,9 +187,11 @@ int TerrainTextureClass::update(WorldHeightMap *htMap)
 	//DEBUG_ASSERTCRASH(tilesPerRow*numRows >= htMap->m_numBitmapTiles, ("Too many tiles."));
 	DEBUG_ASSERTCRASH((Int)texture_description.width >= tilePixelExtent*tilesPerRow, ("Bitmap too small."));
 #endif
-	if (texture_description.format == WW3D_FORMAT_A1R5G5B5) {
+	if (texture_description.format == WW3D_FORMAT_A1R5G5B5 ||
+		texture_description.format == WW3D_FORMAT_A8R8G8B8) {
 		Int tileNdx;
-		Int pixelBytes = 2;
+		const bool packed = texture_description.format == WW3D_FORMAT_A1R5G5B5;
+		const Int pixelBytes = packed ? 2 : 4;
 		for (tileNdx=0; tileNdx < htMap->m_numBitmapTiles; tileNdx++) {
 			TileData *pTile = htMap->getSourceTile(tileNdx);
 			if (!pTile) continue;
@@ -167,8 +209,15 @@ int TerrainTextureClass::update(WorldHeightMap *htMap)
 				Int column = position.x;
 				pBGRX += column*pixelBytes;
 				for (i=0; i<tilePixelExtent; i++) {
-					const unsigned packed_pixel = 0x8000u + ((pBGR[2]>>3)<<10) + ((pBGR[1]>>3)<<5) + (pBGR[0]>>3);
-					*((unsigned short*)pBGRX) = static_cast<unsigned short>(packed_pixel);
+					if (packed) {
+						const unsigned packed_pixel = 0x8000u + ((pBGR[2]>>3)<<10) + ((pBGR[1]>>3)<<5) + (pBGR[0]>>3);
+						*((unsigned short*)pBGRX) = static_cast<unsigned short>(packed_pixel);
+					} else {
+						pBGRX[0] = pBGR[0];
+						pBGRX[1] = pBGR[1];
+						pBGRX[2] = pBGR[2];
+						pBGRX[3] = pBGR[3];
+					}
 					pBGRX +=pixelBytes;
 					pBGR +=TILE_BYTES_PER_PIXEL;
 				}
@@ -211,10 +260,9 @@ int TerrainTextureClass::update(WorldHeightMap *htMap)
 							(row)*locked_texture.row_pitch;
 				target = pBGRX+(origin.x-border)*pixelBytes;
 				memcpy(target+width*locked_texture.row_pitch, target, (width+2*border)*pixelBytes);
-			}
-
 		}
 
+	}
 	}
 	backend->Unlock_Texture(texture, 0);
 	backend->Generate_Texture_Mipmaps(texture);
@@ -272,10 +320,12 @@ Bool TerrainTextureClass::updateFlat(WorldHeightMap *htMap, Int xCell, Int yCell
 	if (!backend->Lock_Texture(texture, 0, locked_texture, false)) {
 		return false;
 	}
+	Initialize_Terrain_Atlas(texture_description, locked_texture);
 
-	if (texture_description.format == WW3D_FORMAT_A1R5G5B5) {
-
-		Int pixelBytes = 2;
+	if (texture_description.format == WW3D_FORMAT_A1R5G5B5 ||
+		texture_description.format == WW3D_FORMAT_A8R8G8B8) {
+		const bool packed = texture_description.format == WW3D_FORMAT_A1R5G5B5;
+		const Int pixelBytes = packed ? 2 : 4;
 		Int cellX, cellY;
 		for (cellX = 0; cellX < cellWidth; cellX++) {
 			for (cellY = 0; cellY < cellWidth; cellY++) {
@@ -287,7 +337,14 @@ Bool TerrainTextureClass::updateFlat(WorldHeightMap *htMap, Int xCell, Int yCell
 					UnsignedByte *pBGRX = pBGRX_data + (pixelsPerCell*(cellWidth-cellY-1)+k)*locked_texture.row_pitch +
 						cellX*pixelsPerCell*pixelBytes;
 					for (l=0; l<pixelsPerCell; l++) {
-						*((Short*)pBGRX) = 0x8000 + ((pBGR[2]>>3)<<10) + ((pBGR[1]>>3)<<5) + (pBGR[0]>>3);
+						if (packed) {
+							*((Short*)pBGRX) = 0x8000 + ((pBGR[2]>>3)<<10) + ((pBGR[1]>>3)<<5) + (pBGR[0]>>3);
+						} else {
+							pBGRX[0] = pBGR[0];
+							pBGRX[1] = pBGR[1];
+							pBGRX[2] = pBGR[2];
+							pBGRX[3] = pBGR[3];
+						}
 						pBGRX +=pixelBytes;
 						pBGR +=TILE_BYTES_PER_PIXEL;
 					}
@@ -297,7 +354,6 @@ Bool TerrainTextureClass::updateFlat(WorldHeightMap *htMap, Int xCell, Int yCell
 	}
 
 	backend->Unlock_Texture(texture, 0);
-	backend->Generate_Texture_Mipmaps(texture);
 	return(static_cast<int>(texture_description.height));
 }
 
@@ -716,6 +772,17 @@ CloudMapTerrainTextureClass::CloudMapTerrainTextureClass(MipCountType mipLevelCo
 
 }
 
+void CloudMapTerrainTextureClass::Update_Animation(float frame_seconds)
+{
+	m_xOffset += m_xSlidePerSecond * frame_seconds;
+	m_yOffset += m_ySlidePerSecond * frame_seconds;
+
+	// Keep the projected cloud coordinates in one texture period. The state is
+	// owned by the cloud texture consumed by the terrain material.
+	m_xOffset -= static_cast<Int>(m_xOffset);
+	m_yOffset -= static_cast<Int>(m_yOffset);
+}
+
 //=============================================================================
 // CloudMapTerrainTextureClass::Apply
 //=============================================================================
@@ -736,58 +803,6 @@ void CloudMapTerrainTextureClass::Apply(unsigned int stage)
 
 	// Do the base apply.
 	TextureClass::Apply(stage);
-}
-
-//=============================================================================
-// CloudMapTerrainTextureClass::restore
-//=============================================================================
-/** Cleans up any custom settings to the texturing pipeline that may not be
-understood by w3d. */
-//=============================================================================
-void CloudMapTerrainTextureClass::restore()
-{
-	WW3D::Get_Render_Backend()->Set_Texture_Argument(0, RenderBackendTextureComponent::Color, 1, RenderBackendTextureArgument::Texture, RenderBackendTextureArgumentModifiers::None);
-	WW3D::Get_Render_Backend()->Set_Texture_Argument(0, RenderBackendTextureComponent::Color, 2, RenderBackendTextureArgument::Diffuse, RenderBackendTextureArgumentModifiers::None);
-	WW3D::Get_Render_Backend()->Set_Texture_Operation(0, RenderBackendTextureComponent::Color, RenderBackendTextureOperation::Modulate);
-	WW3D::Get_Render_Backend()->Set_Texture_Operation(0, RenderBackendTextureComponent::Alpha, RenderBackendTextureOperation::Disable);
-
-	WW3D::Get_Render_Backend()->Set_Texture_Address_Mode(0, true, RenderBackendTextureAddressMode::Wrap);
-	WW3D::Get_Render_Backend()->Set_Texture_Address_Mode(0, false, RenderBackendTextureAddressMode::Wrap);
-	WW3D::Get_Render_Backend()->Set_Texture_Coordinate_Source(0, RenderBackendTextureCoordinateSource::PassThrough, 0);
-	WW3D::Get_Render_Backend()->Set_Texture_Transform_Flags(0, RenderBackendTextureTransformFlags::Disabled);
-
-	WW3D::Get_Render_Backend()->Set_Texture_Argument(1, RenderBackendTextureComponent::Color, 1, RenderBackendTextureArgument::Texture, RenderBackendTextureArgumentModifiers::None);
-	WW3D::Get_Render_Backend()->Set_Texture_Argument(1, RenderBackendTextureComponent::Color, 2, RenderBackendTextureArgument::Diffuse, RenderBackendTextureArgumentModifiers::None);
-	WW3D::Get_Render_Backend()->Set_Texture_Operation(1, RenderBackendTextureComponent::Color, RenderBackendTextureOperation::Modulate);
-	WW3D::Get_Render_Backend()->Set_Texture_Operation(1, RenderBackendTextureComponent::Alpha, RenderBackendTextureOperation::Disable);
-
-	WW3D::Get_Render_Backend()->Set_Texture_Address_Mode(1, true, RenderBackendTextureAddressMode::Wrap);
-	WW3D::Get_Render_Backend()->Set_Texture_Address_Mode(1, false, RenderBackendTextureAddressMode::Wrap);
-	WW3D::Get_Render_Backend()->Set_Texture_Coordinate_Source(1, RenderBackendTextureCoordinateSource::PassThrough, 0);
-	WW3D::Get_Render_Backend()->Set_Texture_Transform_Flags(1, RenderBackendTextureTransformFlags::Disabled);
-	WW3D::Get_Render_Backend()->Set_Alpha_Blend_Enabled(false);
-	WW3D::Get_Render_Backend()->Set_Source_Blend_Factor(RenderBackendBlendFactor::SourceAlpha);
-	WW3D::Get_Render_Backend()->Set_Destination_Blend_Factor(RenderBackendBlendFactor::InverseSourceAlpha);
-
-
-	if (TheGlobalData && !TheGlobalData->m_multiPassTerrain)
-	{
-		///@todo: Remove 8-Stage Nvidia hack after drivers are fixed.
-		//This method is a backdoor specific to Nvidia based cards.  It will fail on
-		//other hardware.  Allows single pass blend of 2 textures and post modulate diffuse.
-		Int i;
-		for (i=0; i<8; i++) {
-			WW3D::Get_Render_Backend()->Set_Texture_Operation(i, RenderBackendTextureComponent::Color, RenderBackendTextureOperation::Disable);
-			WW3D::Get_Render_Backend()->Set_Texture_Coordinate_Source(i, RenderBackendTextureCoordinateSource::PassThrough, i);
-			WW3D::Get_Render_Backend()->Set_Texture_Argument(i, RenderBackendTextureComponent::Color, 1, RenderBackendTextureArgument::Texture, RenderBackendTextureArgumentModifiers::None);
-			WW3D::Get_Render_Backend()->Set_Texture_Argument(i, RenderBackendTextureComponent::Color, 2, RenderBackendTextureArgument::Diffuse, RenderBackendTextureArgumentModifiers::None);
-			WW3D::Get_Render_Backend()->Set_Texture_Operation(i, RenderBackendTextureComponent::Alpha, RenderBackendTextureOperation::Disable);
-			WW3D::Get_Render_Backend()->Set_Texture_Argument(i, RenderBackendTextureComponent::Alpha, 1, RenderBackendTextureArgument::Texture, RenderBackendTextureArgumentModifiers::None);
-			WW3D::Get_Render_Backend()->Set_Texture_Argument(i, RenderBackendTextureComponent::Alpha, 2, RenderBackendTextureArgument::Diffuse, RenderBackendTextureArgumentModifiers::None);
-
-			WW3D::Get_Render_Backend()->Set_Texture_Resource(i, nullptr);
-		}
-	}
 }
 
 /******************************************************************************

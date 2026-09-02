@@ -42,7 +42,7 @@
 #include "GameClient/View.h"
 #include "WW3D2/Camera.h"
 #include "WW3D2/Light.h"
-#include "WW3D2/Backend/IRenderBackend.h"
+#include "WW3D2/Backend/RenderBackend.h"
 #include "WW3D2/HLOD.h"
 #include "WW3D2/Mesh.h"
 #include "WW3D2/MeshMdl.h"

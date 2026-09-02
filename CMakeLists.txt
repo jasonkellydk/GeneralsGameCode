@@ -70,6 +70,12 @@ include(cmake/gamespy.cmake)
 include(cmake/lzhl.cmake)
 include(cmake/stb.cmake)
 
+# WW3D2 owns the engine shader language. The modern Windows build compiles its
+# checked-in Slang sources at build time for the active renderer targets.
+if(RTS_BUILD_ZEROHOUR AND WIN32 AND NOT IS_VS6_BUILD)
+    include(cmake/slang.cmake)
+endif()
+
 if (IS_VS6_BUILD)
     # The original max sdk does not compile against a modern compiler.
     # If there is a desire to make this work, then a fixed max sdk needs to be created.

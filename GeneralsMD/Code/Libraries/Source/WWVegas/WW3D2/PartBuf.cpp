@@ -49,7 +49,7 @@
 #include <limits.h>
 #include "WWMath/vp.h"
 #include "Texture.h"
-#include "WW3D2/Backend/IRenderBackend.h"
+#include "WW3D2/Backend/RenderBackend.h"
 #include "WWMath/vector3.h"
 
 // A random permutation of the numbers 0 to 15 - used for LOD particle decimation.

@@ -52,7 +52,7 @@
 #include "Shader.h"
 #include "Texture.h"
 #include "Statistics.h"
-#include "Backend/IRenderBackend.h"
+#include "Backend/RenderBackend.h"
 
 
 bool MaterialPassClass::EnablePerPolygonCulling = true;

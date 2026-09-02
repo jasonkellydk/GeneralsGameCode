@@ -161,5 +161,7 @@ public:
 
 		// just use default destructor. ~TerrainTextureClass();
 
-		void restore();
+		void Update_Animation(float frame_seconds);
+		float Get_X_Offset() const { return m_xOffset; }
+		float Get_Y_Offset() const { return m_yOffset; }
 };

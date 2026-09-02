@@ -97,7 +97,7 @@
 #include "RInfo.h"
 #include "ColTest.h"
 #include "IntTest.h"
-#include "WW3D2/Backend/IRenderBackend.h"
+#include "WW3D2/Backend/RenderBackend.h"
 #include "WW3D2/IndexBuffer.h"
 #include "WW3D2/VertexBuffer.h"
 #include "WW3D2/VertexFormat.h"
@@ -511,7 +511,9 @@ void BoxRenderObjClass::render_box(RenderInfoClass & rinfo,const Vector3 & cente
 		WW3D::Get_Render_Backend()->Set_Index_Buffer(ibaccess,0);
 		WW3D::Get_Render_Backend()->Set_Vertex_Buffer(vbaccess);
 
-		WW3D::Get_Render_Backend()->Draw_Triangles(buffer_type,0,NUM_BOX_FACES,0,NUM_BOX_VERTS);
+		WW3D::Get_Render_Backend()->Draw_Indexed_Primitives(
+			RenderBackendPrimitiveType::TriangleList, 0, 0, NUM_BOX_VERTS,
+			0, NUM_BOX_FACES);
 	}
 }
 

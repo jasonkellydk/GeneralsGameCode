@@ -9,7 +9,6 @@ endif()
 
 target_link_libraries(z_generals PRIVATE
     comctl32
-    d3d9lib
     imm32
     SDL3::SDL3
     vfw32
@@ -52,12 +51,30 @@ add_custom_command(TARGET z_generals POST_BUILD
         "${CMAKE_SOURCE_DIR}/GeneralsMD/Run"
         "$<TARGET_FILE_DIR:z_generals>"
     COMMAND ${CMAKE_COMMAND} -E copy_directory
+        "${WW3D2_SHADER_OUTPUT_DIR}/Shaders"
+        "$<TARGET_FILE_DIR:z_generals>/Shaders"
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
         "${ffmpeg_SOURCE_DIR}/bin"
         "$<TARGET_FILE_DIR:z_generals>"
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
         "$<TARGET_FILE:SDL3::SDL3>"
         "$<TARGET_FILE_DIR:z_generals>"
 )
+
+if(TARGET ww3d2_shaders)
+    # Shader compilation is a build input, while the executable POST_BUILD
+    # step only runs when the executable itself is relinked.  Copy the current
+    # checkout-built Slang DXBC assets through a dependent target so shader
+    # source changes can never leave the runtime directory stale.
+    add_custom_target(z_generals_shader_assets ALL
+        COMMAND ${CMAKE_COMMAND} -E copy_directory
+            "${WW3D2_SHADER_OUTPUT_DIR}/Shaders"
+            "$<TARGET_FILE_DIR:z_generals>/Shaders"
+        DEPENDS ww3d2_shaders
+        VERBATIM
+    )
+    add_dependencies(z_generals z_generals_shader_assets)
+endif()
 
 target_include_directories(z_generals PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}

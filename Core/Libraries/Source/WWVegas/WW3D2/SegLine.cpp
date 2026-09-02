@@ -43,7 +43,7 @@
 #include "ColTest.h"
 #include "W3DFile.h"
 #include "Texture.h"
-#include "Backend/IRenderBackend.h"
+#include "Backend/RenderBackend.h"
 #include "WWMath/vp.h"
 #include "WWMath/Vector3i.h"
 #include "SortingRenderer.h"

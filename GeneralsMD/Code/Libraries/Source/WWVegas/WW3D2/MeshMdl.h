@@ -51,7 +51,7 @@
 #include "RInfo.h"
 #include "MeshGeometry.h"
 #include "MeshMatDesc.h"
-#include "WW3D2/Backend/IRenderBackend.h"
+#include "WW3D2/Backend/RenderBackend.h"
 
 class TextureClass;
 class RenderInfoClass;

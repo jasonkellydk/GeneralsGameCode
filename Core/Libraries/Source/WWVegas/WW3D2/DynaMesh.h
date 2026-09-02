@@ -39,7 +39,7 @@
 #include "MatInfo.h"
 #include "RendObj.h"
 #include "PolyInfo.h"
-#include "Backend/IRenderBackend.h"
+#include "Backend/RenderBackend.h"
 
 class	ShaderClass;
 class	IntersectionClass;

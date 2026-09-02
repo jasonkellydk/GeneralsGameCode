@@ -44,7 +44,7 @@
 #include "WW3D2/W3DErr.h"
 #include "Mapper.h"
 #include "WWLib/wwstring.h"
-#include "WW3D2/Backend/IRenderBackend.h"
+#include "WW3D2/Backend/RenderBackend.h"
 
 class ChunkLoadClass;
 class ChunkSaveClass;

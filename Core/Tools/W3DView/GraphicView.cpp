@@ -45,7 +45,7 @@
 #include "WWAudio/SoundScene.h"
 #include "WWAudio/WWAudio.h"
 #include "WW3D2/MetalMap.h"
-#include "WW3D2/Backend/IRenderBackend.h"
+#include "WW3D2/Backend/RenderBackend.h"
 #include "WWMath/matrix3.h"
 
 #ifdef RTS_DEBUG

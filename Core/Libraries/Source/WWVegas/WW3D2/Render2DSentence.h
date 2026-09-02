@@ -41,7 +41,7 @@
 #include "WWLib/Vector.h"
 #include "WWMath/vector2i.h"
 #include "WWLib/wwstring.h"
-#include "Backend/IRenderBackend.h"
+#include "Backend/RenderBackend.h"
 
 /*
 ** FontCharsClass

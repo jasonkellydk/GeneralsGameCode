@@ -44,7 +44,7 @@
 #include "W3DFile.h"
 #include "WWDebug/wwdebug.h"
 #include "WW3D.h"
-#include "WW3D2/Backend/IRenderBackend.h"
+#include "WW3D2/Backend/RenderBackend.h"
 
 
 bool ShaderClass::ShaderDirty=true;

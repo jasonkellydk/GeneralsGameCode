@@ -29,7 +29,7 @@
 
 
 #include "Common/GameMemory.h"
-#include "WW3D2/Backend/IRenderBackend.h"
+#include "WW3D2/Backend/RenderBackend.h"
 #include "WW3D2/RendObj.h"
 #include "WW3D2/HAnim.h"
 #include "WW3D2/Camera.h"
