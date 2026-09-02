@@ -521,7 +521,7 @@ void FlatHeightMapRenderObjClass::Render(RenderInfoClass & rinfo)
 
 #ifdef DO_ROADS
 	ShaderClass::Invalidate();
-	if (!ShaderClass::Is_Backface_Culling_Inverted()) {
+	if (!WW3D::Is_Reflection_Render_Pass()) {
 		WW3D::Get_Render_Backend()->Set_Material(m_vertexMaterialClass);
 		if (Scene) {
 			RTS3DScene *pMyScene = (RTS3DScene *)Scene;

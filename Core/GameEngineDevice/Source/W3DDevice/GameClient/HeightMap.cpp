@@ -2073,7 +2073,7 @@ void HeightMapRenderObjClass::Render(RenderInfoClass & rinfo)
 		WW3D::Get_Render_Backend()->Set_Texture(0,nullptr);
 		WW3D::Get_Render_Backend()->Set_Texture(1,nullptr);
 		ShaderClass::Invalidate();
-		if (!ShaderClass::Is_Backface_Culling_Inverted()) {
+		if (!WW3D::Is_Reflection_Render_Pass()) {
 			WW3D::Get_Render_Backend()->Set_Material(m_vertexMaterialClass);
 			if (Scene) {
 				RTS3DScene *pMyScene = (RTS3DScene *)Scene;

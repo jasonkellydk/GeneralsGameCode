@@ -200,7 +200,7 @@ void DX11BackendState::Upload_Constants()
 }
 
 void DX11BackendState::Apply_D3D_States()
-re {
+{
 	if (device == nullptr || context == nullptr)
 	{
 		return;
@@ -261,14 +261,17 @@ re {
 		}
 	}
 
+	const RenderBackendCullMode effective_cull_mode =
+		cull_mode_override_count != 0 ?
+			cull_mode_overrides[cull_mode_override_count - 1] : cull_mode;
 	D3D11_RASTERIZER_DESC raster_description = {};
 	raster_description.FillMode = fill_mode == RenderBackendFillMode::Point ? D3D11_FILL_SOLID :
 		(fill_mode == RenderBackendFillMode::Wireframe ? D3D11_FILL_WIREFRAME : D3D11_FILL_SOLID);
-	raster_description.CullMode = cull_mode == RenderBackendCullMode::None ? D3D11_CULL_NONE : D3D11_CULL_BACK;
+	raster_description.CullMode = effective_cull_mode == RenderBackendCullMode::None ? D3D11_CULL_NONE : D3D11_CULL_BACK;
 	// D3D11 culls the back face, so a CCW front face means clockwise faces are
 	// culled. The neutral enum preserves D3D9's "cull this winding" meaning:
 	// Clockwise -> CCW front faces, CounterClockwise -> CW front faces.
-	raster_description.FrontCounterClockwise = cull_mode == RenderBackendCullMode::Clockwise ? TRUE : FALSE;
+	raster_description.FrontCounterClockwise = effective_cull_mode == RenderBackendCullMode::Clockwise ? TRUE : FALSE;
 	raster_description.DepthBias = static_cast<INT>(depth_bias);
 	raster_description.DepthBiasClamp = 0.0f;
 	raster_description.SlopeScaledDepthBias = 0.0f;
@@ -661,6 +664,28 @@ template <typename Host>
 RenderBackendCullMode DX11RenderStateBackend<Host>::Get_Cull_Mode() const
 {
 	return this->State().cull_mode;
+}
+
+template <typename Host>
+void DX11RenderStateBackend<Host>::Push_Cull_Mode_Override(RenderBackendCullMode mode)
+{
+	if (this->State().cull_mode_override_count <
+		this->State().cull_mode_overrides.size())
+	{
+		this->State().cull_mode_overrides[
+			this->State().cull_mode_override_count++] = mode;
+		this->State().Mark_Native_State_Dirty();
+	}
+}
+
+template <typename Host>
+void DX11RenderStateBackend<Host>::Pop_Cull_Mode_Override()
+{
+	if (this->State().cull_mode_override_count != 0)
+	{
+		--this->State().cull_mode_override_count;
+		this->State().Mark_Native_State_Dirty();
+	}
 }
 
 template <typename Host>
@@ -1066,6 +1091,7 @@ void DX11RenderStateBackend<Host>::Restore_Render_State()
 	this->State().render_state = RenderStateStruct();
 	this->State().current_shader = ShaderClass();
 	this->State().textures.fill(nullptr);
+	this->State().programmable_texture = nullptr;
 	this->State().direct_texture_overrides.fill(nullptr);
 	this->State().direct_texture_override_valid.fill(false);
 	this->State().texture_kinds.fill(RenderBackendTextureKind::Texture2D);
@@ -1100,6 +1126,20 @@ void DX11RenderStateBackend<Host>::Apply_Programmable_Render_State_Changes()
 		// Commit only the explicit backend state. Do not execute ShaderClass,
 		// legacy material, or legacy texture callbacks here.
 		this->State().Apply_D3D_States();
+
+		// Slot eight is reserved for the extra resource of an explicit modern
+		// material. It intentionally does not participate in the legacy
+		// constant-buffer stage arrays above.
+		ID3D11ShaderResourceView *view =
+			this->State().programmable_texture == nullptr ? nullptr :
+			this->State().programmable_texture->shader_resource_view;
+		this->State().context->PSSetShaderResources(MAX_TEXTURE_STAGES, 1,
+			&view);
+		// The extra programmable slot is currently used for scene depth, so it
+		// always uses the clamped sampler owned by the final regular stage.
+		ID3D11SamplerState *sampler =
+			this->State().samplers[MAX_TEXTURE_STAGES - 1];
+		this->State().context->PSSetSamplers(MAX_TEXTURE_STAGES, 1, &sampler);
 	}
 }
 
@@ -1112,6 +1152,7 @@ void DX11RenderStateBackend<Host>::End_Programmable_Pass()
 	}
 
 	this->State().programmable_pass_active = false;
+	this->State().programmable_texture = nullptr;
 	this->State().applied_render_state_valid = false;
 	this->State().native_state_valid = false;
 	this->State().native_state_dirty = true;

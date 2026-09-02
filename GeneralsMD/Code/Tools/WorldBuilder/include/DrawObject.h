@@ -33,7 +33,7 @@
 
 class MeshClass;
 class PolygonTrigger;
-class WaterRenderObjClass;
+class WaterRenderSystem;
 class MapObject;
 class Render2DClass;
 //
@@ -121,7 +121,7 @@ protected:
 	IndexBufferClass				*m_indexWater;	///< indices defining a triangle strip for the water on terrain
 	Int												m_waterVertexCount;
 
-	WaterRenderObjClass				*m_waterDrawObject;
+	WaterRenderSystem				*m_waterDrawObject;
 
 	Bool											m_drawObjects;
 	Bool											m_drawWaypoints;

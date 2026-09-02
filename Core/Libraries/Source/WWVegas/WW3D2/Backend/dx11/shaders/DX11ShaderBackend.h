@@ -23,6 +23,8 @@ namespace dx11_backend
 		void Set_Pixel_Shader_Constant(unsigned reg, const void *data, unsigned count);
 		void Set_Texture(unsigned stage, TextureBaseClass *texture);
 		void Set_Texture_Resource(unsigned stage, const TextureBaseClass *texture);
+		void Set_Programmable_Texture_Resource(unsigned stage,
+			const TextureBaseClass *texture);
 		void Set_Texture_Handle(unsigned stage, uintptr_t texture);
 	};
 }

@@ -161,7 +161,7 @@ void BaseHeightMapRenderObjClass::drawScorches()
 	// terrain pass and the unexplained circular map marks.
 	return;
 	ShaderClass::Invalidate();
-	if (m_map && Is_Hidden() == 0 && !ShaderClass::Is_Backface_Culling_Inverted()) {
+	if (m_map && Is_Hidden() == 0 && !WW3D::Is_Reflection_Render_Pass()) {
 		m_staticScorches->drawScorches(*m_map);
 		m_scorches->drawScorches(*m_map);
 	}
@@ -387,8 +387,8 @@ void BaseHeightMapRenderObjClass::ReleaseResources()
 	REF_PTR_SET(pMap, m_map);
 	freeMapResources();
 	m_map = pMap; // ref_ptr_set has already incremented the ref count.
-	if (TheWaterRenderObj)
-		TheWaterRenderObj->ReleaseResources();
+	if (TheWaterRenderSystem)
+		TheWaterRenderSystem->ReleaseResources();
 	if (TheTerrainTracksRenderObjClassSystem)
 		TheTerrainTracksRenderObjClassSystem->ReleaseResources();
 	if (TheW3DShadowManager)
@@ -422,8 +422,8 @@ void BaseHeightMapRenderObjClass::ReAcquireResources()
 {
 	W3DShaderManager::init();	//reaquire resources which may be needed by custom shaders
 
-	if (TheWaterRenderObj)
-		TheWaterRenderObj->ReAcquireResources();
+	if (TheWaterRenderSystem)
+		TheWaterRenderSystem->ReAcquireResources();
 
 	if (TheTerrainTracksRenderObjClassSystem)
 		TheTerrainTracksRenderObjClassSystem->ReAcquireResources();
@@ -1577,12 +1577,12 @@ void BaseHeightMapRenderObjClass::updateShorelineTile(Int i, Int j, Int border, 
 
 	Real X0=(i-border)*MAP_XY_FACTOR;
 	Real Y0=(j-border)*MAP_XY_FACTOR;
-	waterSide=(waterZ0=TheWaterRenderObj->getWaterHeight(X0,Y0)) > ((terrainZ0=MAP_HEIGHT_SCALE*pMap->getHeight(i,j)));
+	waterSide=(waterZ0=TheWaterRenderSystem->getWaterHeight(X0,Y0)) > ((terrainZ0=MAP_HEIGHT_SCALE*pMap->getHeight(i,j)));
 	Real X1=(i-border+1)*MAP_XY_FACTOR;
 	Real Y1=(j-border+1)*MAP_XY_FACTOR;
-	waterSide |=((waterZ1=TheWaterRenderObj->getWaterHeight(X1,Y0)) > ((terrainZ1=MAP_HEIGHT_SCALE*pMap->getHeight(i+1,j)))) << 1;
-	waterSide |=((waterZ2=TheWaterRenderObj->getWaterHeight(X1,Y1)) > ((terrainZ2=MAP_HEIGHT_SCALE*pMap->getHeight(i+1,j+1)))) << 2;
-	waterSide |=((waterZ3=TheWaterRenderObj->getWaterHeight(X0,Y1)) > ((terrainZ3=MAP_HEIGHT_SCALE*pMap->getHeight(i,j+1)))) << 3;
+	waterSide |=((waterZ1=TheWaterRenderSystem->getWaterHeight(X1,Y0)) > ((terrainZ1=MAP_HEIGHT_SCALE*pMap->getHeight(i+1,j)))) << 1;
+	waterSide |=((waterZ2=TheWaterRenderSystem->getWaterHeight(X1,Y1)) > ((terrainZ2=MAP_HEIGHT_SCALE*pMap->getHeight(i+1,j+1)))) << 2;
+	waterSide |=((waterZ3=TheWaterRenderSystem->getWaterHeight(X0,Y1)) > ((terrainZ3=MAP_HEIGHT_SCALE*pMap->getHeight(i,j+1)))) << 3;
 
 	if (!waterSide || (waterZ0*waterZ1*waterZ2*waterZ3) <= 0)
 		return;	//all verts are on positive (surface) side of water so don't need blending.  Or one of them is outside the water plane bounds (waterHeight <= 0!)
@@ -2779,10 +2779,31 @@ void BaseHeightMapRenderObjClass::renderTrees(CameraClass * camera)
 	if (Scene==nullptr) return;
 	if (m_treeBuffer) {
 		WW3D::Get_Render_Backend()->Set_Transform(RenderBackendTransform::World,Transform);
-		WW3D::Get_Render_Backend()->Set_Material(m_vertexMaterialClass);
 		RTS3DScene *pMyScene = (RTS3DScene *)Scene;
 		RefRenderObjListIterator pDynamicLightsIterator(pMyScene->getDynamicLights());
 		m_treeBuffer->drawTrees(camera, &pDynamicLightsIterator);
+	}
+}
+
+Bool BaseHeightMapRenderObjClass::hasTreeShadowCasters() const
+{
+	return m_treeBuffer != nullptr && m_treeBuffer->hasShadowCasters();
+}
+
+void BaseHeightMapRenderObjClass::prepareTreeShadowVolumes(
+	const Vector3 &lightPosition)
+{
+	if (m_treeBuffer != nullptr)
+	{
+		m_treeBuffer->prepareShadowVolumes(lightPosition);
+	}
+}
+
+void BaseHeightMapRenderObjClass::renderTreeShadowVolumes()
+{
+	if (m_treeBuffer != nullptr)
+	{
+		m_treeBuffer->renderShadowVolumes();
 	}
 }
 

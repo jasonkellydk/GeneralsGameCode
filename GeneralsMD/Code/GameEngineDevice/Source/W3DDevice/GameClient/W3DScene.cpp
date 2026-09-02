@@ -414,7 +414,7 @@ void RTS3DScene::Visibility_Check(CameraClass * camera)
 	if (currentFrame <= TheGlobalData->m_defaultOcclusionDelay)
 		currentFrame = TheGlobalData->m_defaultOcclusionDelay+1;	//make sure occlusion is enabled when game starts (frame 0).
 
-	if (ShaderClass::Is_Backface_Culling_Inverted())
+	if (WW3D::Is_Reflection_Render_Pass())
 	{
 		//we are rendering reflections
 		///@todo: Have better flag to detect reflection pass
@@ -843,6 +843,16 @@ void RTS3DScene::renderOneObject(RenderInfoClass &rinfo, RenderObjClass *robj, I
 
 //DECLARE_PERF_TIMER(translucentRender)
 
+void RTS3DScene::Render_Water_Reflection(CameraClass *camera,
+	const RenderBackendViewport &viewport)
+{
+	if (camera == nullptr)
+		return;
+
+	RenderBackendViewport pass_viewport = viewport;
+	WW3D::Render_Scene_Pass(this, camera, &pass_viewport);
+}
+
 /**Draw everything that was submitted from this scene*/
 void RTS3DScene::Flush(RenderInfoClass & rinfo)
 {
@@ -874,10 +884,15 @@ void RTS3DScene::Flush(RenderInfoClass & rinfo)
 	if (m_customPassMode == SCENE_PASS_DEFAULT && Get_Extra_Pass_Polygon_Mode() == EXTRA_PASS_DISABLE)
 		DoShadows(rinfo, true);	//draw all stencil shadows
 
-	if (TheWaterRenderObj != nullptr)
-		TheWaterRenderObj->Capture_Refraction_Texture();
+	if (TheWaterRenderSystem != nullptr &&
+		m_customPassMode != SCENE_PASS_ALPHA_MASK &&
+		Get_Extra_Pass_Polygon_Mode() != EXTRA_PASS_CLEAR_LINE)
+	{
+		TheWaterRenderSystem->Capture_Refraction_Texture();
+		TheWaterRenderSystem->Render(rinfo);
+	}
 
-	WW3D::Render_And_Clear_Static_Sort_Lists(rinfo);	//draws things like water
+	WW3D::Render_And_Clear_Static_Sort_Lists(rinfo);	//draw remaining static-sort submissions
 
 	if (m_customPassMode == SCENE_PASS_DEFAULT && Get_Extra_Pass_Polygon_Mode() == EXTRA_PASS_DISABLE)
 		flushTranslucentObjects(rinfo);	//draw all translucent meshes which don't need per-polygon sorting.
@@ -1135,7 +1150,7 @@ void RTS3DScene::Customized_Render( RenderInfoClass &rinfo )
 		RenderObjClass * robj = it.Peek_Obj();
 		if (robj->Class_ID() == RenderObjClass::CLASSID_TILEMAP)
 			terrainObject=robj;	//found terrain object, store for later.
-		if (!ShaderClass::Is_Backface_Culling_Inverted()) {
+		if (!WW3D::Is_Reflection_Render_Pass()) {
 			// If we are doing water mirror, we draw with backface culling inverted.  In this case,
 			// we only want to call On_Frame_Update if we aren't drawing water, as otherwise
 			// we get 2 frame updates per frame, and it screws up the particle emitters.
@@ -1216,7 +1231,7 @@ void RTS3DScene::Customized_Render( RenderInfoClass &rinfo )
 
 	//Tell shadow manager to render shadows at the end of this frame
 	//Don't draw shadows if there is no terrain present.
-	if (TheW3DShadowManager && terrainObject && !ShaderClass::Is_Backface_Culling_Inverted() &&
+	if (TheW3DShadowManager && terrainObject && !WW3D::Is_Reflection_Render_Pass() &&
 		Get_Extra_Pass_Polygon_Mode() == EXTRA_PASS_DISABLE)
 	{
 		TheW3DShadowManager->queueShadows(TRUE);
@@ -1913,7 +1928,7 @@ void RTS3DScene::Visibility_Check(CameraClass * camera)
 		currentFrame = TheGlobalData->m_defaultOcclusionDelay+1;	//make sure occlusion is enabled when game starts (frame 0).
 
 
-	if (ShaderClass::Is_Backface_Culling_Inverted())
+	if (WW3D::Is_Reflection_Render_Pass())
 	{	//we are rendering reflections
 		///@todo: Have better flag to detect reflection pass
 

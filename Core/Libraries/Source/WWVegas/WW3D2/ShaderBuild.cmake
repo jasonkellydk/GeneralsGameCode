@@ -33,6 +33,9 @@ set(WW3D2_SHADER_SOURCE_FILES
     "${WW3D2_SHADER_SOURCE_DIR}/Engine/roadnoise2.slang"
     "${WW3D2_SHADER_SOURCE_DIR}/Engine/terrain.slang"
     "${WW3D2_SHADER_SOURCE_DIR}/Engine/water_surface.slang"
+    "${WW3D2_SHADER_SOURCE_DIR}/Engine/water_displacement.slang"
+    "${WW3D2_SHADER_SOURCE_DIR}/Engine/water_sky.slang"
+    "${WW3D2_SHADER_SOURCE_DIR}/Engine/water_track.slang"
     "${WW3D2_SHADER_SOURCE_DIR}/Engine/Trees.slang"
     "${WW3D2_SHADER_SOURCE_DIR}/Engine/Trees.vs.slang"
     "${WW3D2_SHADER_SOURCE_DIR}/Engine/MotionBlur.vs.slang"
@@ -94,13 +97,25 @@ add_ww3d2_shader(
 add_ww3d2_shader(
     "${WW3D2_SHADER_SOURCE_DIR}/Engine/ocean.slang" ocean.vso vertex ENTRY OceanVertexMain)
 add_ww3d2_shader(
+    "${WW3D2_SHADER_SOURCE_DIR}/Engine/water_displacement.slang" water_displacement.pso pixel ENTRY WaterDisplacementPixelMain)
+add_ww3d2_shader(
+    "${WW3D2_SHADER_SOURCE_DIR}/Engine/water_displacement.slang" water_displacement.vso vertex ENTRY WaterDisplacementVertexMain)
+add_ww3d2_shader(
     "${WW3D2_SHADER_SOURCE_DIR}/Engine/water_surface.slang" water_surface.pso pixel ENTRY WaterSurfacePixelMain)
 add_ww3d2_shader(
     "${WW3D2_SHADER_SOURCE_DIR}/Engine/water_surface.slang" water_surface.vso vertex ENTRY WaterSurfaceVertexMain)
 add_ww3d2_shader(
-    "${WW3D2_SHADER_SOURCE_DIR}/Engine/Trees.slang" Trees.pso pixel)
+    "${WW3D2_SHADER_SOURCE_DIR}/Engine/water_sky.slang" water_sky.pso pixel ENTRY WaterSkyPixelMain)
 add_ww3d2_shader(
-    "${WW3D2_SHADER_SOURCE_DIR}/Engine/Trees.vs.slang" Trees.vso vertex)
+    "${WW3D2_SHADER_SOURCE_DIR}/Engine/water_sky.slang" water_sky.vso vertex ENTRY WaterSkyVertexMain)
+add_ww3d2_shader(
+    "${WW3D2_SHADER_SOURCE_DIR}/Engine/water_track.slang" water_track.pso pixel ENTRY WaterTrackPixelMain)
+add_ww3d2_shader(
+    "${WW3D2_SHADER_SOURCE_DIR}/Engine/water_track.slang" water_track.vso vertex ENTRY WaterTrackVertexMain)
+add_ww3d2_shader(
+    "${WW3D2_SHADER_SOURCE_DIR}/Engine/Trees.slang" Trees.pso pixel ENTRY TreePixelMain)
+add_ww3d2_shader(
+    "${WW3D2_SHADER_SOURCE_DIR}/Engine/Trees.vs.slang" Trees.vso vertex ENTRY TreeVertexMain)
 add_ww3d2_shader(
     "${WW3D2_SHADER_SOURCE_DIR}/Engine/MotionBlur.vs.slang" MotionBlur.vso vertex)
 add_ww3d2_shader(

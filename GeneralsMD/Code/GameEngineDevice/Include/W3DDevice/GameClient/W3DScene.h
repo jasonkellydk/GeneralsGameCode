@@ -40,6 +40,7 @@
 #include "WW3D2/RInfo.h"
 #include "WW3D2/ColTest.h"
 #include "WW3D2/LightEnvironment.h"
+#include "W3DDevice/GameClient/WaterReflectionRenderer.h"
 
 ///////////////////////////////////////////////////////////////////////////////
 // PROTOTYPES /////////////////////////////////////////////////////////////////
@@ -56,7 +57,8 @@ class W3DMaskMaterialPassClass;
 //-----------------------------------------------------------------------------
 /** Scene management for 3D RTS game */
 //-----------------------------------------------------------------------------
-class RTS3DScene : public SimpleSceneClass, public SubsystemInterface
+class RTS3DScene : public SimpleSceneClass, public SubsystemInterface,
+	public WaterReflectionRenderer
 {
 
 public:
@@ -76,6 +78,8 @@ public:
 	CustomScenePassModes getCustomPassMode ()	{return m_customPassMode;}
 
 	void Flush(RenderInfoClass & rinfo);	//draw queued up models.
+	void Render_Water_Reflection(CameraClass *camera,
+		const RenderBackendViewport &viewport) override;
 	/// Drawing control method
 	void drawTerrainOnly(Bool draw) {m_drawTerrainOnly = draw;};
 

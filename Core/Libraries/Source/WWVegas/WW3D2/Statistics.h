@@ -49,6 +49,7 @@ namespace Debug_Statistics
 	const StringClass& Get_Record_Texture_String();
 
 	void Record_Skin_Polys_And_Vertices(int pcount,int vcount);
+	void Record_Polys_And_Vertices(int pcount,int vcount);
 	void Record_Polys_And_Vertices(int pcount,int vcount,const ShaderClass& shader);
 	void Record_Sorting_Polys_And_Vertices(int pcount,int vcount);
 	int Get_Polygons();

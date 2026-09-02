@@ -22,7 +22,7 @@ ProgrammableMaterialPass::~ProgrammableMaterialPass()
 
 void ProgrammableMaterialPass::Set_Texture(unsigned stage, TextureBaseClass *texture)
 {
-	if (stage >= MAX_TEXTURE_STAGES || m_textures[stage] == texture)
+	if (stage >= MAX_PROGRAMMABLE_TEXTURE_STAGES || m_textures[stage] == texture)
 	{
 		return;
 	}
@@ -72,6 +72,11 @@ bool ProgrammableMaterialPass::Apply()
 	{
 		backend->Set_Texture_Resource(stage, m_textures[stage]);
 	}
+	for (unsigned stage = MAX_TEXTURE_STAGES;
+		stage < MAX_PROGRAMMABLE_TEXTURE_STAGES; ++stage)
+	{
+		backend->Set_Programmable_Texture_Resource(stage, m_textures[stage]);
+	}
 	backend->Set_Vertex_Shader_Constant(0, m_vertex_constants.data(),
 		MAX_VERTEX_SHADER_CONSTANTS);
 	backend->Set_Pixel_Shader_Constant(0, m_pixel_constants.data(),
@@ -88,6 +93,11 @@ void ProgrammableMaterialPass::Reset()
 		for (unsigned stage = 0; stage < MAX_TEXTURE_STAGES; ++stage)
 		{
 			backend->Set_Texture_Resource(stage, nullptr);
+		}
+		for (unsigned stage = MAX_TEXTURE_STAGES;
+			stage < MAX_PROGRAMMABLE_TEXTURE_STAGES; ++stage)
+		{
+			backend->Set_Programmable_Texture_Resource(stage, nullptr);
 		}
 		if (m_program != nullptr)
 		{

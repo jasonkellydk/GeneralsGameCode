@@ -44,7 +44,7 @@
 
 #pragma once
 
-#include <cstdint>
+#include <vector>
 
 //-----------------------------------------------------------------------------
 //           Includes
@@ -55,12 +55,12 @@
 #include "WW3D2/Texture.h"
 #include "WW3D2/VertexBuffer.h"
 #include "WW3D2/IndexBuffer.h"
-#include "WW3D2/Shader.h"
 #include "WW3D2/VertMaterial.h"
 #include "Lib/BaseType.h"
 #include "Common/GameType.h"
 #include "Common/AsciiString.h"
 #include "Common/GlobalData.h"
+#include "W3DDevice/GameClient/TreeMaterial.h"
 
 //-----------------------------------------------------------------------------
 //           Forward References
@@ -71,7 +71,6 @@ class TileData;
 class W3DTreeDrawModuleData;
 struct BreezeInfo;
 class GeometryInfo;
-class W3DProjectedShadow;
 
 //-----------------------------------------------------------------------------
 //           Type Defines
@@ -135,7 +134,6 @@ typedef struct {
 	Int					m_tileWidth;///< Width in tiles of texture;
 	Bool				m_halfTile; ///< Tiles are 64x64 pixels, half tile supports a 32x32 bit texture.  Have to adjust the uv values.
 	Vector3			m_offset;
-	Real				m_shadowSize; ///< Shadow radius.
 	Bool				m_doShadow; ///< Draw shadow.
 
 } TTreeType;
@@ -156,9 +154,6 @@ class W3DTreeBuffer : public Snapshot
 	class W3DTreeTextureClass : public TextureClass
 	{
 		W3DMPO_CODE(W3DTreeTextureClass)
-	protected:
-		virtual void Apply(unsigned int stage) override;
-
 	public:
 			/// Create texture.
 			W3DTreeTextureClass(unsigned width, unsigned height);
@@ -200,6 +195,12 @@ public:
 	void setBounds(const Region2D &bounds) {m_bounds = bounds;}
 	/// Draws the trees.  Uses camera for culling.
 	void drawTrees(CameraClass * camera, RefRenderObjListIterator *pDynamicLightsIterator);
+	/// Returns true when visible trees have requested real shadow volumes.
+	Bool hasShadowCasters() const;
+	/// Builds the current frame's geometry-driven tree shadow volumes.
+	void prepareShadowVolumes(const Vector3 &lightPosition);
+	/// Renders the prepared tree shadow volumes using the active stencil state.
+	void renderShadowVolumes();
 	/// Called when the view changes, and sort key needs to be recalculated.
 	/// Normally sortKey gets calculated when a tree becomes visible.
 	void doFullUpdate() {m_updateAllKeys = true;};
@@ -224,8 +225,7 @@ private:
 	enum {PARTITION_WIDTH_HEIGHT = 100};
 	VertexBufferClass	*m_vertexTree[MAX_BUFFERS];	///<Tree vertex buffer.
 	IndexBufferClass			*m_indexTree[MAX_BUFFERS];	///<indices defining a triangles for the tree drawing.
-	uintptr_t				m_dwTreePixelShader;	///<handle to D3D pixel shader
-	uintptr_t				m_dwTreeVertexShader;	///<handle to D3D vertex shader
+	TreeMaterialClass		m_treeMaterial;	///<Explicit programmable tree material.
 
 	Short		m_areaPartition[PARTITION_WIDTH_HEIGHT*PARTITION_WIDTH_HEIGHT];
 	Region2D m_bounds;
@@ -250,13 +250,14 @@ private:
 	TileData			*m_sourceTiles[MAX_TILES];	///< Tiles for m_textureClasses
 	Vector3 m_cameraLookAtVector;
 	Vector3 m_swayOffsets[NUM_SWAY_ENTRIES];
+	Vector3 m_currentSwayFactor[MAX_SWAY_TYPES];
 	Int			m_curSwayVersion;
 
 	Real		m_curSwayOffset[MAX_SWAY_TYPES];
 	Real		m_curSwayStep[MAX_SWAY_TYPES];
 	Real		m_curSwayFactor[MAX_SWAY_TYPES];
 
-	W3DProjectedShadow *m_shadow;
+	std::vector<Vector3> m_shadowVolumeVertices;
 
 protected:
 	// snapshot methods

@@ -66,6 +66,11 @@ void DX11BackendState::Release_Render_Targets()
 	{
 		context->OMSetRenderTargets(0, nullptr, nullptr);
 	}
+	if (scene_depth_texture != nullptr)
+	{
+		Release_Com(scene_depth_texture->shader_resource_view);
+		Release_Com(scene_depth_texture->resource);
+	}
 	Release_Com(depth_buffer_view);
 	Release_Com(depth_buffer);
 	Release_Com(back_buffer_view);
@@ -73,6 +78,8 @@ void DX11BackendState::Release_Render_Targets()
 	active_render_target_view = nullptr;
 	active_depth_stencil_view = nullptr;
 	render_to_texture = false;
+	active_render_target = nullptr;
+	active_depth_target = nullptr;
 }
 
 bool DX11BackendState::Create_Render_Targets()
@@ -101,7 +108,9 @@ bool DX11BackendState::Create_Render_Targets()
 	depth_description.Height = height;
 	depth_description.MipLevels = 1;
 	depth_description.ArraySize = 1;
-	depth_description.Format = DXGI_FORMAT_D24_UNORM_S8_UINT;
+	// Keep the depth storage typeless so the same scene depth can be exposed
+	// to programmable materials through an R24_UNORM shader-resource view.
+	depth_description.Format = DXGI_FORMAT_R24G8_TYPELESS;
 	depth_description.SampleDesc.Count = 1;
 	depth_description.Usage = D3D11_USAGE_DEFAULT;
 	depth_description.BindFlags = D3D11_BIND_DEPTH_STENCIL;
@@ -111,8 +120,55 @@ bool DX11BackendState::Create_Render_Targets()
 		Release_Render_Targets();
 		return false;
 	}
-	result = device->CreateDepthStencilView(depth_buffer, nullptr, &depth_buffer_view);
+	D3D11_DEPTH_STENCIL_VIEW_DESC depth_view_description = {};
+	depth_view_description.Format = DXGI_FORMAT_D24_UNORM_S8_UINT;
+	depth_view_description.ViewDimension = D3D11_DSV_DIMENSION_TEXTURE2D;
+	depth_view_description.Texture2D.MipSlice = 0;
+	result = device->CreateDepthStencilView(depth_buffer,
+		&depth_view_description, &depth_buffer_view);
 	if (FAILED(result) || depth_buffer_view == nullptr)
+	{
+		Release_Render_Targets();
+		return false;
+	}
+
+	if (scene_depth_texture == nullptr)
+	{
+		scene_depth_texture = new DX11Texture();
+	}
+	scene_depth_texture->width = width;
+	scene_depth_texture->height = height;
+	scene_depth_texture->depth = 1;
+	scene_depth_texture->levels = 1;
+	scene_depth_texture->format = WW3D_FORMAT_A8R8G8B8;
+	scene_depth_texture->depth_format = WW3D_ZFORMAT_UNKNOWN;
+	scene_depth_texture->kind = RenderBackendTextureKind::Texture2D;
+	scene_depth_texture->native_format = DXGI_FORMAT_R24G8_TYPELESS;
+	scene_depth_texture->render_target = false;
+	D3D11_TEXTURE2D_DESC scene_depth_description = {};
+	scene_depth_description.Width = width;
+	scene_depth_description.Height = height;
+	scene_depth_description.MipLevels = 1;
+	scene_depth_description.ArraySize = 1;
+	scene_depth_description.Format = DXGI_FORMAT_R24G8_TYPELESS;
+	scene_depth_description.SampleDesc.Count = 1;
+	scene_depth_description.Usage = D3D11_USAGE_DEFAULT;
+	scene_depth_description.BindFlags = D3D11_BIND_SHADER_RESOURCE;
+	result = device->CreateTexture2D(&scene_depth_description, nullptr,
+		&scene_depth_texture->resource);
+	if (FAILED(result) || scene_depth_texture->resource == nullptr)
+	{
+		Release_Render_Targets();
+		return false;
+	}
+	D3D11_SHADER_RESOURCE_VIEW_DESC scene_depth_view_description = {};
+	scene_depth_view_description.Format = DXGI_FORMAT_R24_UNORM_X8_TYPELESS;
+	scene_depth_view_description.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2D;
+	scene_depth_view_description.Texture2D.MostDetailedMip = 0;
+	scene_depth_view_description.Texture2D.MipLevels = 1;
+	result = device->CreateShaderResourceView(scene_depth_texture->resource,
+		&scene_depth_view_description, &scene_depth_texture->shader_resource_view);
+	if (FAILED(result) || scene_depth_texture->shader_resource_view == nullptr)
 	{
 		Release_Render_Targets();
 		return false;
@@ -121,6 +177,8 @@ bool DX11BackendState::Create_Render_Targets()
 	active_render_target_view = back_buffer_view;
 	active_depth_stencil_view = depth_buffer_view;
 	render_to_texture = false;
+	active_render_target = nullptr;
+	active_depth_target = nullptr;
 	viewport = {0, 0, width, height, 0.0f, 1.0f};
 	return true;
 }
@@ -303,9 +361,16 @@ bool DX11DeviceBackend<Host>::Is_Initted() const
 }
 
 template <typename Host>
-	bool DX11DeviceBackend<Host>::Is_Render_To_Texture() const
+bool DX11DeviceBackend<Host>::Is_Render_To_Texture() const
 {
 	return this->State().render_to_texture;
+}
+
+template <typename Host>
+void DX11DeviceBackend<Host>::Get_Render_Target(RenderBackendRenderTargetState & target) const
+{
+	target.color = this->State().active_render_target;
+	target.depth = this->State().active_depth_target;
 }
 
 template <typename Host>

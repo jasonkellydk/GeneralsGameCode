@@ -803,7 +803,7 @@ Try improving the fit to vertical surfaces like cliffs.
 	Int	trackStartIndex;
 	Real distanceFade;
 
-	if (ShaderClass::Is_Backface_Culling_Inverted())
+	if (WW3D::Is_Reflection_Render_Pass())
 		return;	//don't render track marks in reflections.
 
 	// adjust shading for time of day.

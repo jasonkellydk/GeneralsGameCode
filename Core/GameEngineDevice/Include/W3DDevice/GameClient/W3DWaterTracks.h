@@ -24,12 +24,18 @@
 
 #pragma once
 
+#include "WW3D2/Backend/RenderBackend.h"
+#include "W3DDevice/GameClient/WaterMaterial.h"
+#include "WWMath/aabox.h"
+#include "WWMath/sphere.h"
+#include "WWMath/vector2.h"
+
 enum waveType CPP_11(: Int);	//forward reference
 
 /// Custom render object that draws animated tracks/waves on the water.
 /**
 	This is an object which draws a small breaking wave or splash animation.  These objects are
-	to be managed/accessed only by the WaterTracksRenderObjClassSystem
+	to be managed/accessed only by the WaterTracksRenderSystem
 */
 class WaterTracksObj
 {
@@ -40,21 +46,15 @@ public:
 	WaterTracksObj();
 	~WaterTracksObj();
 
-	virtual void					Render() {};	///<draw this object
-	virtual void					Get_Obj_Space_Bounding_Sphere(SphereClass & sphere) const;	///<bounding sphere of this object
-    virtual void					Get_Obj_Space_Bounding_Box(AABoxClass & aabox) const;		///<bounding box of this object
-
 	Int freeWaterTracksResources();	///<free W3D assets used for this track
 	void init( Real width, Real length, const Vector2 &start, const Vector2 &end, const Char *texturename, Int waveTimeOffset);	///<allocate W3D resources and set size
 	void init( Real width, const Vector2 &start, const Vector2 &end, const Char *texturename);	///<allocate W3D resources and set size
 	Int	update(Int msElapsed);	///< update animation state
-	Int render(VertexBufferClass	*vertexBuffer, Int batchStart);	///<draw this object
+	Int render(RenderBackendVertexBuffer *vertexBuffer,
+		RenderBackendIndexBuffer *indexBuffer, Int batchStart);	///<draw this object
 
 protected:
-	TextureClass *m_stageZeroTexture;	///<primary texture
-	SphereClass	m_boundingSphere;		///<bounding sphere of WaterTracks
-	AABoxClass	m_boundingBox;			///<bounding box of WaterTracks
-
+	TextureBaseClass *m_stageZeroTexture;	///<primary texture
 	waveType	m_type;					///<used for render state sorting (set this to texture pointer for now).
 	Int			m_x;					///<vertex count
 	Int			m_y;					///<vertex count
@@ -124,10 +124,9 @@ public:
 	WaterTracksObj *findTrack(Vector2 &start, Vector2 &end, waveType type);
 
 protected:
-	VertexBufferClass		*m_vertexBuffer;	///<vertex buffer used to draw all tracks
-	IndexBufferClass			*m_indexBuffer;	///<indices defining triangles in maximum length track
-	VertexMaterialClass	  	  *m_vertexMaterialClass;	///< vertex lighting material
-	ShaderClass m_shaderClass; ///<shader or rendering state for heightmap
+	RenderBackendVertexBuffer *m_vertexBuffer;	///<backend vertex buffer used to draw all tracks
+	RenderBackendIndexBuffer *m_indexBuffer;	///<backend indices defining triangles in maximum length track
+	WaterMaterialClass m_material;	///<explicit programmable track material
 
 	WaterTracksObj *m_usedModules;	///<active objects being rendered in the scene
 	WaterTracksObj *m_freeModules;	//<unused modules that are free to use again

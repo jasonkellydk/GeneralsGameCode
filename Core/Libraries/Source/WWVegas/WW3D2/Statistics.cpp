@@ -289,6 +289,13 @@ void Debug_Statistics::Record_Skin_Polys_And_Vertices(int pcount,int vcount)
 	draw_calls++;
 }
 
+void Debug_Statistics::Record_Polys_And_Vertices(int pcount,int vcount)
+{
+	polygons+=pcount;
+	vertices+=vcount;
+	draw_calls++;
+}
+
 void Debug_Statistics::Record_Polys_And_Vertices(int pcount,int vcount,const ShaderClass& shader)
 {
 	if (shader.Get_NPatch_Enable()==ShaderClass::NPATCH_ENABLE && WW3D::Get_Render_Backend()->Supports_NPatches()) {

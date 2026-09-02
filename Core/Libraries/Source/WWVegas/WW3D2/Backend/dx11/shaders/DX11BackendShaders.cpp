@@ -563,6 +563,35 @@ void DX11ShaderBackend<Host>::Set_Texture_Resource(unsigned stage, const Texture
 }
 
 template <typename Host>
+void DX11ShaderBackend<Host>::Set_Programmable_Texture_Resource(
+	unsigned stage, const TextureBaseClass *texture)
+{
+	if (stage != MAX_TEXTURE_STAGES)
+	{
+		return;
+	}
+
+	DX11Texture *resource = nullptr;
+	if (texture != nullptr)
+	{
+		TextureBaseClass *mutable_texture = const_cast<TextureBaseClass *>(texture);
+		if (mutable_texture->Ensure_Render_Backend_Texture())
+		{
+			resource = As_DX11_Texture(
+				mutable_texture->Peek_Render_Backend_Texture());
+		}
+	}
+	this->State().programmable_texture = resource;
+	this->State().Mark_All_State_Dirty();
+	if (resource == nullptr && this->State().context != nullptr)
+	{
+		ID3D11ShaderResourceView *null_view = nullptr;
+		this->State().context->PSSetShaderResources(MAX_TEXTURE_STAGES, 1,
+			&null_view);
+	}
+}
+
+template <typename Host>
 void DX11ShaderBackend<Host>::Set_Texture_Handle(unsigned stage, uintptr_t texture)
 {
 	if (stage < MAX_TEXTURE_STAGES)

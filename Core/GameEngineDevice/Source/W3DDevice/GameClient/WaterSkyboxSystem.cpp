@@ -1,0 +1,88 @@
+/*
+** Command & Conquer Generals Zero Hour(tm)
+*/
+
+#include "W3DDevice/GameClient/WaterSkyboxSystem.h"
+
+#include "W3DDevice/GameClient/W3DAssetManager.h"
+#include "WW3D2/MatInfo.h"
+#include "WW3D2/Mesh.h"
+#include "WW3D2/RInfo.h"
+#include "WW3D2/RendObj.h"
+#include "WW3D2/Texture.h"
+
+struct WaterSkyboxSystem::State
+{
+	RenderObjClass *skybox = nullptr;
+};
+
+WaterSkyboxSystem::WaterSkyboxSystem() :
+	m_state(new State)
+{
+}
+
+WaterSkyboxSystem::~WaterSkyboxSystem()
+{
+	if (m_state != nullptr)
+	{
+		REF_PTR_RELEASE(m_state->skybox);
+		delete m_state;
+		m_state = nullptr;
+	}
+}
+
+bool WaterSkyboxSystem::Initialize(float scale)
+{
+	if (m_state == nullptr || m_state->skybox != nullptr)
+		return m_state != nullptr;
+
+	W3DAssetManager *asset_manager =
+		static_cast<W3DAssetManager *>(W3DAssetManager::Get_Instance());
+	m_state->skybox = asset_manager->Create_Render_Obj("new_skybox", scale, 0);
+	if (m_state->skybox == nullptr ||
+		m_state->skybox->Class_ID() != RenderObjClass::CLASSID_MESH)
+	{
+		return m_state->skybox != nullptr;
+	}
+
+	MeshClass *mesh = static_cast<MeshClass *>(m_state->skybox);
+	MaterialInfoClass *material = mesh->Get_Material_Info();
+	if (material == nullptr)
+		return true;
+
+	for (Int i = 0; i < material->Texture_Count(); ++i)
+	{
+		if (material->Peek_Texture(i) != nullptr)
+		{
+			material->Peek_Texture(i)->Get_Filter().Set_U_Addr_Mode(
+				TextureFilterClass::TEXTURE_ADDRESS_CLAMP);
+			material->Peek_Texture(i)->Get_Filter().Set_V_Addr_Mode(
+				TextureFilterClass::TEXTURE_ADDRESS_CLAMP);
+		}
+	}
+	REF_PTR_RELEASE(material);
+	return true;
+}
+
+void WaterSkyboxSystem::Render(RenderInfoClass &rinfo, float x, float y,
+	float z)
+{
+	if (m_state == nullptr || m_state->skybox == nullptr)
+		return;
+
+	Vector3 position(x, y, z);
+	m_state->skybox->Set_Position(position);
+	m_state->skybox->Render(rinfo);
+}
+
+void WaterSkyboxSystem::Replace_Texture(const char *old_name,
+	const char *new_name)
+{
+	if (m_state == nullptr || m_state->skybox == nullptr)
+		return;
+
+	W3DAssetManager *asset_manager =
+		static_cast<W3DAssetManager *>(W3DAssetManager::Get_Instance());
+	asset_manager->replacePrototypeTexture(m_state->skybox, old_name,
+		new_name);
+}

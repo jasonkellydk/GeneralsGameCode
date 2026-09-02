@@ -40,6 +40,8 @@ namespace dx11_backend
 		void Set_Depth_Function(RenderBackendCompareFunction function);
 		void Set_Cull_Mode(RenderBackendCullMode mode);
 		RenderBackendCullMode Get_Cull_Mode() const;
+		void Push_Cull_Mode_Override(RenderBackendCullMode mode);
+		void Pop_Cull_Mode_Override();
 		void Set_Point_Sprite_Enabled(bool enable);
 		void Set_Point_Scale_Enabled(bool enable);
 		void Set_Point_Size(float size);

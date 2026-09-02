@@ -162,12 +162,35 @@ public:
 	static WW3DErrorType		Render(const LayerListClass & layerlist);
 	static WW3DErrorType		Render(const LayerClass & layer);
 	static WW3DErrorType		Render(SceneClass * scene,CameraClass * cam,bool clear = false,bool clearz = false,const Vector3 & color = Vector3(0,0,0));
+	// Submit one scene to the already-active backend frame. This is used by
+	// off-screen passes and deliberately does not begin/end a frame, present,
+	// or change render attachments.
+	static WW3DErrorType		Render_Scene_Pass(SceneClass * scene,CameraClass * cam,
+		const RenderBackendViewport *viewport_override = nullptr);
 	static WW3DErrorType		Render(RenderObjClass & obj,RenderInfoClass & rinfo);
 	static void					Flush(RenderInfoClass & rinfo);	// NOTE: "normal" usage should *NEVER* require the user to call this function
 
 	static WW3DErrorType		End_Render(bool flip_frame = true);
 
 	static bool					Is_Rendering() { return( IsRendering ); }
+	static unsigned &			Reflection_Pass_Depth()
+	{
+		static unsigned depth = 0;
+		return depth;
+	}
+	static bool					Is_Reflection_Render_Pass() { return Reflection_Pass_Depth() != 0; }
+
+	// Scoped render context used by off-screen reflection submission. This is
+	// intentionally separate from ShaderClass state so scene policy and
+	// raster winding cannot leak across frames or materials.
+	class ReflectionRenderPassScope final
+	{
+	public:
+		ReflectionRenderPassScope() { ++WW3D::Reflection_Pass_Depth(); }
+		~ReflectionRenderPassScope() { --WW3D::Reflection_Pass_Depth(); }
+		ReflectionRenderPassScope(const ReflectionRenderPassScope &) = delete;
+		ReflectionRenderPassScope &operator=(const ReflectionRenderPassScope &) = delete;
+	};
 
 	static void Flip_To_Primary();
 

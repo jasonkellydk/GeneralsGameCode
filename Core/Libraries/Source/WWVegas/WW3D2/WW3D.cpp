@@ -1168,15 +1168,47 @@ WW3DErrorType WW3D::Render(SceneClass * scene,CameraClass * cam,bool clear,bool 
 	WWASSERT(scene);
 	WWASSERT(cam);
 
+	if (clear || clearz) {
+		Get_Render_Backend()->Clear(clear, clearz, color);
+	}
+
+	return Render_Scene_Pass(scene, cam);
+}
+
+
+/***********************************************************************************************
+ * WW3D::Render_Scene_Pass -- Submit a scene inside an existing backend frame                *
+ *                                                                                             *
+ * This is the explicit scene-submission half of an off-screen render pass. The caller owns  *
+ * the render target, viewport, camera scope, and pass state. No frame lifecycle or swap-chain *
+ * operation is performed here.                                                               *
+ *=============================================================================================*/
+WW3DErrorType WW3D::Render_Scene_Pass(SceneClass * scene,CameraClass * cam,
+	const RenderBackendViewport *viewport_override)
+{
+	if (!IsInitted) {
+		return(WW3D_ERROR_OK);
+	}
+
+	WWPROFILE("WW3D::Render_Scene_Pass");
+	WWMEMLOG(MEM_GAMEDATA);
+	WWASSERT(IsInitted);
+	WWASSERT(IsRendering);
+	WWASSERT(scene);
+	WWASSERT(cam);
+	if (scene == nullptr || cam == nullptr || Get_Render_Backend() == nullptr)
+	{
+		return WW3D_ERROR_GENERIC;
+	}
+
 	cam->On_Frame_Update();
 	RenderInfoClass rinfo(*cam);
 
 	// Apply the camera and viewport (including depth range)
 	cam->Apply();
-
-	// Clear the viewport
-	if (clear || clearz) {
-		Get_Render_Backend()->Clear(clear, clearz, color);
+	if (viewport_override != nullptr)
+	{
+		Get_Render_Backend()->Set_Viewport(*viewport_override);
 	}
 
 	// set the rendering mode

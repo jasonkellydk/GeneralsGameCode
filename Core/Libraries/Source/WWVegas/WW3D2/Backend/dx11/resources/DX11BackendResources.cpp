@@ -21,6 +21,44 @@ TextureClass * DX11ResourceBackend<Host>::Create_Render_Target(int width, int he
 }
 
 template <typename Host>
+TextureClass * DX11ResourceBackend<Host>::Create_Scene_Depth_Texture()
+{
+	DX11Texture *scene_depth = this->State().scene_depth_texture;
+	if (scene_depth == nullptr || scene_depth->resource == nullptr ||
+		scene_depth->shader_resource_view == nullptr)
+	{
+		return nullptr;
+	}
+
+	return new TextureClass(reinterpret_cast<RenderBackendTextureHandle>(
+		scene_depth));
+}
+
+template <typename Host>
+bool DX11ResourceBackend<Host>::Capture_Scene_Depth()
+{
+	DX11BackendState &impl = this->State();
+	DX11Texture *scene_depth = impl.scene_depth_texture;
+	if (impl.context == nullptr || impl.depth_buffer == nullptr ||
+		scene_depth == nullptr || scene_depth->resource == nullptr)
+	{
+		return false;
+	}
+
+	// Copying from the active DSV is valid on DX11, but detaching the DSV for
+	// the copy keeps this pass valid with the debug layer and restores the
+	// exact active attachments immediately afterward.
+	ID3D11RenderTargetView *active_color = impl.active_render_target_view;
+	ID3D11DepthStencilView *active_depth = impl.active_depth_stencil_view;
+	impl.context->OMSetRenderTargets(1, &active_color, nullptr);
+	impl.context->CopyResource(scene_depth->resource, impl.depth_buffer);
+	impl.context->OMSetRenderTargets(1, &active_color, active_depth);
+	impl.native_state_valid = false;
+	impl.Mark_All_State_Dirty();
+	return true;
+}
+
+template <typename Host>
 void DX11ResourceBackend<Host>::Create_Render_Target(int width, int height, WW3DFormat format, WW3DZFormat depth_format, TextureClass ** target, ZTextureClass ** depth_target)
 {
 	if (target != nullptr)
@@ -56,7 +94,7 @@ void DX11ResourceBackend<Host>::Create_Render_Target(int width, int height, WW3D
 }
 
 template <typename Host>
-void DX11ResourceBackend<Host>::Set_Render_Target(TextureClass * render_target, ZTextureClass * depth_target)
+void DX11ResourceBackend<Host>::Set_Render_Target(TextureBaseClass * render_target, ZTextureClass * depth_target)
 {
 	DX11BackendState &impl = this->State();
 	if (impl.context == nullptr)
@@ -106,6 +144,8 @@ void DX11ResourceBackend<Host>::Set_Render_Target(TextureClass * render_target, 
 		depth_texture->depth_stencil_view :
 		color_texture == nullptr ? impl.depth_buffer_view :
 		color_texture->render_target_depth_stencil_view;
+	impl.active_render_target = render_target;
+	impl.active_depth_target = depth_target;
 	impl.context->OMSetRenderTargets(1, &impl.active_render_target_view,
 		impl.active_depth_stencil_view);
 	if (color_texture != nullptr)
@@ -1388,6 +1428,19 @@ void DX11ResourceBackend<Host>::Unregister_Texture(TextureBaseClass * texture)
 	{
 		return;
 	}
+	if (this->State().active_render_target == texture)
+	{
+		this->State().active_render_target = nullptr;
+		this->State().active_render_target_view = this->State().back_buffer_view;
+		this->State().render_to_texture = false;
+	}
+	if (this->State().active_depth_target == texture)
+	{
+		this->State().active_depth_target = nullptr;
+		this->State().active_depth_stencil_view = this->State().depth_buffer_view;
+	}
+	this->State().Mark_All_State_Dirty();
+	this->State().native_state_valid = false;
 	this->State().registered_textures.erase(
 		std::remove_if(this->State().registered_textures.begin(),
 			this->State().registered_textures.end(),

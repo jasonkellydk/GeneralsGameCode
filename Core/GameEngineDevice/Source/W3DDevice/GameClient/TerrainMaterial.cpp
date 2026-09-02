@@ -5,7 +5,6 @@
 #include <cstddef>
 
 #include "Common/GlobalData.h"
-#include "WW3D2/Shader.h"
 #include "WW3D2/Texture.h"
 #include "WW3D2/VertexFormat.h"
 #include "WW3D2/WW3D.h"
@@ -50,7 +49,7 @@ namespace
 
 	RenderBackendCullMode Get_Terrain_Cull_Mode()
 	{
-		return ShaderClass::Is_Backface_Culling_Inverted()
+		return WW3D::Is_Reflection_Render_Pass()
 			? RenderBackendCullMode::CounterClockwise
 			: RenderBackendCullMode::Clockwise;
 	}

@@ -19,6 +19,7 @@ struct WaterSurfaceVertexOutput
     float3 projective_position : TEXCOORD3;
     float3 world_position : TEXCOORD4;
     float3 normal : TEXCOORD5;
+    float4 depth_projection : TEXCOORD6;
 };
 
 cbuffer WaterSurfaceVertexConstants : register(b0)
@@ -27,10 +28,12 @@ cbuffer WaterSurfaceVertexConstants : register(b0)
     row_major float4x4 View;
     row_major float4x4 Projection;
     float4 Viewport;
-    float4 WaterShroudProjection;
-    float4 WaterAnimation;
-    float4 WaterCameraPosition;
+    float4 LegacyVertex[96];
 };
+
+#define WaterShroudProjection LegacyVertex[0]
+#define WaterAnimation LegacyVertex[1]
+#define WaterCameraPosition LegacyVertex[2]
 
 [shader("vertex")] WaterSurfaceVertexOutput WaterSurfaceVertexMain(
     WaterSurfaceVertexInput input)
@@ -52,6 +55,9 @@ cbuffer WaterSurfaceVertexConstants : register(b0)
         clip_position.w);
     output.world_position = world_position.xyz;
     output.normal = normalize(mul(World, float4(input.normal, 0.0)).xyz);
+    output.depth_projection = float4(
+        Projection[2][2], Projection[2][3],
+        Projection[3][2], Projection[3][3]);
     return output;
 }
 
@@ -63,6 +69,7 @@ Texture2D WaterReflectionTexture : register(t4);
 Texture2D WaterRefractionTexture : register(t5);
 Texture2D WaterEnvironmentTexture : register(t6);
 Texture2D WaterShroudTexture : register(t7);
+Texture2D WaterSceneDepthTexture : register(t8);
 SamplerState WaterSurfaceSampler : register(s0);
 SamplerState WaterNormalSampler : register(s1);
 SamplerState WaterFoamSampler : register(s2);
@@ -71,6 +78,7 @@ SamplerState WaterReflectionSampler : register(s4);
 SamplerState WaterRefractionSampler : register(s5);
 SamplerState WaterEnvironmentSampler : register(s6);
 SamplerState WaterShroudSampler : register(s7);
+SamplerState WaterSceneDepthSampler : register(s8);
 
 cbuffer WaterSurfacePixelConstants : register(b1)
 {
@@ -82,7 +90,7 @@ cbuffer WaterSurfacePixelConstants : register(b1)
     float4 TextureFactor;
     float4 WaterTint;
     float4 WaterEffects;
-    float4 WaterLegacyConstants[6];
+    float4 WaterMaterialConstants[6];
     float4 WaterFogState;
 };
 
@@ -96,6 +104,7 @@ struct WaterSurfacePixelInput
     float3 projective_position : TEXCOORD3;
     float3 world_position : TEXCOORD4;
     float3 normal : TEXCOORD5;
+    float4 depth_projection : TEXCOORD6;
 };
 
 float3 Decode_River_Normal(float4 sample_value)
@@ -116,11 +125,19 @@ float2 Environment_UV(float3 direction)
         0.5 - asin(clamp(direction.z, -1.0, 1.0)) / pi);
 }
 
+float Linearize_Water_Depth(float depth, float4 projection)
+{
+    float numerator = projection.y - depth * projection.w;
+    float denominator = depth * projection.z - projection.x;
+    return abs(numerator / (abs(denominator) > 0.00001 ? denominator :
+        0.00001));
+}
+
 float Water_Fog_Factor(float3 world_position)
 {
     if (WaterFogState.z < 0.5)
         return 0.0;
-    float distance_to_camera = length(WaterLegacyConstants[1].xyz -
+    float distance_to_camera = length(WaterMaterialConstants[1].xyz -
         world_position);
     return saturate((distance_to_camera - WaterFogState.x) /
         max(WaterFogState.y - WaterFogState.x, 0.0001));
@@ -129,12 +146,17 @@ float Water_Fog_Factor(float3 world_position)
 [shader("pixel")] float4 WaterSurfacePixelMain(
     WaterSurfacePixelInput input) : SV_TARGET
 {
-    float phase = WaterLegacyConstants[0].z;
+    float phase = WaterMaterialConstants[0].z;
 
-    // RiverWater.fx uses two flow samples and two divergent normal octaves.
-    float2 river_uv0 = input.flow_uv * float2(1.0, 0.5) +
+    // RiverWater.fx derives both base-texture coordinates from its
+    // NormalTexCoord stream. The old path used the first stream here, which
+    // turns the width coordinate into a corrupted wave direction. Standing
+    // and trapezoid surfaces retain their own flow stream.
+    float2 base_uv = WaterMaterialConstants[3].x > 0.5 ?
+        input.normal_uv : input.flow_uv;
+    float2 river_uv0 = base_uv * float2(1.0, 0.5) +
         float2(0.0, -phase * 0.004);
-    float2 river_uv1 = input.flow_uv.yx + float2(0.0, -phase * 0.016);
+    float2 river_uv1 = base_uv.yx + float2(0.0, -phase * 0.016);
     float4 river0 = WaterSurfaceTexture.Sample(WaterSurfaceSampler,
         river_uv0);
     float4 river1 = WaterSurfaceTexture.Sample(WaterSurfaceSampler,
@@ -151,7 +173,7 @@ float Water_Fog_Factor(float3 world_position)
         WaterNormalSampler, normal_uv1));
     float3 surface_normal = normalize(lerp(input.normal,
         normalize(float3((normal0.xy + normal1.xy) * 0.5, 1.0)), 0.8));
-    float3 view_direction = normalize(WaterLegacyConstants[1].xyz -
+    float3 view_direction = normalize(WaterMaterialConstants[1].xyz -
         input.world_position);
     float fresnel = pow(1.0 - saturate(abs(dot(surface_normal,
         view_direction))), 5.0);
@@ -191,8 +213,8 @@ float Water_Fog_Factor(float3 world_position)
 
     if (WaterEffects.w > 0.5)
     {
-        float depth = saturate((WaterLegacyConstants[0].w -
-            input.world_position.z) / max(abs(WaterLegacyConstants[0].w), 4.0));
+        float depth = saturate((WaterMaterialConstants[0].w -
+            input.world_position.z) / max(abs(WaterMaterialConstants[0].w), 4.0));
         float depth_fade = WaterEnvironmentTexture.Sample(
             WaterEnvironmentSampler, float2(depth, 0.5)).r;
         float caustic0 = WaterFoamTexture.Sample(WaterFoamSampler,
@@ -213,7 +235,35 @@ float Water_Fog_Factor(float3 world_position)
     float edge_sample = WaterEdgeTexture.Sample(WaterEdgeSampler,
         input.normal_uv).r;
     float edge = max(edge_sample, 0.001);
-    float alpha = saturate(input.color0.a * max(river0.a, 0.75) * edge);
+    float authored_alpha = saturate(input.color0.a * max(river0.a, 0.75) * edge);
+    float water_alpha = authored_alpha;
+    if (WaterMaterialConstants[3].w > 0.5)
+    {
+        float scene_depth = WaterSceneDepthTexture.SampleLevel(
+            WaterSceneDepthSampler, saturate(projective_uv), 0.0).r;
+        if (scene_depth >= 0.9999)
+        {
+            // Clear depth is the deep-water fallback: there is no opaque
+            // surface behind this pixel from which a shoreline thickness can
+            // be measured.
+            water_alpha = saturate(WaterMaterialConstants[3].z);
+        }
+        else
+        {
+            float water_view_depth = Linearize_Water_Depth(input.position.z,
+                input.depth_projection);
+            float scene_view_depth = Linearize_Water_Depth(scene_depth,
+                input.depth_projection);
+            float thickness = max(scene_view_depth - water_view_depth, 0.0);
+            float depth_fade = saturate(thickness /
+                max(WaterMaterialConstants[3].y, 0.001));
+            // TransparentWaterMinOpacity is the deep-water opacity. The
+            // shoreline itself must contribute no water color, so it starts
+            // at zero and reaches that value only with physical thickness.
+            water_alpha = depth_fade *
+                saturate(WaterMaterialConstants[3].z);
+        }
+    }
     color = lerp(color, FogColor.rgb, Water_Fog_Factor(input.world_position));
-    return float4(saturate(color), min(alpha, 0.95));
+    return float4(saturate(color), water_alpha);
 }

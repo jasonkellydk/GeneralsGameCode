@@ -105,6 +105,7 @@ namespace dx11_backend
 		void Clear(bool clear_color, bool clear_z_stencil, const Vector3 &color, float dest_alpha = 0.0f, float z = 1.0f, unsigned int stencil = 0);
 		void Set_Viewport(const RenderBackendViewport &viewport);
 		bool Get_Viewport(RenderBackendViewport &viewport) const;
+		void Get_Render_Target(RenderBackendRenderTargetState &target) const;
 		void Show_Cursor(bool show);
 		bool Set_Cursor_Properties(int hotspot_x, int hotspot_y, SurfaceClass *surface);
 		void Set_Cursor_Position(int x, int y);

@@ -50,6 +50,10 @@ class Vector4;
 // graphics API.  Backends may support fewer active stages, but the state
 // objects and callers use these stable upper bounds.
 constexpr unsigned MAX_TEXTURE_STAGES = 8;
+// Explicit modern materials may need one resource in addition to the eight
+// legacy-compatible stages. Keep the legacy stage count and constant-buffer
+// contract stable while allowing programmable passes to opt into this slot.
+constexpr unsigned MAX_PROGRAMMABLE_TEXTURE_STAGES = MAX_TEXTURE_STAGES + 1;
 constexpr unsigned MAX_VERTEX_STREAMS = 2;
 constexpr unsigned MAX_VERTEX_SHADER_CONSTANTS = 96;
 constexpr unsigned MAX_PIXEL_SHADER_CONSTANTS = 8;
@@ -362,6 +366,15 @@ struct RenderBackendViewport
 	unsigned int height;
 	float min_z;
 	float max_z;
+};
+
+// A render pass may temporarily replace the current color/depth attachment.
+// The state contains engine-owned texture objects only; it deliberately does
+// not expose a native graphics resource or view.
+struct RenderBackendRenderTargetState
+{
+	TextureBaseClass *color = nullptr;
+	ZTextureClass *depth = nullptr;
 };
 
 struct RenderBackendAdapterInfo

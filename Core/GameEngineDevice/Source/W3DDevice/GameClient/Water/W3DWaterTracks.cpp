@@ -46,10 +46,9 @@
 //			  and alpha.
 //-----------------------------------------------------------------------------
 
-#include "W3DDevice/GameClient/HeightMap.h"
 #include "W3DDevice/GameClient/W3DWaterTracks.h"
-#include "W3DDevice/GameClient/W3DShaderManager.h"
-#include "W3DDevice/GameClient/W3DShroud.h"
+#include "W3DDevice/GameClient/WaterResources.h"
+#include "Common/MapObject.h"
 #include "GameClient/InGameUI.h"
 #include "GameClient/Water.h"
 #include "GameLogic/TerrainLogic.h"
@@ -63,7 +62,6 @@
 #include "WW3D2/ColTest.h"
 #include "WW3D2/RInfo.h"
 #include "WW3D2/Camera.h"
-#include "WW3D2/AssetMgr.h"
 #include "WW3D2/Backend/RenderBackend.h"
 
 //number of vertex pages allocated - allows double buffering of vertex updates.
@@ -140,26 +138,6 @@ WaterTracksObj::WaterTracksObj()
 }
 
 //=============================================================================
-// WaterTracksObj::Get_Obj_Space_Bounding_Sphere
-//=============================================================================
-/** WW3D method that returns object bounding sphere used in frustum culling*/
-//=============================================================================
-void WaterTracksObj::Get_Obj_Space_Bounding_Sphere(SphereClass & sphere) const
-{	/// @todo: Add code to cull track marks to screen by constantly updating bounding volumes
-	sphere=m_boundingSphere;
-}
-
-//=============================================================================
-// WaterTracksObj::Get_Obj_Space_Bounding_Box
-//=============================================================================
-/** WW3D method that returns object bounding box used in collision detection*/
-//=============================================================================
-void WaterTracksObj::Get_Obj_Space_Bounding_Box(AABoxClass & box) const
-{
-	box=m_boundingBox;
-}
-
-//=============================================================================
 // WaterTracksObj::freeWaterTracksResources
 //=============================================================================
 /** Free any W3D resources associated with this object */
@@ -187,9 +165,6 @@ void WaterTracksObj::init( Real width, Real length, const Vector2 &start, const 
 	m_initEndPos = end;
 	m_initTimeOffset = waveTimeOffset;
 
-	m_boundingSphere.Init(Vector3(0,0,0),400);
-	m_boundingBox.Center.Set(0.0f, 0.0f, 0.0f);
-	m_boundingBox.Extent.Set(400.0f, 400.0f, 1.0f);
 	m_x=WATER_STRIP_X;
 	m_y=WATER_STRIP_Y;
 	m_elapsedMs=m_initTimeOffset;
@@ -237,7 +212,7 @@ void WaterTracksObj::init( Real width, Real length, const Vector2 &start, const 
 		m_fadeMs = 1000;		//time for wave to fade out after it stops on beach
 	}
 
-	m_stageZeroTexture=WW3DAssetManager::Get_Instance()->Get_Texture(texturename);
+	m_stageZeroTexture=Load_Water_Texture(texturename);
 }
 
 //=============================================================================
@@ -253,9 +228,6 @@ void WaterTracksObj::init( Real width, Real length, const Vector2 &start, const 
 void WaterTracksObj::init( Real width, const Vector2 &start, const Vector2 &end, const Char *texturename)
 {
 	freeWaterTracksResources();	//free old resources used by this track
-	m_boundingSphere.Init(Vector3(0,0,0),400);
-	m_boundingBox.Center.Set(0.0f, 0.0f, 0.0f);
-	m_boundingBox.Extent.Set(400.0f, 400.0f, 1.0f);
 	m_perpDir=end-start;
 	m_startPos=start + m_perpDir*0.5f;	//move start point to middle
 	Real length=m_perpDir.Length();
@@ -272,7 +244,7 @@ void WaterTracksObj::init( Real width, const Vector2 &start, const Vector2 &end,
 	m_totalMs=m_waveDir.Length()/m_initialVelocity;
 	m_fadeMs = 3000;		//time for wave to fade out after it stops on beach
 
-	m_stageZeroTexture=WW3DAssetManager::Get_Instance()->Get_Texture(texturename);
+	m_stageZeroTexture=Load_Water_Texture(texturename);
 }
 
 //=============================================================================
@@ -296,12 +268,13 @@ Int WaterTracksObj::update(Int msElapsed)
  */
 //=============================================================================
 
-Int WaterTracksObj::render(VertexBufferClass	*vertexBuffer, Int batchStart)
+Int WaterTracksObj::render(RenderBackendVertexBuffer *vertexBuffer,
+	RenderBackendIndexBuffer *indexBuffer, Int batchStart)
 {
 	// TheSuperHackers @tweak The wave movement time step is now decoupled from the render update.
 	m_elapsedMs += TheFramePacer->getLogicTimeStepMilliseconds();
 
-	VertexFormatXYZDUV1 *vb;
+	WaterSurfaceVertex *vb;
 	Vector2	waveTailOrigin,waveFrontOrigin;
 	Real	ooWaveDirLen=1.0f/m_waveDir.Length();	//one over length
 	Real	waterHeight;
@@ -309,19 +282,38 @@ Int WaterTracksObj::render(VertexBufferClass	*vertexBuffer, Int batchStart)
 	Real	widthFrac;
 	Real	heightFrac;
 
+	IRenderBackend *backend = WW3D::Get_Render_Backend();
+	if (backend == nullptr || vertexBuffer == nullptr || indexBuffer == nullptr)
+		return batchStart;
+
+	const unsigned vertex_size = sizeof(WaterSurfaceVertex);
 	if (batchStart < (WATER_VB_PAGES*WATER_STRIP_X*WATER_STRIP_Y-m_x*m_y))
 	{	//we have room in current VB, append new verts
-		if(!vertexBuffer->Lock_Backend_Buffer(batchStart * vertexBuffer->Get_Vertex_Size(),
-			m_x * m_y * vertexBuffer->Get_Vertex_Size(), (void **)&vb,
-			RenderBackendBufferLockMode::NoOverwrite))
+		void *vertex_data = nullptr;
+		if(!backend->Lock_Vertex_Buffer(vertexBuffer,
+			static_cast<unsigned>(batchStart) * vertex_size,
+			static_cast<unsigned>(m_x * m_y) * vertex_size,
+			&vertex_data, RenderBackendBufferLockMode::NoOverwrite))
 			return batchStart;
+		vb = static_cast<WaterSurfaceVertex *>(vertex_data);
 	}
 	else
 	{	//ran out of room in last VB, request a substitute VB.
-		if(!vertexBuffer->Lock_Backend_Buffer(0, m_x * m_y * vertexBuffer->Get_Vertex_Size(),
-			(void **)&vb, RenderBackendBufferLockMode::Discard))
+		void *vertex_data = nullptr;
+		if(!backend->Lock_Vertex_Buffer(vertexBuffer, 0,
+			static_cast<unsigned>(m_x * m_y) * vertex_size,
+			&vertex_data, RenderBackendBufferLockMode::Discard))
 			return batchStart;
+		vb = static_cast<WaterSurfaceVertex *>(vertex_data);
 		batchStart=0;	//reset start of page to first vertex
+	}
+	for (Int vertex = 0; vertex < m_x * m_y; ++vertex)
+	{
+		vb[vertex].nx = 0.0f;
+		vb[vertex].ny = 0.0f;
+		vb[vertex].nz = 1.0f;
+		vb[vertex].u2 = 0.0f;
+		vb[vertex].v2 = 0.0f;
 	}
 
 	//Adjust wave position in a non-linear way so that it slows down as it hits the target.  Using 1/4 sine wave
@@ -475,15 +467,13 @@ Int WaterTracksObj::render(VertexBufferClass	*vertexBuffer, Int batchStart)
 	vb->v1=1.0f;
 	vb++;
 
-	vertexBuffer->Unlock_Backend_Buffer();
+	backend->Unlock_Vertex_Buffer(vertexBuffer);
 
 	Int idxCount=(m_y-1)*(m_x*2+2) - 2;	//index count
 
-	IRenderBackend *backend = WW3D::Get_Render_Backend();
-	if (backend == nullptr)
-		return batchStart;
-	backend->Set_Index_Buffer(TheWaterTracksRenderSystem->m_indexBuffer,
-		static_cast<unsigned short>(batchStart));
+	backend->Set_Vertex_Buffer(vertexBuffer,
+		static_cast<unsigned>(batchStart) * vertex_size, vertex_size);
+	backend->Set_Index_Buffer(indexBuffer);
 	backend->Draw_Indexed_Primitives(
 		RenderBackendPrimitiveType::TriangleStrip, 0, 0, m_x*m_y, 0, idxCount-2);	//there are always n-2 primitives for n index strip.
 
@@ -613,7 +603,6 @@ WaterTracksRenderSystem::WaterTracksRenderSystem()
 	m_usedModules = nullptr;
 	m_freeModules = nullptr;
 	m_indexBuffer = nullptr;
-	m_vertexMaterialClass = nullptr;
 	m_vertexBuffer = nullptr;
 	m_stripSizeX=WATER_STRIP_X;
 	m_stripSizeY=WATER_STRIP_Y;
@@ -632,8 +621,6 @@ WaterTracksRenderSystem::~WaterTracksRenderSystem()
 	// free all data
 	shutdown();
 
-	m_vertexMaterialClass=nullptr;
-
 }
 
 //=============================================================================
@@ -646,9 +633,22 @@ void WaterTracksRenderSystem::ReAcquireResources()
 	Int i,j,k;
 //	const Int numModules=16;	///@todo: Get a value out of gdf
 
-	// just for paranoia's sake.
-	REF_PTR_RELEASE(m_indexBuffer);
-	REF_PTR_RELEASE(m_vertexBuffer);
+	IRenderBackend *backend = WW3D::Get_Render_Backend();
+	if (backend == nullptr)
+		return;
+
+	// Recreate backend-owned resources after a device reset.
+	if (m_indexBuffer != nullptr)
+	{
+		backend->Release_Index_Buffer(m_indexBuffer);
+		m_indexBuffer = nullptr;
+	}
+	if (m_vertexBuffer != nullptr)
+	{
+		backend->Release_Vertex_Buffer(m_vertexBuffer);
+		m_vertexBuffer = nullptr;
+	}
+	m_material.ReacquireResources();
 
 	//Will need m_y-1 strips, each of length m_x*2.
 	//Will also need 2 extra indices to connect each strip to next one (except last strip)
@@ -656,12 +656,20 @@ void WaterTracksRenderSystem::ReAcquireResources()
 
 	Int idxCount=(m_stripSizeY-1)*(m_stripSizeX*2+2) - 2;
 
-	m_indexBuffer=NEW_REF(IndexBufferClass,(idxCount));
+	m_indexBuffer=backend->Create_Index_Buffer(
+		static_cast<unsigned>(idxCount * sizeof(UnsignedShort)),
+		BUFFER_USAGE_DEFAULT);
+	if (m_indexBuffer == nullptr)
+		return;
 
-	// Fill up the IB
+	// Fill up the index buffer.
 	{
-		IndexBufferClass::WriteLockClass lockIdxBuffer(m_indexBuffer);
-		UnsignedShort *ib=lockIdxBuffer.Get_Index_Array();
+		void *index_data = nullptr;
+		if (!backend->Lock_Index_Buffer(m_indexBuffer, 0,
+			static_cast<unsigned>(idxCount * sizeof(UnsignedShort)),
+			&index_data, RenderBackendBufferLockMode::Normal))
+			return;
+		UnsignedShort *ib = static_cast<UnsignedShort *>(index_data);
 
 		for (i=0,j=0,k=0; i<idxCount; j++)
 		{
@@ -680,9 +688,15 @@ void WaterTracksRenderSystem::ReAcquireResources()
 				i+=2;
 			}
 		}
+		backend->Unlock_Index_Buffer(m_indexBuffer);
 	}
 
-	m_vertexBuffer=NEW_REF(VertexBufferClass,(RenderBackendVertexFormat::PositionDiffuseTexture,m_stripSizeX*m_stripSizeY*WATER_VB_PAGES,VertexBufferClass::USAGE_DYNAMIC));
+	m_vertexBuffer=backend->Create_Vertex_Buffer(
+		static_cast<unsigned>(m_stripSizeX * m_stripSizeY *
+			WATER_VB_PAGES * sizeof(WaterSurfaceVertex)),
+		RenderBackend_Vertex_Layout(
+			RenderBackendVertexFormat::PositionNormalDiffuseTexture2),
+		BUFFER_USAGE_DYNAMIC);
 	m_batchStart=0;
 }
 
@@ -693,10 +707,21 @@ void WaterTracksRenderSystem::ReAcquireResources()
 //=============================================================================
 void WaterTracksRenderSystem::ReleaseResources()
 {
-	REF_PTR_RELEASE(m_indexBuffer);
-	REF_PTR_RELEASE(m_vertexBuffer);
-	// Note - it is ok to not release the material, as it is a w3d object that
-	// has no backend resources. jba.
+	IRenderBackend *backend = WW3D::Get_Render_Backend();
+	if (backend != nullptr)
+	{
+		if (m_indexBuffer != nullptr)
+		{
+			backend->Release_Index_Buffer(m_indexBuffer);
+			m_indexBuffer = nullptr;
+		}
+		if (m_vertexBuffer != nullptr)
+		{
+			backend->Release_Vertex_Buffer(m_vertexBuffer);
+			m_vertexBuffer = nullptr;
+		}
+	}
+	m_material.Shutdown();
 }
 
 //=============================================================================
@@ -715,12 +740,6 @@ void WaterTracksRenderSystem::init()
 	m_level=TheGlobalData->m_waterPositionZ;
 
 	ReAcquireResources();
-	//go with a preset material for now.
-	m_vertexMaterialClass=VertexMaterialClass::Get_Preset(VertexMaterialClass::PRELIT_DIFFUSE);
-
-	//use a multi-texture shader:
-	m_shaderClass = ShaderClass::_PresetAlphaShader;
-	m_shaderClass.Set_Cull_Mode(ShaderClass::CULL_MODE_DISABLE);	//water should be visible from both sides
 
 	// we cannot initialize a system that is already initialized
 	if( m_freeModules || m_usedModules )
@@ -814,9 +833,7 @@ void WaterTracksRenderSystem::shutdown()
 
 	}
 
-	REF_PTR_RELEASE(m_indexBuffer);
-	REF_PTR_RELEASE(m_vertexMaterialClass);
-	REF_PTR_RELEASE(m_vertexBuffer);
+	ReleaseResources();
 
 }
 
@@ -863,8 +880,6 @@ void WaterTracksRenderSystem::flush(RenderInfoClass & rinfo)
 May also try rendering all tracks with one call by grouping them by texture.
 Try improving the fit to vertical surfaces like cliffs.
 */
-	Int	diffuseLight;
-
 	if (!TheGlobalData->m_showSoftWaterEdge || TheWaterTransparency->m_transparentWaterDepth ==0 )
 		return;
 
@@ -879,80 +894,44 @@ Try improving the fit to vertical surfaces like cliffs.
 
 	rinfo.Camera.Apply();
 
-	if (!m_usedModules || ShaderClass::Is_Backface_Culling_Inverted())
+	if (!m_usedModules || WW3D::Is_Reflection_Render_Pass())
 		return;	//don't render track marks in reflections.
 
-	//Start each frame from a discarded dynamic-buffer region.
+	// Start each frame from a discarded dynamic-buffer region.
 	m_batchStart = 0xffff;
 
-	// adjust shading for time of day.
-	Real shadeR, shadeG, shadeB;
-	shadeR = TheGlobalData->m_terrainAmbient[0].red;
-	shadeG = TheGlobalData->m_terrainAmbient[0].green;
-	shadeB = TheGlobalData->m_terrainAmbient[0].blue;
-	shadeR += TheGlobalData->m_terrainDiffuse[0].red/2;
-	shadeG += TheGlobalData->m_terrainDiffuse[0].green/2;
-	shadeB += TheGlobalData->m_terrainDiffuse[0].blue/2;
-	shadeR*=255.0f;
-	shadeG*=255.0f;
-	shadeB*=255.0f;
-
-	diffuseLight=REAL_TO_INT(shadeB) | (REAL_TO_INT(shadeG) << 8) | (REAL_TO_INT(shadeR) << 16);
-
-	Matrix3D tm(1);	///set to identity
-	backend->Set_Transform(RenderBackendTransform::World,tm);	//position the water surface
-
-	backend->Set_Material(m_vertexMaterialClass);
-	backend->Set_Shader(m_shaderClass);
-
-	backend->Set_Vertex_Buffer(m_vertexBuffer);
+	Matrix3D tm(1);
+	backend->Set_Transform(RenderBackendTransform::World, tm);
+	backend->Set_Vertex_Format(
+		RenderBackendVertexFormat::PositionNormalDiffuseTexture2);
 	backend->Set_Depth_Bias(8);
-	//Force apply of render states so we can override them.
-	backend->Apply_Render_State_Changes();
+	backend->Set_Vertex_Buffer(m_vertexBuffer, 0, sizeof(WaterSurfaceVertex));
 
-	if (TheTerrainRenderObject->getShroud())
-	{
-		W3DShaderManager::setTexture(0,TheTerrainRenderObject->getShroud()->getShroudTexture());
-		W3DShaderManager::setShader(W3DShaderManager::ST_SHROUD_TEXTURE, 1);
+	WaterMaterialParameters parameters = {};
+	parameters.animation = Vector4(0.0f, 0.0f, 0.0f, m_level);
+	parameters.tint = Vector4(1.0f, 1.0f, 1.0f, 1.0f);
+	const Vector3 camera_position = rinfo.Camera.Get_Position();
+	parameters.camera_position = Vector4(camera_position.X, camera_position.Y,
+		camera_position.Z, 1.0f);
 
-		//modulate with shroud texture
-		backend->Set_Texture_Argument(1, RenderBackendTextureComponent::Color, 1,
-			RenderBackendTextureArgument::Texture);
-		backend->Set_Texture_Argument(1, RenderBackendTextureComponent::Color, 2,
-			RenderBackendTextureArgument::Current);
-		backend->Set_Texture_Operation(1, RenderBackendTextureComponent::Color,
-			RenderBackendTextureOperation::Modulate);
-		backend->Set_Texture_Operation(1, RenderBackendTextureComponent::Alpha,
-			RenderBackendTextureOperation::Modulate);
-
-		//Shroud shader uses z-compare of EQUAL which wouldn't work on water because it doesn't
-		//write to the zbuffer.  Change to LESSEQUAL.
-		backend->Set_Depth_Function(RenderBackendCompareFunction::LessEqual);
-	}
-
-	Int LastTextureType=-1;
 
 	WaterTracksObj *mod=m_usedModules;
 
 	while( mod )
 	{
-		if (LastTextureType != mod->m_type)
-			backend->Set_Texture(0,mod->m_stageZeroTexture);
+		if (m_material.Apply_Track(mod->m_stageZeroTexture))
+		{
+			Int vertsRendered=mod->render(m_vertexBuffer, m_indexBuffer,
+				m_batchStart);
 
-		Int vertsRendered=mod->render(m_vertexBuffer,m_batchStart);
-
-		m_batchStart = vertsRendered;	//advance past vertices already in buffer
+			m_batchStart = vertsRendered;	//advance past vertices already in buffer
+		}
 
 		mod = mod->m_nextSystem;
 	}
 
 	backend->Set_Depth_Bias(0);
-
-	if (TheTerrainRenderObject->getShroud())
-	{	//we used the shroud shader, so reset it.
-		backend->Set_Depth_Function(RenderBackendCompareFunction::Equal);
-		W3DShaderManager::resetShader(W3DShaderManager::ST_SHROUD_TEXTURE);
-	}
+	m_material.Reset();
 }
 
 WaterTracksObj *WaterTracksRenderSystem::findTrack(Vector2 &start, Vector2 &end, waveType type)
@@ -1125,10 +1104,8 @@ void TestWaterUpdate()
 //		TheWaterTracksRenderSystem->init();
 
 		//create a dummy track
-//		track=TheWaterTracksRenderObjClassSystem->bindTrack(0);
 //		track->init(1.5f,8.0f,Vector2(147.0f,67.0f),Vector2(146.9f,68.6f),"wave2.tga");
 
-//		track=TheWaterTracksRenderObjClassSystem->bindTrack(0);
 //		track->init(1.5f,8.0f,Vector2(139.0f,66.0f),Vector2(138.8f,67.6f),"wave2.tga");
 	}
 
@@ -1317,12 +1294,7 @@ void TestWaterUpdate()
 				if (sqrt (xdiff * xdiff + ydiff * ydiff) <= waveTypeInfo[currentWaveType].m_finalWidth)
 				{	TheDisplay->drawLine(mouseAnchor.x, mouseAnchor.y, screenPoint.x, screenPoint.y,1,0xffccccff);
 					WW3D::Get_Render_Backend()->Invalidate_Cached_Render_States();
-					ShaderClass::Invalidate();
 				}
-
-//			char buffer[64];
-//			sprintf(buffer,"\n%d,%d,%d,%d",mouseAnchor.x, mouseAnchor.y, screenPoint.x, screenPoint.y);
-//			SDL_Log("%s", buffer);
 			}
 
 			pauseWaves=TRUE;

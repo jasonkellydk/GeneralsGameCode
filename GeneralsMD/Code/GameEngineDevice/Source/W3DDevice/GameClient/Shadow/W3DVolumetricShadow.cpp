@@ -3444,10 +3444,13 @@ void W3DVolumetricShadowManager::renderShadows( Bool forceStencilFill )
  	bcY = bbox.Center.Y;
  	bcZ = bbox.Center.Z;
  	beX = bbox.Extent.X;
- 	beY = bbox.Extent.Y;
- 	beZ = bbox.Extent.Z;
+	beY = bbox.Extent.Y;
+	beZ = bbox.Extent.Z;
 
-	if (m_shadowList && TheGlobalData->m_useShadowVolumes)
+	const bool tree_shadow_casters = TheTerrainRenderObject != nullptr &&
+		TheTerrainRenderObject->hasTreeShadowCasters();
+
+	if ((m_shadowList || tree_shadow_casters) && TheGlobalData->m_useShadowVolumes)
 	{
 
 		IRenderBackend *backend = WW3D::Get_Render_Backend();
@@ -3539,6 +3542,12 @@ void W3DVolumetricShadowManager::renderShadows( Bool forceStencilFill )
 
 		WW3D::Get_Render_Backend()->Set_Cull_Mode(RenderBackendCullMode::Clockwise);
 
+		if (tree_shadow_casters)
+		{
+			backend->Set_Transform(RenderBackendTransform::World, Matrix3D(true));
+			TheTerrainRenderObject->prepareTreeShadowVolumes(
+				TheW3DShadowManager->getLightPosWorld(0));
+		}
 
 		m_dynamicShadowVolumesToRender=nullptr;	//clear list of pending dynamic shadows
 		W3DVolumetricShadowRenderTask *shadowDynamicTasksStart,*shadowDynamicTask;
@@ -3580,6 +3589,11 @@ void W3DVolumetricShadowManager::renderShadows( Bool forceStencilFill )
 				numRenderedShadows++;
 			}
 		}
+		if (tree_shadow_casters)
+		{
+			backend->Set_Transform(RenderBackendTransform::World, Matrix3D(true));
+			TheTerrainRenderObject->renderTreeShadowVolumes();
+		}
 
 		// change the stencil op to decrement
 		WW3D::Get_Render_Backend()->Set_Stencil_Pass_Operation(RenderBackendStencilOperation::DecrementSaturate);
@@ -3599,6 +3613,11 @@ void W3DVolumetricShadowManager::renderShadows( Bool forceStencilFill )
 				nextTask->m_parentShadow->RenderVolume(nextTask->m_meshIndex,nextTask->m_lightIndex);
 				nextTask=(W3DVolumetricShadowRenderTask *)nextTask->m_nextTask;
 			}
+		}
+		if (tree_shadow_casters)
+		{
+			backend->Set_Transform(RenderBackendTransform::World, Matrix3D(true));
+			TheTerrainRenderObject->renderTreeShadowVolumes();
 		}
 
 		backend->Set_Vertex_Format(SHADOW_DYNAMIC_VOLUME_FORMAT);

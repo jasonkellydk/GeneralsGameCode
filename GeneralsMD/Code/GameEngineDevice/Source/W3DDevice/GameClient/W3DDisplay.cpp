@@ -1988,8 +1988,8 @@ AGAIN:
                                            //-LORENZEN
 
 
-			if (TheWaterRenderObj)
-				TheWaterRenderObj->updateRenderTargetTextures(primaryW3DView->get3DCamera());	//do a render into each texture
+			if (TheWaterRenderSystem)
+				TheWaterRenderSystem->updateRenderTargetTextures(primaryW3DView->get3DCamera());	//do a render into each texture
 
 			//Can't render into textures while rendering to screen so these textures need to be updated
 			//before we enter main rendering loop.

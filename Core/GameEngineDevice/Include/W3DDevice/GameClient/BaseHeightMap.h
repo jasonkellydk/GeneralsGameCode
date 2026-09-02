@@ -159,6 +159,9 @@ public:
 	void removeTree(DrawableID id);
 	Bool updateTreePosition(DrawableID id, Coord3D location, Real angle);
 	void renderTrees(CameraClass * camera); ///< renders the tree buffer.
+	Bool hasTreeShadowCasters() const;
+	void prepareTreeShadowVolumes(const Vector3 &lightPosition);
+	void renderTreeShadowVolumes();
 
 	void addProp(Int id, Coord3D location, Real angle, Real scale, const AsciiString &modelName);
 	void removeProp(Int id);

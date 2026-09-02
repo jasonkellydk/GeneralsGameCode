@@ -31,7 +31,7 @@ public:
 
 private:
 	ShaderProgramClass *m_program;
-	std::array<TextureBaseClass *, MAX_TEXTURE_STAGES> m_textures;
+	std::array<TextureBaseClass *, MAX_PROGRAMMABLE_TEXTURE_STAGES> m_textures;
 	std::array<Vector4, MAX_VERTEX_SHADER_CONSTANTS> m_vertex_constants;
 	std::array<Vector4, MAX_PIXEL_SHADER_CONSTANTS> m_pixel_constants;
 };

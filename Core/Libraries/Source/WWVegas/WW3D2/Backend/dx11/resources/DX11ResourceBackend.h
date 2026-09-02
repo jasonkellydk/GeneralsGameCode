@@ -12,8 +12,10 @@ namespace dx11_backend
 	{
 	public:
 		TextureClass *Create_Render_Target(int width, int height, WW3DFormat format = WW3D_FORMAT_UNKNOWN);
+		TextureClass *Create_Scene_Depth_Texture();
+		bool Capture_Scene_Depth();
 		void Create_Render_Target(int width, int height, WW3DFormat format, WW3DZFormat depth_format, TextureClass **target, ZTextureClass **depth_target);
-		void Set_Render_Target(TextureClass *render_target, ZTextureClass *depth_target = nullptr);
+		void Set_Render_Target(TextureBaseClass *render_target, ZTextureClass *depth_target = nullptr);
 		RenderBackendSurface *Create_System_Memory_Surface(unsigned width, unsigned height, WW3DFormat format);
 		SurfaceClass *Create_Surface(unsigned width, unsigned height, WW3DFormat format);
 		RenderBackendSurface *Create_Surface_From_File(const char *filename);

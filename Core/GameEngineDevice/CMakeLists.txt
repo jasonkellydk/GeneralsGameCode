@@ -38,6 +38,7 @@ set(GAMEENGINEDEVICE_SRC
     Include/W3DDevice/GameClient/Module/W3DTruckDraw.h
     Include/W3DDevice/GameClient/TerrainTex.h
     Include/W3DDevice/GameClient/TerrainMaterial.h
+    Include/W3DDevice/GameClient/TreeMaterial.h
     Include/W3DDevice/GameClient/TileData.h
     Include/W3DDevice/GameClient/WaterMaterial.h
 #    Include/W3DDevice/GameClient/W3DAssetManager.h
@@ -85,6 +86,9 @@ set(GAMEENGINEDEVICE_SRC
     Include/W3DDevice/GameClient/W3DScreenshot.h
 #    Include/W3DDevice/GameClient/W3DVolumetricShadow.h
     Include/W3DDevice/GameClient/W3DWater.h
+    Include/W3DDevice/GameClient/WaterResources.h
+    Include/W3DDevice/GameClient/WaterReflectionRenderer.h
+    Include/W3DDevice/GameClient/WaterSkyboxSystem.h
     Include/W3DDevice/GameClient/W3DWaterTracks.h
 #    Include/W3DDevice/GameClient/W3DWaypointBuffer.h
 #    Include/W3DDevice/GameClient/W3DWebBrowser.h
@@ -161,6 +165,7 @@ set(GAMEENGINEDEVICE_SRC
 #    Source/W3DDevice/GameClient/Shadow/W3DVolumetricShadow.cpp
     Source/W3DDevice/GameClient/TerrainTex.cpp
     Source/W3DDevice/GameClient/TerrainMaterial.cpp
+    Source/W3DDevice/GameClient/TreeMaterial.cpp
     Source/W3DDevice/GameClient/TileData.cpp
 #    Source/W3DDevice/GameClient/W3DAssetManager.cpp
 #    Source/W3DDevice/GameClient/W3DAssetManagerExposed.cpp
@@ -199,6 +204,9 @@ set(GAMEENGINEDEVICE_SRC
 #    Source/W3DDevice/GameClient/W3dWaypointBuffer.cpp
 #    Source/W3DDevice/GameClient/W3DWebBrowser.cpp
     Source/W3DDevice/GameClient/Water/W3DWater.cpp
+    Source/W3DDevice/GameClient/WaterResources.cpp
+    Source/W3DDevice/GameClient/WaterSkyboxSystem.cpp
+    Source/W3DDevice/GameClient/WaterGridSimulation.cpp
     Source/W3DDevice/GameClient/WaterMaterial.cpp
     Source/W3DDevice/GameClient/Water/W3DWaterTracks.cpp
     Source/W3DDevice/GameClient/WorldHeightMap.cpp

@@ -135,8 +135,9 @@ void DrawObject::stopWaypointDragFeedback()
 DrawObject::~DrawObject()
 {
 	freeMapResources();
-	REF_PTR_RELEASE(m_waterDrawObject);
-	TheWaterRenderObj = nullptr;
+	delete m_waterDrawObject;
+	m_waterDrawObject = nullptr;
+	TheWaterRenderSystem = nullptr;
 }
 
 DrawObject::DrawObject() :
@@ -157,9 +158,9 @@ DrawObject::DrawObject() :
 	m_feedbackPoint.x = 20;
 	m_feedbackPoint.y = 20;
 	initData();
-	m_waterDrawObject = new WaterRenderObjClass;
-	m_waterDrawObject->init(0, 0, 0, nullptr, WaterRenderObjClass::WATER_TYPE_SURFACE);
-	TheWaterRenderObj=m_waterDrawObject;
+	m_waterDrawObject = new WaterRenderSystem;
+	m_waterDrawObject->init(0, 0, 0, nullptr, WaterRenderSystem::WATER_TYPE_SURFACE);
+	TheWaterRenderSystem=m_waterDrawObject;
 
 	//(gth) this was needed to fix the extents bug that is based off water and too small for our maps
 	Set_Force_Visible(true);

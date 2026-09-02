@@ -744,6 +744,8 @@ struct DX11BackendState
 	RenderBackendMultisampleMode multisample_mode = RenderBackendMultisampleMode::None;
 	bool scene_active = false;
 	bool render_to_texture = false;
+	TextureBaseClass *active_render_target = nullptr;
+	ZTextureClass *active_depth_target = nullptr;
 	bool triangle_draw_enabled = true;
 	RenderBackendDeviceStatus device_status = RenderBackendDeviceStatus::Error;
 	RenderBackendDebugSettings debug_settings;
@@ -754,6 +756,10 @@ struct DX11BackendState
 	std::array<std::array<unsigned, 64>, MAX_TEXTURE_STAGES> texture_stage_states{};
 	std::array<DX11StageState, MAX_TEXTURE_STAGES> stages{};
 	std::array<DX11Texture *, MAX_TEXTURE_STAGES> textures{};
+	// One additional resource slot is reserved for explicit modern passes
+	// whose material contract is wider than the legacy stage count. The ocean
+	// material uses it for the readable opaque-scene depth snapshot.
+	DX11Texture *programmable_texture = nullptr;
 	// Some WW3D shader paths bind a resource directly after the ordinary
 	// render-state texture has been applied. Keep those bindings separate so a
 	// later draw-side state synchronization does not replace them with the
@@ -793,6 +799,8 @@ struct DX11BackendState
 	bool depth_write_enabled = true;
 	RenderBackendCompareFunction depth_function = RenderBackendCompareFunction::LessEqual;
 	RenderBackendCullMode cull_mode = RenderBackendCullMode::CounterClockwise;
+	std::array<RenderBackendCullMode, 8> cull_mode_overrides{};
+	unsigned cull_mode_override_count = 0;
 	RenderBackendShadeMode shade_mode = RenderBackendShadeMode::Gouraud;
 	bool stencil_enabled = false;
 	RenderBackendCompareFunction stencil_function = RenderBackendCompareFunction::Always;
@@ -863,6 +871,10 @@ struct DX11BackendState
 	ID3D11RenderTargetView *back_buffer_view = nullptr;
 	ID3D11Texture2D *depth_buffer = nullptr;
 	ID3D11DepthStencilView *depth_buffer_view = nullptr;
+	// Backend-owned copy of the active scene depth. It is recreated when the
+	// swap-chain dimensions change, while its opaque handle remains stable for
+	// the water material wrapper.
+	DX11Texture *scene_depth_texture = nullptr;
 	ID3D11RenderTargetView *active_render_target_view = nullptr;
 	ID3D11DepthStencilView *active_depth_stencil_view = nullptr;
 	ID3D11Buffer *vertex_constant_buffer = nullptr;
@@ -1022,6 +1034,8 @@ struct DX11BackendState
 		Release_Com(depth_state);
 		Release_Com(rasterizer_state);
 		for (ID3D11SamplerState *& sampler : samplers) Release_Com(sampler);
+		delete scene_depth_texture;
+		scene_depth_texture = nullptr;
 		Release_Com(back_buffer_view);
 		Release_Com(back_buffer);
 		Release_Com(depth_buffer_view);
