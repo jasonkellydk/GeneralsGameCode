@@ -45,6 +45,7 @@ static void drawFramerateBar();
 
 import Graphics.RHI.DX11.Coexistence;
 import Graphics.Scene.Beams;
+import Graphics.Scene.Lighting.Renderer;
 
 // USER INCLUDES //////////////////////////////////////////////////////////////
 #include "Common/FramePacer.h"
@@ -158,12 +159,19 @@ static Int theFlashCount = 0;
 static bool initializeModernBeamRenderer(Graphics::Device &device)
 {
 	Graphics::BeamRenderer &beam_renderer = Graphics::GetBeamRenderer();
-	return beam_renderer.Is_Initialized()
-		|| beam_renderer.Initialize(device, std::filesystem::path("GraphicsShaders"), 4096);
+	if (!beam_renderer.Is_Initialized()
+		&& !beam_renderer.Initialize(device, std::filesystem::path("GraphicsShaders"), 4096))
+		return false;
+
+	Graphics::LightRenderer &light_renderer = Graphics::GetLightRenderer();
+	return light_renderer.Is_Initialized() || light_renderer.Initialize(device, 4096);
 }
 
 static bool executeModernBeamRenderer(Graphics::Device &, Graphics::CommandList &commands, const Graphics::FrameTargets &targets) noexcept
 {
+	if (!Graphics::GetLightRenderer().Sync())
+		return false;
+
 	if (!Graphics::SetBeamView(modernBeamView))
 		return false;
 
@@ -198,15 +206,17 @@ static bool initializeModernRenderer()
 		&executeModernBeamRenderer))
 		return true;
 
-	Graphics_DX11_Shutdown_Shared_Frame();
+	Graphics::GetLightRenderer().Shutdown();
 	Graphics::GetBeamRenderer().Shutdown();
+	Graphics_DX11_Shutdown_Shared_Frame();
 	return false;
 }
 
 static void shutdownModernRenderer() noexcept
 {
-	Graphics_DX11_Shutdown_Shared_Frame();
+	Graphics::GetLightRenderer().Shutdown();
 	Graphics::GetBeamRenderer().Shutdown();
+	Graphics_DX11_Shutdown_Shared_Frame();
 }
 
 static bool beginSharedFrame()

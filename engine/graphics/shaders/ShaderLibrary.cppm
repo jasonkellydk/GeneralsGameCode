@@ -94,7 +94,8 @@ static_assert(std::is_nothrow_move_assignable_v<ShaderProgram>);
 export ShaderInterfaceLayout Make_Basic_Opaque_Interface() noexcept
 {
 	ShaderInterfaceLayout layout;
-	layout.material.Add_Constant(ShaderValueType::Float4);
+	for (std::size_t index = 0; index < 4; ++index)
+		layout.material.Add_Constant(ShaderValueType::Float4);
 	return layout;
 }
 

@@ -852,11 +852,14 @@ bool DX11CommandList::Set_Bindless_Resources(std::span<const RHIBindlessResource
 		return false;
 
 	m_bindless_resources = resources;
+	std::uint32_t storage_buffer_slot = 1;
 	for (const RHIBindlessResource &resource : resources) {
 		switch (resource.type) {
 		case RHIResourceType::Buffer:
-			if (!Bind_Buffer_At_Slot(RHIShaderStage::Vertex, 1, resource.buffer))
+			if (!Bind_Buffer_At_Slot(RHIShaderStage::Vertex, storage_buffer_slot, resource.buffer)
+				|| !Bind_Buffer_At_Slot(RHIShaderStage::Fragment, storage_buffer_slot, resource.buffer))
 				return false;
+			++storage_buffer_slot;
 			break;
 		case RHIResourceType::Texture:
 			if (resource.index.Get_Index() >= 128 || !Bind_Texture_At_Slot(RHIShaderStage::Fragment, resource.index.Get_Index(), resource.texture))

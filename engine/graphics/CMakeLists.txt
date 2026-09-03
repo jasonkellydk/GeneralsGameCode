@@ -25,6 +25,7 @@ target_sources(generals_graphics
             shaders/ShaderLibrary.cppm
             scene/RenderScene.cppm
             scene/lighting/Lighting.cppm
+            scene/lighting/LightRenderer.cppm
             scene/environment/Environment.cppm
             scene/shadows/Shadows.cppm
             scene/decals/Decals.cppm
@@ -61,6 +62,7 @@ if(MSVC)
         "SHELL:/reference Graphics.RHI.Frame=${CMAKE_CURRENT_BINARY_DIR}/CMakeFiles/generals_graphics.dir/$<CONFIG>/Graphics.RHI.Frame.ifc"
         "SHELL:/reference Graphics.RHI.DX11=${CMAKE_CURRENT_BINARY_DIR}/CMakeFiles/generals_graphics.dir/$<CONFIG>/Graphics.RHI.DX11.ifc"
         "SHELL:/reference Graphics.RHI.DX11.Coexistence=${CMAKE_CURRENT_BINARY_DIR}/CMakeFiles/generals_graphics.dir/$<CONFIG>/Graphics.RHI.DX11.Coexistence.ifc"
+        "SHELL:/reference Graphics.Scene.Lighting.Renderer=${CMAKE_CURRENT_BINARY_DIR}/CMakeFiles/generals_graphics.dir/$<CONFIG>/Graphics.Scene.Lighting.Renderer.ifc"
         "/ifcSearchDir"
         "${CMAKE_CURRENT_BINARY_DIR}/CMakeFiles/generals_graphics.dir/$<CONFIG>"
     )
@@ -206,6 +208,11 @@ if(RTS_BUILD_GRAPHICS_TESTS)
     add_graphics_test(
         generals_graphics_lighting_test
         scene/lighting/Lighting.test.cppm
+    )
+
+    add_graphics_test(
+        generals_graphics_light_renderer_test
+        scene/lighting/LightRenderer.test.cppm
     )
 
     add_graphics_test(

@@ -28,6 +28,8 @@
 
 #pragma once
 
+import Graphics.Scene.Lighting.Renderer;
+
 #include "WW3D2/Light.h"
 #include "Lib/BaseType.h"
 class HeightMapRenderObjClass;
@@ -59,6 +61,7 @@ protected:
 	Real		m_targetRange;
 	Vector3 m_targetAmbient;
 	Vector3 m_targetDiffuse;
+	Graphics::LightHandle m_modernLight;
 
 
 public:
@@ -68,8 +71,8 @@ public:
 public:
 	virtual void					On_Frame_Update() override;
 
-	void setEnabled(Bool enabled) { m_enabled = enabled; m_decayRange = false; m_decayFrameCount = 0; m_decayColor = false; m_increaseFrameCount = 0;};
-	Bool isEnabled() {return m_enabled;};
+	void setEnabled(Bool enabled);
+	Bool isEnabled() const {return m_enabled;};
 
 
 	/// 0 frameIncreaseTime means it starts out full size/intensity, 0 decay time means it lasts forever.

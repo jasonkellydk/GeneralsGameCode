@@ -105,6 +105,21 @@ export struct alignas(16) GPULightData final
 	std::uint32_t type = 0;
 	std::uint32_t flags = 0;
 	std::uint32_t shadow_data_index = Invalid_Shadow_Data_Index;
+
+	friend constexpr bool operator==(const GPULightData &left, const GPULightData &right) noexcept
+	{
+		for (std::size_t index = 0; index < left.position_range.size(); ++index) {
+			if (left.position_range[index] != right.position_range[index]
+				|| left.direction_intensity[index] != right.direction_intensity[index]
+				|| left.color_inner_angle[index] != right.color_inner_angle[index])
+				return false;
+		}
+
+		return left.outer_angle == right.outer_angle
+			&& left.type == right.type
+			&& left.flags == right.flags
+			&& left.shadow_data_index == right.shadow_data_index;
+	}
 };
 
 static_assert(sizeof(GPULightData) == 64);

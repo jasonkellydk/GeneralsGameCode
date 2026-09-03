@@ -18,12 +18,14 @@ export module Graphics.Testing.VisualRegression.Tests;
 import Graphics.Passes.Opaque;
 import Graphics.Passes.Shadow;
 import Graphics.Resources.Bindless.BindlessResourceTable;
+import Graphics.Resources.Materials.Material;
 import Graphics.Resources.Residency.GPUResourceResidency;
 import Graphics.Scene.DrawGeneration;
 import Graphics.Scene.GPUScene;
 import Graphics.Scene.LOD;
 import Graphics.Scene.Visibility;
 import Graphics.Scene.Beams;
+import Graphics.Scene.Lighting.Renderer;
 import Graphics.Shaders.Library;
 import Graphics.Testing.VisualRegression;
 import Graphics.RHI.DX11;
@@ -72,6 +74,7 @@ enum class SceneKind : std::uint8_t
 	BasicTriangle,
 	TexturedMesh,
 	LitMeshWithShadow,
+	DynamicLight,
 	Beam,
 	LaserAdapter,
 	RopeAdapter,
@@ -109,9 +112,11 @@ struct VisualScene final
 	RHIBufferHandle material_constants{};
 	BindlessResourceTable bindless;
 	BeamRenderer beam_renderer;
+	LightRenderer light_renderer;
 
 	void Release(Device &device) noexcept
 	{
+		light_renderer.Shutdown();
 		beam_renderer.Shutdown();
 		bindless.Clear();
 		if (instance_buffer.Is_Valid())
@@ -144,6 +149,8 @@ struct VisualScene final
 			return Initialize_Beam(device);
 		if (kind == SceneKind::BasicTriangle)
 			return Initialize_Basic_Opaque(device);
+		if (kind == SceneKind::DynamicLight)
+			return Initialize_Dynamic_Light(device);
 
 		std::vector<std::byte> vertex_shader;
 		std::vector<std::byte> pixel_shader;
@@ -389,6 +396,57 @@ struct VisualScene final
 		return resident_mesh.vertex_buffer.Is_Valid() && resident_mesh.index_buffer.Is_Valid();
 	}
 
+	bool Initialize_Dynamic_Light(Device &device)
+	{
+		const ShaderHandle basic_shader = shader_library.Load_Basic_Opaque(std::filesystem::path(GRAPHICS_RENDERER_SHADER_DIRECTORY));
+		if (!basic_shader.Is_Valid())
+			return false;
+
+		const PipelineDesc pipeline_description = shader_library.Make_Pipeline_Description(basic_shader, Make_Basic_Opaque_Pipeline());
+		pipeline = shader_library.Create_Pipeline(device, basic_shader, pipeline_description);
+		if (!pipeline.Is_Valid() || !light_renderer.Initialize(device, 1))
+			return false;
+
+		RenderLight light;
+		light.position = {0.0f, 0.0f, 0.35f};
+		light.color = {1.0f, 0.35f, 0.08f};
+		light.intensity = 1.5f;
+		light.range = 1.5f;
+		if (!light_renderer.Create_Point_Light(light).Is_Valid()
+			|| !Create_Geometry(device))
+			return false;
+
+		GPUInstanceData instance;
+		instance.transform = Matrix4x4::Identity().values;
+		instance.bounds = {0.0f, 0.0f, 0.35f, 1.0f};
+		instance.mesh_index = 0;
+		instance.material_index = 0;
+		instance_buffer = device.Create_Buffer_Initialized(
+			{static_cast<std::uint32_t>(sizeof(instance)), RHIBufferUsage::Storage, sizeof(instance)},
+			std::as_bytes(std::span<const GPUInstanceData>(&instance, 1)));
+		if (!instance_buffer.Is_Valid()
+			|| !bindless.Register_Buffer(instance_buffer).Is_Valid()
+			|| !bindless.Register_Buffer(light_renderer.Light_Buffer()).Is_Valid())
+			return false;
+
+		MaterialParameterBlock material_data;
+		material_data.values[0] = 1.0f;
+		material_data.values[1] = 1.0f;
+		material_data.values[2] = 1.0f;
+		material_data.values[3] = 1.0f;
+		material_data.values[4] = 1.0f;
+		material_constants = device.Create_Buffer_Initialized(
+			{static_cast<std::uint32_t>(sizeof(material_data)), RHIBufferUsage::Constant, 16},
+			material_data.Bytes());
+		if (!material_constants.Is_Valid()
+			|| !bindless.Register_Material(MaterialHandle(0, 1), material_constants).Is_Valid()
+			|| !light_renderer.Sync())
+			return false;
+
+		main_draws[0] = {0, 0, 0, 1, pipeline, 0};
+		return true;
+	}
+
 private:
 	bool Create_Geometry(Device &device)
 	{
@@ -425,6 +483,8 @@ private:
 
 		if (kind == SceneKind::LitMeshWithShadow)
 			return create_mesh(0, receiver, receiver_indices) && create_mesh(1, occluder, triangle_indices);
+		if (kind == SceneKind::DynamicLight)
+			return create_mesh(0, receiver, receiver_indices);
 		return create_mesh(0, triangle, triangle_indices);
 	}
 };
@@ -445,6 +505,8 @@ static bool Render_Scene(Device &, CommandList &commands, RHITextureHandle color
 	std::array<DrawData, 1> generated_draw_storage{};
 	DrawSet generated_draw_set(generated_draw_storage);
 	std::span<const DrawData> main_draws = scene.main_draws;
+	if (scene.kind == SceneKind::DynamicLight && !scene.light_renderer.Sync())
+		return false;
 	if (scene.kind == SceneKind::BasicTriangle) {
 		if (!Build_Visible_Set(scene.render_scene, scene.view, visible_set)
 			|| !Build_LOD_Set(scene.render_scene, scene.mesh_pool, visible_set, scene.view, lod_set)
@@ -475,10 +537,11 @@ static bool Render_Scene(Device &, CommandList &commands, RHITextureHandle color
 	if (!plan.Compile(graph, std::span<const GraphResourceBinding>(bindings.data(), binding_count)))
 		return false;
 
+	const std::span<const RHIBindlessResource> bindless_resources = scene.bindless.Resources();
 	const OpaquePassInput opaque_input{
 		main_draws,
 		scene.meshes,
-		scene.bindless.Resources(),
+		bindless_resources,
 		color,
 		depth,
 		viewport,
@@ -541,6 +604,11 @@ BOOST_AUTO_TEST_CASE(textured_mesh_matches_golden_image)
 BOOST_AUTO_TEST_CASE(lit_mesh_with_shadow_matches_golden_image)
 {
 	Run_Scene(SceneKind::LitMeshWithShadow, "lit_mesh_with_shadow");
+}
+
+BOOST_AUTO_TEST_CASE(dynamic_light_matches_golden_image)
+{
+	Run_Scene(SceneKind::DynamicLight, "dynamic_light");
 }
 
 BOOST_AUTO_TEST_CASE(generic_beam_matches_golden_image)
