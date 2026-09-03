@@ -29,6 +29,8 @@
 
 #pragma once
 
+import Graphics.Scene.Beams;
+
 // INCLUDES ///////////////////////////////////////////////////////////////////////////////////////
 #include "Common/DrawModule.h"
 #include "GameLogic/Module/ProjectileStreamUpdate.h" // I am the draw module for this update.  Very tight.
@@ -74,9 +76,18 @@ public:
 	virtual void reactToGeometryChange() override { }
 
 protected:
-	void makeOrUpdateLine( Vector3 *points, UnsignedInt pointCount, Int lineIndex );
+	bool buildModernLines(const Vector3 *points, Int pointCount) noexcept;
+	void disableModernLines() noexcept;
+	void makeOrUpdateLegacyLine(Vector3 *points, UnsignedInt pointCount, Int lineIndex);
+	void removeLegacyLines(Int firstUnusedLine);
 
 	TextureClass *m_texture;
 	SegmentedLineClass *m_allLines[MAX_PROJECTILE_STREAM];	///< Persist, so I can ensure they live a full cycle, and minimize re-creates by holding on
 	Int m_linesValid;
+	Graphics::BeamHandle m_modernLines[MAX_PROJECTILE_STREAM];
+	Int m_modernLineCount;
+	Bool m_modernEnabled;
+	Bool m_modernAttempted;
+	Bool m_modernObscured;
+	Real m_modernUVOffset;
 };

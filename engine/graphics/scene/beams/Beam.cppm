@@ -70,6 +70,8 @@ export struct BeamDescription final
 	float width = 0.5f;
 	Color4 color{};
 	float opacity = 1.0f;
+	float uv_scale = 1.0f;
+	float uv_offset = 0.0f;
 	MaterialHandle material{};
 	BeamFlags flags = BeamFlags::Enabled;
 };
@@ -93,6 +95,8 @@ export struct BeamData final
 	std::span<const float> color_b{};
 	std::span<const float> color_a{};
 	std::span<const float> opacities{};
+	std::span<const float> uv_scales{};
+	std::span<const float> uv_offsets{};
 	std::span<const MaterialHandle> materials{};
 	std::span<const BeamFlags> flags{};
 	std::span<const BeamHandle> handles{};
@@ -142,6 +146,8 @@ public:
 		m_color_b.reserve(capacity);
 		m_color_a.reserve(capacity);
 		m_opacities.reserve(capacity);
+		m_uv_scales.reserve(capacity);
+		m_uv_offsets.reserve(capacity);
 		m_materials.reserve(capacity);
 		m_flags.reserve(capacity);
 		m_dense_handles.reserve(capacity);
@@ -214,6 +220,8 @@ public:
 		m_color_b[dense_index] = description.color.b;
 		m_color_a[dense_index] = description.color.a;
 		m_opacities[dense_index] = description.opacity;
+		m_uv_scales[dense_index] = description.uv_scale;
+		m_uv_offsets[dense_index] = description.uv_offset;
 		m_materials[dense_index] = description.material;
 		m_flags[dense_index] = description.flags;
 		return true;
@@ -253,6 +261,8 @@ public:
 			m_color_b,
 			m_color_a,
 			m_opacities,
+			m_uv_scales,
+			m_uv_offsets,
 			m_materials,
 			m_flags,
 			m_dense_handles
@@ -273,6 +283,8 @@ public:
 		m_color_b.clear();
 		m_color_a.clear();
 		m_opacities.clear();
+		m_uv_scales.clear();
+		m_uv_offsets.clear();
 		m_materials.clear();
 		m_flags.clear();
 		m_dense_handles.clear();
@@ -325,6 +337,8 @@ private:
 		m_color_b.push_back(description.color.b);
 		m_color_a.push_back(description.color.a);
 		m_opacities.push_back(description.opacity);
+		m_uv_scales.push_back(description.uv_scale);
+		m_uv_offsets.push_back(description.uv_offset);
 		m_materials.push_back(description.material);
 		m_flags.push_back(description.flags);
 	}
@@ -343,6 +357,8 @@ private:
 		m_color_b[destination] = m_color_b[source];
 		m_color_a[destination] = m_color_a[source];
 		m_opacities[destination] = m_opacities[source];
+		m_uv_scales[destination] = m_uv_scales[source];
+		m_uv_offsets[destination] = m_uv_offsets[source];
 		m_materials[destination] = m_materials[source];
 		m_flags[destination] = m_flags[source];
 	}
@@ -361,6 +377,8 @@ private:
 		m_color_b.pop_back();
 		m_color_a.pop_back();
 		m_opacities.pop_back();
+		m_uv_scales.pop_back();
+		m_uv_offsets.pop_back();
 		m_materials.pop_back();
 		m_flags.pop_back();
 		m_dense_handles.pop_back();
@@ -378,6 +396,8 @@ private:
 	AlignedVector<float> m_color_b;
 	AlignedVector<float> m_color_a;
 	AlignedVector<float> m_opacities;
+	AlignedVector<float> m_uv_scales;
+	AlignedVector<float> m_uv_offsets;
 	AlignedVector<MaterialHandle> m_materials;
 	AlignedVector<BeamFlags> m_flags;
 	std::vector<BeamHandle> m_dense_handles;
@@ -586,6 +606,11 @@ public:
 		return m_beams.Size();
 	}
 
+	MaterialHandle Default_Material() const noexcept
+	{
+		return m_material;
+	}
+
 	bool Set_View(const BeamView &view) noexcept
 	{
 		if (!Is_Initialized())
@@ -782,12 +807,14 @@ export std::size_t Build_Beam_Vertices(const BeamData &beams, const BeamView &vi
 			beams.color_b[index],
 			beams.color_a[index] * beams.opacities[index]
 		};
-		Write_Vertex(output[output_count++], start_clip, color, 0.0f, 0.0f);
-		Write_Vertex(output[output_count++], start_right_clip, color, 1.0f, 0.0f);
-		Write_Vertex(output[output_count++], end_clip, color, 0.0f, 1.0f);
-		Write_Vertex(output[output_count++], end_clip, color, 0.0f, 1.0f);
-		Write_Vertex(output[output_count++], start_right_clip, color, 1.0f, 0.0f);
-		Write_Vertex(output[output_count++], end_right_clip, color, 1.0f, 1.0f);
+		const float start_v = beams.uv_offsets[index];
+		const float end_v = start_v + beams.uv_scales[index];
+		Write_Vertex(output[output_count++], start_clip, color, 0.0f, start_v);
+		Write_Vertex(output[output_count++], start_right_clip, color, 1.0f, start_v);
+		Write_Vertex(output[output_count++], end_clip, color, 0.0f, end_v);
+		Write_Vertex(output[output_count++], end_clip, color, 0.0f, end_v);
+		Write_Vertex(output[output_count++], start_right_clip, color, 1.0f, start_v);
+		Write_Vertex(output[output_count++], end_right_clip, color, 1.0f, end_v);
 	}
 
 	return output_count;

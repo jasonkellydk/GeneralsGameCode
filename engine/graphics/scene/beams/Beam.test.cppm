@@ -184,6 +184,23 @@ BOOST_AUTO_TEST_CASE(segmented_line_data_remains_contiguous_and_updateable)
 	BOOST_CHECK_EQUAL(result.widths[dense_index], 0.5f);
 }
 
+BOOST_AUTO_TEST_CASE(beam_uv_metadata_preserves_tiling_and_scroll)
+{
+	BeamSet beams;
+	BeamDescription description;
+	description.start = {-0.5f, 0.0f, 0.0f};
+	description.end = {0.5f, 0.0f, 0.0f};
+	description.uv_scale = 3.0f;
+	description.uv_offset = -0.25f;
+	BOOST_REQUIRE(beams.Create(description).Is_Valid());
+
+	std::array<BeamVertex, 6> vertices{};
+	BOOST_REQUIRE_EQUAL(Build_Beam_Vertices(beams.Data(), {}, vertices), vertices.size());
+	BOOST_CHECK_EQUAL(vertices[0].uv[1], -0.25f);
+	BOOST_CHECK_EQUAL(vertices[2].uv[1], 2.75f);
+	BOOST_CHECK_EQUAL(vertices[5].uv[1], 2.75f);
+}
+
 BOOST_AUTO_TEST_CASE(beam_presentation_payload_preserves_material_and_flags)
 {
 	BeamSet beams;

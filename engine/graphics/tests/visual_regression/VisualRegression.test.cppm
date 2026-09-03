@@ -74,7 +74,8 @@ enum class SceneKind : std::uint8_t
 	LitMeshWithShadow,
 	Beam,
 	LaserAdapter,
-	RopeAdapter
+	RopeAdapter,
+	ProjectileStreamAdapter
 };
 
 struct VisualScene final
@@ -139,7 +140,7 @@ struct VisualScene final
 
 	bool Initialize(Device &device)
 	{
-		if (kind == SceneKind::Beam || kind == SceneKind::LaserAdapter || kind == SceneKind::RopeAdapter)
+		if (kind == SceneKind::Beam || kind == SceneKind::LaserAdapter || kind == SceneKind::RopeAdapter || kind == SceneKind::ProjectileStreamAdapter)
 			return Initialize_Beam(device);
 		if (kind == SceneKind::BasicTriangle)
 			return Initialize_Basic_Opaque(device);
@@ -224,7 +225,7 @@ struct VisualScene final
 
 	bool Initialize_Beam(Device &device)
 	{
-		const std::size_t beam_capacity = kind == SceneKind::RopeAdapter ? 16 : 4;
+		const std::size_t beam_capacity = kind == SceneKind::RopeAdapter || kind == SceneKind::ProjectileStreamAdapter ? 16 : 4;
 		if (!beam_renderer.Initialize(device, std::filesystem::path(GRAPHICS_RENDERER_SHADER_DIRECTORY), beam_capacity))
 			return false;
 
@@ -236,6 +237,35 @@ struct VisualScene final
 			beam.color = {1.0f, 0.25f, 0.05f, 1.0f};
 			beam.opacity = 0.75f;
 			return beam_renderer.Create(beam).Is_Valid();
+		}
+
+		if (kind == SceneKind::ProjectileStreamAdapter) {
+			constexpr std::array<Vec3, 8> points = {{
+				{-0.86f, -0.68f, 0.0f},
+				{-0.62f, -0.43f, 0.0f},
+				{-0.72f, -0.15f, 0.0f},
+				{0.0f, 0.0f, 0.0f},
+				{-0.35f, 0.16f, 0.0f},
+				{-0.12f, 0.42f, 0.0f},
+				{-0.24f, 0.68f, 0.0f},
+				{0.02f, 0.88f, 0.0f}
+			}};
+			for (std::size_t index = 0; index + 1 < points.size(); ++index) {
+				if ((points[index].x == 0.0f && points[index].y == 0.0f && points[index].z == 0.0f)
+					|| (points[index + 1].x == 0.0f && points[index + 1].y == 0.0f && points[index + 1].z == 0.0f))
+					continue;
+				BeamDescription segment;
+				segment.start = points[index];
+				segment.end = points[index + 1];
+				segment.width = 0.10f;
+				segment.color = {1.0f, 0.38f, 0.06f, 1.0f};
+				segment.opacity = 0.72f;
+				segment.uv_scale = 2.5f;
+				segment.uv_offset = 0.25f;
+				if (!beam_renderer.Create(segment).Is_Valid())
+					return false;
+			}
+			return true;
 		}
 
 		if (kind == SceneKind::RopeAdapter) {
@@ -402,7 +432,7 @@ private:
 static bool Render_Scene(Device &, CommandList &commands, RHITextureHandle color_target, RHITextureHandle depth_target, RHIViewport viewport, void *context) noexcept
 {
 	VisualScene &scene = *static_cast<VisualScene *>(context);
-	if (scene.kind == SceneKind::Beam || scene.kind == SceneKind::LaserAdapter || scene.kind == SceneKind::RopeAdapter) {
+	if (scene.kind == SceneKind::Beam || scene.kind == SceneKind::LaserAdapter || scene.kind == SceneKind::RopeAdapter || scene.kind == SceneKind::ProjectileStreamAdapter) {
 		return commands.Set_Render_Targets(color_target, depth_target)
 			&& commands.Clear({0.02f, 0.02f, 0.03f, 1.0f}, 1.0f)
 			&& scene.beam_renderer.Render(commands, color_target, depth_target, viewport);
@@ -526,4 +556,9 @@ BOOST_AUTO_TEST_CASE(laser_adapter_matches_golden_image)
 BOOST_AUTO_TEST_CASE(rope_adapter_matches_golden_image)
 {
 	Run_Scene(SceneKind::RopeAdapter, "rope_adapter");
+}
+
+BOOST_AUTO_TEST_CASE(projectile_stream_adapter_matches_golden_image)
+{
+	Run_Scene(SceneKind::ProjectileStreamAdapter, "projectile_stream_adapter");
 }
