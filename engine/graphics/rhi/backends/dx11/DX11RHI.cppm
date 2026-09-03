@@ -25,7 +25,6 @@ export import Graphics.RHI;
 
 import Graphics.Resources.Pools.ResourcePool;
 import Graphics.RHI.Frame;
-import Graphics.Scene.Beams;
 
 namespace Graphics
 {
@@ -1422,10 +1421,6 @@ export extern "C" bool Graphics_DX11_Initialize_Shared_Frame(
 	g_shared_frame_device = std::move(device_instance);
 	const RHIBackbuffer backbuffer = g_shared_frame_device->Get_Swap_Chain().Backbuffer();
 	const RHIDepthTarget depth = g_shared_frame_device->Get_Swap_Chain().Depth_Target();
-	if (!Graphics_Beam_Initialize(g_shared_frame_device.get(), "GraphicsShaders", 4096)) {
-		g_shared_frame_device.reset();
-		return false;
-	}
 	return backbuffer.texture.Is_Valid() && depth.texture.Is_Valid();
 }
 
@@ -1453,20 +1448,17 @@ export extern "C" bool Graphics_DX11_Begin_Frame() noexcept
 
 export extern "C" bool Graphics_DX11_Begin_Modern_Phase() noexcept
 {
-	if (g_shared_frame_device == nullptr || !g_frame_owner.Begin_Modern_Phase(*g_shared_frame_device))
-		return false;
-
-	const FrameTargets targets = g_frame_owner.Targets();
-	return Graphics_Beam_Render(targets.backbuffer.texture, targets.depth.texture, targets.backbuffer.width, targets.backbuffer.height);
+	return g_shared_frame_device != nullptr && g_frame_owner.Begin_Modern_Phase(*g_shared_frame_device);
 }
 
-export extern "C" bool Graphics_DX11_Set_Modern_View(
-	const float *view_projection,
-	const float *camera_right,
-	const float *camera_up,
-	const float *camera_forward) noexcept
+export bool Register_Modern_Phase_Executor(ModernPhaseInitializer initializer, ModernPhaseExecutor executor)
 {
-	return Graphics_Beam_Set_View(view_projection, camera_right, camera_up, camera_forward);
+	if (g_shared_frame_device == nullptr || g_frame_owner.Phase() != FrameOwnerPhase::Idle)
+		return false;
+	if (initializer != nullptr && !initializer(*g_shared_frame_device))
+		return false;
+
+	return g_frame_owner.Set_Modern_Phase_Executor(executor);
 }
 
 export extern "C" bool Graphics_DX11_End_Frame() noexcept
@@ -1495,7 +1487,7 @@ export extern "C" void Graphics_DX11_Shutdown_Shared_Frame() noexcept
 	if (g_shared_frame_device != nullptr)
 		g_frame_owner.Abort(*g_shared_frame_device);
 
-	Graphics_Beam_Shutdown();
+	g_frame_owner.Set_Modern_Phase_Executor(nullptr);
 	g_shared_frame_device.reset();
 }
 

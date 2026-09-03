@@ -29,9 +29,9 @@
 
 #pragma once
 
-// INCLUDES ///////////////////////////////////////////////////////////////////////////////////////
-#include <cstdint>
+import Graphics.Scene.Beams;
 
+// INCLUDES ///////////////////////////////////////////////////////////////////////////////////////
 #include "Common/DrawModule.h"
 #include "WW3D2/Line3D.h"
 
@@ -67,7 +67,7 @@ protected:
 	bool updateModernTracer() noexcept;
 
 	Line3DClass *m_theTracer;			///< the tracer render object in the W3D scene
-	std::uint64_t m_modernBeam;
+	Graphics::BeamHandle m_modernBeam;
 	Matrix3D m_modernTransform;
 	Bool m_modernTransformValid;
 	Real m_length;								///< length of tracer

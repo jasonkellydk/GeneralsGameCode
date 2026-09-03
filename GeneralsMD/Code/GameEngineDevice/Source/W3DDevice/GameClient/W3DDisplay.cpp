@@ -43,6 +43,9 @@ static void drawFramerateBar();
 #include <string>
 #include <time.h>
 
+import Graphics.RHI.DX11.Coexistence;
+import Graphics.Scene.Beams;
+
 // USER INCLUDES //////////////////////////////////////////////////////////////
 #include "Common/FramePacer.h"
 #include "Common/ThingFactory.h"
@@ -127,11 +130,6 @@ extern "C" bool Graphics_DX11_Update_Shared_Frame(
 	std::uint32_t height);
 extern "C" bool Graphics_DX11_Begin_Frame() noexcept;
 extern "C" bool Graphics_DX11_Begin_Modern_Phase() noexcept;
-extern "C" bool Graphics_DX11_Set_Modern_View(
-	const float *view_projection,
-	const float *camera_right,
-	const float *camera_up,
-	const float *camera_forward) noexcept;
 extern "C" bool Graphics_DX11_End_Frame() noexcept;
 extern "C" bool Graphics_DX11_Present() noexcept;
 extern "C" void Graphics_DX11_Abort_Frame() noexcept;
@@ -149,12 +147,32 @@ extern "C" void Graphics_DX11_Shutdown_Shared_Frame() noexcept;
 
 #define no_SAMPLE_DYNAMIC_LIGHT	1
 static bool modernRendererAvailable = false;
+static Graphics::BeamView modernBeamView;
 #ifdef SAMPLE_DYNAMIC_LIGHT
 static W3DDynamicLight * theDynamicLight = nullptr;
 static Real theLightXOffset = 0.1f;
 static Real theLightYOffset = 0.07f;
 static Int theFlashCount = 0;
 #endif
+
+static bool initializeModernBeamRenderer(Graphics::Device &device)
+{
+	Graphics::BeamRenderer &beam_renderer = Graphics::GetBeamRenderer();
+	return beam_renderer.Is_Initialized()
+		|| beam_renderer.Initialize(device, std::filesystem::path("GraphicsShaders"), 4096);
+}
+
+static bool executeModernBeamRenderer(Graphics::Device &, Graphics::CommandList &commands, const Graphics::FrameTargets &targets) noexcept
+{
+	if (!Graphics::SetBeamView(modernBeamView))
+		return false;
+
+	return Graphics::GetBeamRenderer().Render(
+		commands,
+		targets.backbuffer.texture,
+		targets.depth.texture,
+		{0, 0, targets.backbuffer.width, targets.backbuffer.height, 0.0f, 1.0f});
+}
 
 static bool initializeModernRenderer()
 {
@@ -163,7 +181,7 @@ static bool initializeModernRenderer()
 	if (backend == nullptr || !backend->Get_Shared_Frame_Resources(resources))
 		return false;
 
-	return Graphics_DX11_Initialize_Shared_Frame(
+	if (!Graphics_DX11_Initialize_Shared_Frame(
 		resources.device,
 		resources.context,
 		resources.swap_chain,
@@ -172,7 +190,23 @@ static bool initializeModernRenderer()
 		resources.depth_buffer,
 		resources.depth_buffer_view,
 		resources.width,
-		resources.height);
+		resources.height))
+		return false;
+
+	if (Graphics::Register_Modern_Phase_Executor(
+		&initializeModernBeamRenderer,
+		&executeModernBeamRenderer))
+		return true;
+
+	Graphics_DX11_Shutdown_Shared_Frame();
+	Graphics::GetBeamRenderer().Shutdown();
+	return false;
+}
+
+static void shutdownModernRenderer() noexcept
+{
+	Graphics_DX11_Shutdown_Shared_Frame();
+	Graphics::GetBeamRenderer().Shutdown();
 }
 
 static bool beginSharedFrame()
@@ -216,11 +250,11 @@ static void updateModernView(const CameraClass *camera)
 	const Vector3 right = camera->Get_Right_Dir();
 	const Vector3 up = camera->Get_Up_Dir();
 	const Vector3 forward = camera->Get_Forward_Dir();
-	Graphics_DX11_Set_Modern_View(
-		viewProjectionElements,
-		&right.X,
-		&up.X,
-		&forward.X);
+	for (std::size_t index = 0; index < modernBeamView.view_projection.size(); ++index)
+		modernBeamView.view_projection[index] = viewProjectionElements[index];
+	modernBeamView.camera_right = {right.X, right.Y, right.Z};
+	modernBeamView.camera_up = {up.X, up.Y, up.Z};
+	modernBeamView.camera_forward = {forward.X, forward.Y, forward.Z};
 }
 
 static bool renderModernAfterLegacy(const CameraClass *camera)
@@ -592,7 +626,7 @@ W3DDisplay::~W3DDisplay()
 	m_assetManager->Free_Assets();
 	delete m_assetManager;
 	modernRendererAvailable = false;
-	Graphics_DX11_Shutdown_Shared_Frame();
+	shutdownModernRenderer();
 	if (!TheGlobalData->m_headless)
 		WW3D::Shutdown();
 	WWMath::Shutdown();
@@ -728,7 +762,7 @@ Bool W3DDisplay::setDisplayMode( UnsignedInt xres, UnsignedInt yres, UnsignedInt
 		return FALSE;
 	resizeSDLWindow(xres, yres, windowed);
 	modernRendererAvailable = false;
-	Graphics_DX11_Shutdown_Shared_Frame();
+	shutdownModernRenderer();
 	if (WW3D_ERROR_OK == WW3D::Set_Render_Device(
 		WW3D::Get_Render_Device(), xres, yres, bitdepth, windowed, false, true, true))
 	{

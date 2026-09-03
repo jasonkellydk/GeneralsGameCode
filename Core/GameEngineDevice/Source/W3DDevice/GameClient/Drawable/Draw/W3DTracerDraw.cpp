@@ -29,7 +29,8 @@
 
 // INCLUDES ///////////////////////////////////////////////////////////////////////////////////////
 #include <stdlib.h>
-#include <cstdint>
+
+import Graphics.Scene.Beams;
 
 #include "Common/Thing.h"
 #include "Common/ThingTemplate.h"
@@ -42,34 +43,20 @@
 #include "WW3D2/Line3D.h"
 #include "W3DDevice/GameClient/W3DScene.h"
 
-extern "C" std::uint64_t Graphics_Beam_Create(
-	float start_x,
-	float start_y,
-	float start_z,
-	float end_x,
-	float end_y,
-	float end_z,
-	float width,
-	float red,
-	float green,
-	float blue,
-	float opacity,
-	std::uint32_t flags);
-extern "C" bool Graphics_Beam_Update(
-	std::uint64_t handle,
-	float start_x,
-	float start_y,
-	float start_z,
-	float end_x,
-	float end_y,
-	float end_z,
-	float width,
-	float red,
-	float green,
-	float blue,
-	float opacity,
-	std::uint32_t flags) noexcept;
-extern "C" bool Graphics_Beam_Destroy(std::uint64_t handle) noexcept;
+namespace
+{
+Graphics::BeamDesc Make_Modern_Beam(const Vector3 &start, const Vector3 &end, Real width, const RGBColor &color, Real opacity) noexcept
+{
+	Graphics::BeamDesc description;
+	description.start = {start.X, start.Y, start.Z};
+	description.end = {end.X, end.Y, end.Z};
+	description.width = width;
+	description.color = {color.red, color.green, color.blue, 1.0f};
+	description.opacity = opacity;
+	description.flags = width > 0.0f && opacity > 0.0f ? Graphics::BeamFlags::Enabled : Graphics::BeamFlags::None;
+	return description;
+}
+}
 
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////
@@ -90,7 +77,7 @@ W3DTracerDraw::W3DTracerDraw( Thing *thing, const ModuleData* moduleData ) : Dra
 	m_color.blue = 0.7f;
 	m_speedInDistPerFrame = 1.0f;
 	m_theTracer = nullptr;
-	m_modernBeam = 0;
+	m_modernBeam = {};
 	m_modernTransformValid = FALSE;
 
 }
@@ -116,7 +103,7 @@ void W3DTracerDraw::createLegacyTracer(const Matrix3D& transform)
 
 bool W3DTracerDraw::updateModernTracer() noexcept
 {
-	if (m_modernBeam == 0 || !m_modernTransformValid)
+	if (!m_modernBeam.Is_Valid() || !m_modernTransformValid)
 		return false;
 
 	const Vector3 localStart(0.0f, 0.0f, 0.0f);
@@ -125,20 +112,7 @@ bool W3DTracerDraw::updateModernTracer() noexcept
 	Vector3 end;
 	Matrix3D::Transform_Vector(m_modernTransform, localStart, &start);
 	Matrix3D::Transform_Vector(m_modernTransform, localEnd, &end);
-	return Graphics_Beam_Update(
-		m_modernBeam,
-		start.X,
-		start.Y,
-		start.Z,
-		end.X,
-		end.Y,
-		end.Z,
-		m_width,
-		m_color.red,
-		m_color.green,
-		m_color.blue,
-		m_opacity,
-		1u);
+	return Graphics::UpdateBeam(m_modernBeam, Make_Modern_Beam(start, end, m_width, m_color, m_opacity));
 }
 
 //-------------------------------------------------------------------------------------------------
@@ -150,10 +124,10 @@ void W3DTracerDraw::setTracerParms(Real speed, Real length, Real width, const RG
 	m_width = width;
 	m_color = color;
 	m_opacity = initialOpacity;
-	if (m_modernBeam != 0) {
+	if (m_modernBeam.Is_Valid()) {
 		if (!updateModernTracer()) {
-			Graphics_Beam_Destroy(m_modernBeam);
-			m_modernBeam = 0;
+			Graphics::DestroyBeam(m_modernBeam);
+			m_modernBeam = {};
 			createLegacyTracer(m_modernTransform);
 		}
 	}
@@ -173,8 +147,8 @@ void W3DTracerDraw::setTracerParms(Real speed, Real length, Real width, const RG
 //-------------------------------------------------------------------------------------------------
 W3DTracerDraw::~W3DTracerDraw()
 {
-	if (m_modernBeam != 0)
-		Graphics_Beam_Destroy(m_modernBeam);
+	if (m_modernBeam.Is_Valid())
+		Graphics::DestroyBeam(m_modernBeam);
 
 	// remove tracer from the scene and delete
 	if( m_theTracer )
@@ -191,9 +165,9 @@ void W3DTracerDraw::reactToTransformChange( const Matrix3D *oldMtx,
 {
 	if (m_modernTransformValid)
 		m_modernTransform = *getDrawable()->getTransformMatrix();
-	if (m_modernBeam != 0 && !updateModernTracer()) {
-		Graphics_Beam_Destroy(m_modernBeam);
-		m_modernBeam = 0;
+	if (m_modernBeam.Is_Valid() && !updateModernTracer()) {
+		Graphics::DestroyBeam(m_modernBeam);
+		m_modernBeam = {};
 		createLegacyTracer(m_modernTransform);
 	}
 	if( m_theTracer )
@@ -211,7 +185,7 @@ void W3DTracerDraw::doDrawModule(const Matrix3D* transformMtx)
 	}
 
 	// create tracer
-	if (m_theTracer == nullptr && m_modernBeam == 0)
+	if (m_theTracer == nullptr && !m_modernBeam.Is_Valid())
 	{
 		const Vector3 localStart(0.0f, 0.0f, 0.0f);
 		const Vector3 localEnd(m_length, 0.0f, 0.0f);
@@ -219,20 +193,8 @@ void W3DTracerDraw::doDrawModule(const Matrix3D* transformMtx)
 		Vector3 end;
 		Matrix3D::Transform_Vector(m_modernTransform, localStart, &start);
 		Matrix3D::Transform_Vector(m_modernTransform, localEnd, &end);
-		m_modernBeam = Graphics_Beam_Create(
-			start.X,
-			start.Y,
-			start.Z,
-			end.X,
-			end.Y,
-			end.Z,
-			m_width,
-			m_color.red,
-			m_color.green,
-			m_color.blue,
-			m_opacity,
-			1u);
-		if (m_modernBeam == 0)
+		m_modernBeam = Graphics::CreateBeam(Make_Modern_Beam(start, end, m_width, m_color, m_opacity));
+		if (!m_modernBeam.Is_Valid())
 			createLegacyTracer(*transformMtx);
 	}
 
@@ -248,11 +210,11 @@ void W3DTracerDraw::doDrawModule(const Matrix3D* transformMtx)
 	// set the position for the tracer
 	if (m_speedInDistPerFrame != 0.0f)
 	{
-		if (m_modernBeam != 0) {
+		if (m_modernBeam.Is_Valid()) {
 			m_modernTransform.Translate(Vector3(m_speedInDistPerFrame, 0.0f, 0.0f));
 			if (!updateModernTracer()) {
-				Graphics_Beam_Destroy(m_modernBeam);
-				m_modernBeam = 0;
+				Graphics::DestroyBeam(m_modernBeam);
+				m_modernBeam = {};
 				createLegacyTracer(m_modernTransform);
 			}
 		} else if (m_theTracer) {
@@ -261,9 +223,9 @@ void W3DTracerDraw::doDrawModule(const Matrix3D* transformMtx)
 			m_theTracer->Set_Transform(pos);
 		}
 	}
-	if (m_modernBeam != 0 && !updateModernTracer()) {
-		Graphics_Beam_Destroy(m_modernBeam);
-		m_modernBeam = 0;
+	if (m_modernBeam.Is_Valid() && !updateModernTracer()) {
+		Graphics::DestroyBeam(m_modernBeam);
+		m_modernBeam = {};
 		createLegacyTracer(m_modernTransform);
 	}
 

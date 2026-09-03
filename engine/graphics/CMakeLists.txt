@@ -55,6 +55,17 @@ target_sources(generals_graphics
 
 target_compile_features(generals_graphics PUBLIC cxx_std_20)
 
+if(MSVC)
+    target_compile_options(generals_graphics INTERFACE
+        "SHELL:/reference Graphics.Scene.Beams=${CMAKE_CURRENT_BINARY_DIR}/CMakeFiles/generals_graphics.dir/$<CONFIG>/Graphics.Scene.Beams.ifc"
+        "SHELL:/reference Graphics.RHI.Frame=${CMAKE_CURRENT_BINARY_DIR}/CMakeFiles/generals_graphics.dir/$<CONFIG>/Graphics.RHI.Frame.ifc"
+        "SHELL:/reference Graphics.RHI.DX11=${CMAKE_CURRENT_BINARY_DIR}/CMakeFiles/generals_graphics.dir/$<CONFIG>/Graphics.RHI.DX11.ifc"
+        "SHELL:/reference Graphics.RHI.DX11.Coexistence=${CMAKE_CURRENT_BINARY_DIR}/CMakeFiles/generals_graphics.dir/$<CONFIG>/Graphics.RHI.DX11.Coexistence.ifc"
+        "/ifcSearchDir"
+        "${CMAKE_CURRENT_BINARY_DIR}/CMakeFiles/generals_graphics.dir/$<CONFIG>"
+    )
+endif()
+
 if(WIN32)
 	set(GRAPHICS_SHADER_ASSET_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/shaders/precompiled/dx11")
 	if(TARGET slang-bootstrap)

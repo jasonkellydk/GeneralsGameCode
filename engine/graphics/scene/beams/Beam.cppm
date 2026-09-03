@@ -48,16 +48,33 @@ export constexpr bool Has_Beam_Flag(BeamFlags flags, BeamFlags flag) noexcept
 	return (flags & flag) == flag;
 }
 
+export struct Vec3 final
+{
+	float x = 0.0f;
+	float y = 0.0f;
+	float z = 0.0f;
+};
+
+export struct Color4 final
+{
+	float r = 1.0f;
+	float g = 1.0f;
+	float b = 1.0f;
+	float a = 1.0f;
+};
+
 export struct BeamDescription final
 {
-	std::array<float, 3> start{};
-	std::array<float, 3> end{};
+	Vec3 start{};
+	Vec3 end{};
 	float width = 0.5f;
-	std::array<float, 4> color{1.0f, 1.0f, 1.0f, 1.0f};
+	Color4 color{};
 	float opacity = 1.0f;
 	MaterialHandle material{};
 	BeamFlags flags = BeamFlags::Enabled;
 };
+
+export using BeamDesc = BeamDescription;
 
 static_assert(std::is_nothrow_move_constructible_v<BeamDescription>);
 static_assert(std::is_nothrow_move_assignable_v<BeamDescription>);
@@ -185,17 +202,17 @@ public:
 			return false;
 
 		const std::uint32_t dense_index = m_slots[handle.Get_Index()].dense_index;
-		m_start_x[dense_index] = description.start[0];
-		m_start_y[dense_index] = description.start[1];
-		m_start_z[dense_index] = description.start[2];
-		m_end_x[dense_index] = description.end[0];
-		m_end_y[dense_index] = description.end[1];
-		m_end_z[dense_index] = description.end[2];
+		m_start_x[dense_index] = description.start.x;
+		m_start_y[dense_index] = description.start.y;
+		m_start_z[dense_index] = description.start.z;
+		m_end_x[dense_index] = description.end.x;
+		m_end_y[dense_index] = description.end.y;
+		m_end_z[dense_index] = description.end.z;
 		m_widths[dense_index] = description.width;
-		m_color_r[dense_index] = description.color[0];
-		m_color_g[dense_index] = description.color[1];
-		m_color_b[dense_index] = description.color[2];
-		m_color_a[dense_index] = description.color[3];
+		m_color_r[dense_index] = description.color.r;
+		m_color_g[dense_index] = description.color.g;
+		m_color_b[dense_index] = description.color.b;
+		m_color_a[dense_index] = description.color.a;
 		m_opacities[dense_index] = description.opacity;
 		m_materials[dense_index] = description.material;
 		m_flags[dense_index] = description.flags;
@@ -296,17 +313,17 @@ private:
 
 	void Append(const BeamDescription &description)
 	{
-		m_start_x.push_back(description.start[0]);
-		m_start_y.push_back(description.start[1]);
-		m_start_z.push_back(description.start[2]);
-		m_end_x.push_back(description.end[0]);
-		m_end_y.push_back(description.end[1]);
-		m_end_z.push_back(description.end[2]);
+		m_start_x.push_back(description.start.x);
+		m_start_y.push_back(description.start.y);
+		m_start_z.push_back(description.start.z);
+		m_end_x.push_back(description.end.x);
+		m_end_y.push_back(description.end.y);
+		m_end_z.push_back(description.end.z);
 		m_widths.push_back(description.width);
-		m_color_r.push_back(description.color[0]);
-		m_color_g.push_back(description.color[1]);
-		m_color_b.push_back(description.color[2]);
-		m_color_a.push_back(description.color[3]);
+		m_color_r.push_back(description.color.r);
+		m_color_g.push_back(description.color.g);
+		m_color_b.push_back(description.color.b);
+		m_color_a.push_back(description.color.a);
 		m_opacities.push_back(description.opacity);
 		m_materials.push_back(description.material);
 		m_flags.push_back(description.flags);
@@ -661,13 +678,6 @@ private:
 
 namespace
 {
-struct Vec3 final
-{
-	float x = 0.0f;
-	float y = 0.0f;
-	float z = 0.0f;
-};
-
 Vec3 operator-(Vec3 left, Vec3 right) noexcept
 {
 	return {left.x - right.x, left.y - right.y, left.z - right.z};
@@ -786,121 +796,41 @@ export std::size_t Build_Beam_Vertices(const BeamData &beams, const BeamView &vi
 namespace
 {
 BeamRenderer g_beam_renderer;
+}
 
-std::uint64_t Encode(BeamHandle handle) noexcept
+export BeamHandle CreateBeam(const BeamDesc &description)
 {
-	if (!handle.Is_Valid())
-		return 0;
-
-	return (static_cast<std::uint64_t>(handle.Get_Generation()) << 32) | handle.Get_Index();
+	return g_beam_renderer.Create(description);
 }
 
-BeamHandle Decode(std::uint64_t handle) noexcept
+export bool UpdateBeam(BeamHandle handle, const BeamDesc &description) noexcept
 {
-	return handle == 0 ? BeamHandle{} : BeamHandle(static_cast<std::uint32_t>(handle), static_cast<std::uint32_t>(handle >> 32));
+	return g_beam_renderer.Update(handle, description);
 }
 
-BeamDescription Make_Description(
-	float start_x,
-	float start_y,
-	float start_z,
-	float end_x,
-	float end_y,
-	float end_z,
-	float width,
-	float red,
-	float green,
-	float blue,
-	float opacity,
-	std::uint32_t flags) noexcept
+export void DestroyBeam(BeamHandle handle) noexcept
 {
-	BeamDescription description;
-	description.start = {start_x, start_y, start_z};
-	description.end = {end_x, end_y, end_z};
-	description.width = width;
-	description.color = {red, green, blue, 1.0f};
-	description.opacity = opacity;
-	description.flags = static_cast<BeamFlags>(flags);
-	return description;
-}
+	g_beam_renderer.Destroy(handle);
 }
 
-export extern "C" bool Graphics_Beam_Initialize(Device *device, const char *shader_directory, std::uint32_t max_beams)
+export bool InitializeBeams(Device &device, const std::filesystem::path &shader_directory, std::size_t max_beams)
 {
-	return device != nullptr && g_beam_renderer.Initialize(*device, std::filesystem::path(shader_directory != nullptr ? shader_directory : ""), max_beams);
+	return g_beam_renderer.Initialize(device, shader_directory, max_beams);
 }
 
-export extern "C" void Graphics_Beam_Shutdown() noexcept
+export void ShutdownBeams() noexcept
 {
 	g_beam_renderer.Shutdown();
 }
 
-export extern "C" bool Graphics_Beam_Set_View(
-	const float *view_projection,
-	const float *camera_right,
-	const float *camera_up,
-	const float *camera_forward) noexcept
+export bool SetBeamView(const BeamView &view) noexcept
 {
-	if (!g_beam_renderer.Is_Initialized() || view_projection == nullptr || camera_right == nullptr || camera_up == nullptr || camera_forward == nullptr)
-		return false;
-
-	BeamView view = g_beam_renderer.View();
-	for (std::size_t index = 0; index < view.view_projection.size(); ++index)
-		view.view_projection[index] = view_projection[index];
-	for (std::size_t index = 0; index < view.camera_right.size(); ++index) {
-		view.camera_right[index] = camera_right[index];
-		view.camera_up[index] = camera_up[index];
-		view.camera_forward[index] = camera_forward[index];
-	}
 	return g_beam_renderer.Set_View(view);
 }
 
-export extern "C" std::uint64_t Graphics_Beam_Create(
-	float start_x,
-	float start_y,
-	float start_z,
-	float end_x,
-	float end_y,
-	float end_z,
-	float width,
-	float red,
-	float green,
-	float blue,
-	float opacity,
-	std::uint32_t flags)
+export BeamRenderer &GetBeamRenderer() noexcept
 {
-	return Encode(g_beam_renderer.Create(Make_Description(start_x, start_y, start_z, end_x, end_y, end_z, width, red, green, blue, opacity, flags)));
-}
-
-export extern "C" bool Graphics_Beam_Update(
-	std::uint64_t handle,
-	float start_x,
-	float start_y,
-	float start_z,
-	float end_x,
-	float end_y,
-	float end_z,
-	float width,
-	float red,
-	float green,
-	float blue,
-	float opacity,
-	std::uint32_t flags) noexcept
-{
-	return g_beam_renderer.Update(Decode(handle), Make_Description(start_x, start_y, start_z, end_x, end_y, end_z, width, red, green, blue, opacity, flags));
-}
-
-export extern "C" bool Graphics_Beam_Destroy(std::uint64_t handle) noexcept
-{
-	return g_beam_renderer.Destroy(Decode(handle));
-}
-
-export extern "C" bool Graphics_Beam_Render(RHITextureHandle color_target, RHITextureHandle depth_target, std::uint32_t width, std::uint32_t height) noexcept
-{
-	if (!g_beam_renderer.Is_Initialized() || width == 0 || height == 0)
-		return false;
-
-	return g_beam_renderer.Render(color_target, depth_target, {0, 0, width, height, 0.0f, 1.0f});
+	return g_beam_renderer;
 }
 
 }

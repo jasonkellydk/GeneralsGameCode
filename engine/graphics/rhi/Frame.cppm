@@ -73,6 +73,9 @@ export struct FrameTargets final
 	RHIDepthTarget depth{};
 };
 
+export using ModernPhaseInitializer = bool (*)(Device &);
+export using ModernPhaseExecutor = bool (*)(Device &, CommandList &, const FrameTargets &) noexcept;
+
 export enum class FrameOwnerPhase : std::uint8_t
 {
 	Idle,
@@ -84,6 +87,15 @@ export enum class FrameOwnerPhase : std::uint8_t
 export class FrameOwner final
 {
 public:
+	bool Set_Modern_Phase_Executor(ModernPhaseExecutor executor) noexcept
+	{
+		if (m_phase != FrameOwnerPhase::Idle)
+			return Reject();
+
+		m_modern_phase_executor = executor;
+		return true;
+	}
+
 	bool Begin_Frame(Device &device) noexcept
 	{
 		if (m_phase != FrameOwnerPhase::Idle || !device.Is_Valid())
@@ -114,6 +126,9 @@ public:
 
 		CommandList &command_list = device.Immediate_Command_List();
 		if (!command_list.Reset_State() || !command_list.Set_Render_Targets(m_targets.backbuffer.texture, m_targets.depth.texture))
+			return Reject();
+
+		if (m_modern_phase_executor != nullptr && !m_modern_phase_executor(device, command_list, m_targets))
 			return Reject();
 
 		m_phase = FrameOwnerPhase::Modern;
@@ -186,6 +201,7 @@ private:
 	FrameOwnerPhase m_phase = FrameOwnerPhase::Idle;
 	Device *m_device = nullptr;
 	FrameTargets m_targets{};
+	ModernPhaseExecutor m_modern_phase_executor = nullptr;
 	std::uint32_t m_invalid_operation_count = 0;
 };
 

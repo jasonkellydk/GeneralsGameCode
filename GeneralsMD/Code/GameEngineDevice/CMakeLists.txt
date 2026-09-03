@@ -171,6 +171,8 @@ set(GAMEENGINEDEVICE_SRC
 
 add_library(z_gameenginedevice STATIC)
 
+add_dependencies(z_gameenginedevice generals_graphics)
+
 target_sources(z_gameenginedevice PRIVATE
     ${GAMEENGINEDEVICE_SRC}
 )
@@ -194,6 +196,10 @@ target_link_libraries(z_gameenginedevice PRIVATE
     zi_main
     stb
     SDL3::SDL3
+)
+
+target_link_libraries(z_gameenginedevice PUBLIC
+    generals_graphics
 )
 
 target_link_libraries(z_gameenginedevice PUBLIC

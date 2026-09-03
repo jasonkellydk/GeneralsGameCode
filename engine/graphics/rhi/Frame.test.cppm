@@ -123,6 +123,16 @@ private:
 	bool m_frame_active = false;
 };
 
+static std::uint32_t g_modern_executor_calls = 0;
+
+static bool Execute_Test_Modern_Phase(Device &device, CommandList &commands, const FrameTargets &targets) noexcept
+{
+	++g_modern_executor_calls;
+	return &device.Immediate_Command_List() == &commands
+		&& targets.backbuffer.texture.Is_Valid()
+		&& targets.depth.texture.Is_Valid();
+}
+
 BOOST_AUTO_TEST_CASE(frame_binds_current_targets_and_controls_lifecycle)
 {
 	RenderGraph graph;
@@ -204,6 +214,20 @@ BOOST_AUTO_TEST_CASE(frame_handoff_rejects_double_present_and_invalid_ownership)
 	BOOST_CHECK(!owner.Present(device));
 	BOOST_CHECK_EQUAL(device.Test_Swap_Chain().Present_Count(), 1);
 	BOOST_CHECK_EQUAL(owner.Invalid_Operation_Count(), 3);
+}
+
+BOOST_AUTO_TEST_CASE(frame_owner_executes_registered_generic_modern_phase)
+{
+	TestDevice device;
+	FrameOwner owner;
+	g_modern_executor_calls = 0;
+
+	BOOST_REQUIRE(owner.Set_Modern_Phase_Executor(&Execute_Test_Modern_Phase));
+	BOOST_REQUIRE(owner.Begin_Frame(device));
+	BOOST_REQUIRE(owner.Begin_Modern_Phase(device));
+	BOOST_CHECK_EQUAL(g_modern_executor_calls, 1);
+	BOOST_REQUIRE(owner.End_Frame(device));
+	BOOST_REQUIRE(owner.Present(device));
 }
 
 BOOST_AUTO_TEST_CASE(frame_owner_rejects_foreign_device_phase_access)

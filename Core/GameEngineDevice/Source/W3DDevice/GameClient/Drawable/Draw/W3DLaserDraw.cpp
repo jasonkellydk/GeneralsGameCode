@@ -31,6 +31,8 @@
 // INCLUDES ///////////////////////////////////////////////////////////////////////////////////////
 #include <stdlib.h>
 
+import Graphics.Scene.Beams;
+
 #include "Common/Thing.h"
 #include "Common/ThingTemplate.h"
 #include "Common/Xfer.h"
@@ -50,8 +52,6 @@
 #include "WW3D2/SegLine.h"
 #include "WWMath/vector3.h"
 #include "WW3D2/AssetMgr.h"
-
-
 
 // PUBLIC FUNCTIONS ///////////////////////////////////////////////////////////////////////////////
 
@@ -111,6 +111,9 @@ void W3DLaserDrawModuleData::buildFieldParse(MultiIniFieldParse& p)
 W3DLaserDraw::W3DLaserDraw( Thing *thing, const ModuleData* moduleData ) :
 	DrawModule( thing, moduleData ),
 	m_line3D(nullptr),
+	m_modernBeams(nullptr),
+	m_modernBeamCount(0),
+	m_modernEnabled(TRUE),
 	m_texture(nullptr),
 	m_textureAspectRatio(1.0f),
 	m_selfDirty(TRUE)
@@ -120,6 +123,13 @@ W3DLaserDraw::W3DLaserDraw( Thing *thing, const ModuleData* moduleData ) :
 	Int i;
 
 	const W3DLaserDrawModuleData *data = getW3DLaserDrawModuleData();
+	m_modernBeamCount = data->m_numBeams * data->m_segments;
+	if (m_modernBeamCount != 0)
+	{
+		m_modernBeams = NEW Graphics::BeamHandle[m_modernBeamCount];
+		for (UnsignedInt index = 0; index < m_modernBeamCount; ++index)
+		m_modernBeams[index] = {};
+	}
 
 	m_texture = WW3DAssetManager::Get_Instance()->Get_Texture( data->m_textureName.str() );
 	if (m_texture)
@@ -215,11 +225,67 @@ W3DLaserDraw::W3DLaserDraw( Thing *thing, const ModuleData* moduleData ) :
 
 }
 
+bool W3DLaserDraw::updateModernBeam(UnsignedInt index, const Vector3 &start, const Vector3 &end, Real width, Real red, Real green, Real blue, Real opacity)
+{
+	if (!m_modernEnabled || m_modernBeams == nullptr || index >= m_modernBeamCount)
+		return false;
+
+	Graphics::BeamHandle &beam = m_modernBeams[index];
+	Graphics::BeamDesc description;
+	description.start = {start.X, start.Y, start.Z};
+	description.end = {end.X, end.Y, end.Z};
+	description.width = width;
+	description.color = {red, green, blue, 1.0f};
+	description.opacity = opacity;
+	description.flags = width > 0.0f && opacity > 0.0f ? Graphics::BeamFlags::Enabled : Graphics::BeamFlags::None;
+	if (!beam.Is_Valid())
+	{
+		beam = Graphics::CreateBeam(description);
+		if (!beam.Is_Valid())
+			return false;
+	}
+
+	return Graphics::UpdateBeam(beam, description);
+}
+
+void W3DLaserDraw::disableModernBeams() noexcept
+{
+	if (m_modernBeams != nullptr)
+	{
+		for (UnsignedInt index = 0; index < m_modernBeamCount; ++index)
+		{
+			if (m_modernBeams[index].Is_Valid())
+			{
+				Graphics::DestroyBeam(m_modernBeams[index]);
+				m_modernBeams[index] = {};
+			}
+		}
+	}
+
+	m_modernEnabled = FALSE;
+	setLegacyBeamsVisible(TRUE);
+}
+
+void W3DLaserDraw::setLegacyBeamsVisible(Bool visible) noexcept
+{
+	if (m_line3D == nullptr)
+		return;
+
+	for (UnsignedInt index = 0; index < m_modernBeamCount; ++index)
+	{
+		if (m_line3D[index] != nullptr)
+			m_line3D[index]->Set_Visible(visible);
+	}
+}
+
 //-------------------------------------------------------------------------------------------------
 //-------------------------------------------------------------------------------------------------
 W3DLaserDraw::~W3DLaserDraw()
 {
 	const W3DLaserDrawModuleData *data = getW3DLaserDrawModuleData();
+	disableModernBeams();
+	delete [] m_modernBeams;
+	m_modernBeams = nullptr;
 
 	for( UnsignedInt i = 0; i < data->m_numBeams * data->m_segments; i++ )
 	{
@@ -270,6 +336,9 @@ void W3DLaserDraw::doDrawModule(const Matrix3D* transformMtx)
 		m_selfDirty = false;
 
 		Vector3 laserPoints[ 2 ];
+		Real innerRed, innerGreen, innerBlue, innerAlpha, outerRed, outerGreen, outerBlue, outerAlpha;
+		GameGetColorComponentsReal( data->m_innerColor, &innerRed, &innerGreen, &innerBlue, &innerAlpha );
+		GameGetColorComponentsReal( data->m_outerColor, &outerRed, &outerGreen, &outerBlue, &outerAlpha );
 
 		for( UnsignedInt segment = 0; segment < data->m_segments; segment++ )
 		{
@@ -369,21 +438,19 @@ void W3DLaserDraw::doDrawModule(const Matrix3D* transformMtx)
 				laserPoints[ 1 ].Set( update->getEndPos()->x, update->getEndPos()->y, update->getEndPos()->z );
 			}
 
-			//Get the color components for calculation purposes.
-			Real innerRed, innerGreen, innerBlue, innerAlpha, outerRed, outerGreen, outerBlue, outerAlpha;
-			GameGetColorComponentsReal( data->m_innerColor, &innerRed, &innerGreen, &innerBlue, &innerAlpha );
-			GameGetColorComponentsReal( data->m_outerColor, &outerRed, &outerGreen, &outerBlue, &outerAlpha );
-
 			for( Int i = data->m_numBeams - 1; i >= 0; i-- )
 			{
 
-				Real alpha, width;
+				Real alpha, width, red, green, blue;
 				int index = segment * data->m_numBeams + i;
 
 				if( data->m_numBeams == 1 )
 				{
 					width = data->m_innerBeamWidth * update->getWidthScale();
 					alpha = innerAlpha;
+					red = innerRed * innerAlpha;
+					green = innerGreen * innerAlpha;
+					blue = innerBlue * innerAlpha;
 				}
 				else
 				{
@@ -395,6 +462,9 @@ void W3DLaserDraw::doDrawModule(const Matrix3D* transformMtx)
 					width		= (data->m_innerBeamWidth	+ scale * (data->m_outerBeamWidth - data->m_innerBeamWidth));
 					width *= ultimateScale;
 					alpha		= innerAlpha							+ scale * (outerAlpha - innerAlpha);
+					red = innerRed + scale * (outerRed - innerRed) * innerAlpha;
+					green = innerGreen + scale * (outerGreen - innerGreen) * innerAlpha;
+					blue = innerBlue + scale * (outerBlue - innerBlue) * innerAlpha;
 				}
 
 
@@ -415,6 +485,9 @@ void W3DLaserDraw::doDrawModule(const Matrix3D* transformMtx)
 
 				m_line3D[ index ]->Set_Width( width );
 				m_line3D[ index ]->Set_Points( 2, &laserPoints[0] );
+
+				if (m_modernEnabled && !updateModernBeam(index, laserPoints[0], laserPoints[1], width, red, green, blue, alpha))
+					disableModernBeams();
 			}
 		}
 	}

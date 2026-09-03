@@ -71,9 +71,9 @@ enum class SceneKind : std::uint8_t
 {
 	BasicTriangle,
 	TexturedMesh,
-	LitMeshWithShadow
-	,
-	Beam
+	LitMeshWithShadow,
+	Beam,
+	LaserAdapter
 };
 
 struct VisualScene final
@@ -138,7 +138,7 @@ struct VisualScene final
 
 	bool Initialize(Device &device)
 	{
-		if (kind == SceneKind::Beam)
+		if (kind == SceneKind::Beam || kind == SceneKind::LaserAdapter)
 			return Initialize_Beam(device);
 		if (kind == SceneKind::BasicTriangle)
 			return Initialize_Basic_Opaque(device);
@@ -226,13 +226,30 @@ struct VisualScene final
 		if (!beam_renderer.Initialize(device, std::filesystem::path(GRAPHICS_RENDERER_SHADER_DIRECTORY), 4))
 			return false;
 
-		BeamDescription beam;
-		beam.start = {-0.75f, -0.15f, 0.0f};
-		beam.end = {0.75f, 0.15f, 0.0f};
-		beam.width = 0.10f;
-		beam.color = {1.0f, 0.25f, 0.05f, 1.0f};
-		beam.opacity = 0.75f;
-		return beam_renderer.Create(beam).Is_Valid();
+		if (kind == SceneKind::Beam) {
+			BeamDescription beam;
+			beam.start = {-0.75f, -0.15f, 0.0f};
+			beam.end = {0.75f, 0.15f, 0.0f};
+			beam.width = 0.10f;
+			beam.color = {1.0f, 0.25f, 0.05f, 1.0f};
+			beam.opacity = 0.75f;
+			return beam_renderer.Create(beam).Is_Valid();
+		}
+
+		BeamDescription outer;
+		outer.start = {-0.80f, 0.0f, 0.0f};
+		outer.end = {0.80f, 0.0f, 0.0f};
+		outer.width = 0.18f;
+		outer.color = {1.0f, 0.08f, 0.01f, 1.0f};
+		outer.opacity = 0.45f;
+		if (!beam_renderer.Create(outer).Is_Valid())
+			return false;
+
+		BeamDescription inner = outer;
+		inner.width = 0.07f;
+		inner.color = {1.0f, 0.90f, 0.25f, 1.0f};
+		inner.opacity = 0.90f;
+		return beam_renderer.Create(inner).Is_Valid();
 	}
 
 	bool Initialize_Basic_Opaque(Device &device)
@@ -353,7 +370,7 @@ private:
 static bool Render_Scene(Device &, CommandList &commands, RHITextureHandle color_target, RHITextureHandle depth_target, RHIViewport viewport, void *context) noexcept
 {
 	VisualScene &scene = *static_cast<VisualScene *>(context);
-	if (scene.kind == SceneKind::Beam) {
+	if (scene.kind == SceneKind::Beam || scene.kind == SceneKind::LaserAdapter) {
 		return commands.Set_Render_Targets(color_target, depth_target)
 			&& commands.Clear({0.02f, 0.02f, 0.03f, 1.0f}, 1.0f)
 			&& scene.beam_renderer.Render(commands, color_target, depth_target, viewport);
@@ -467,4 +484,9 @@ BOOST_AUTO_TEST_CASE(lit_mesh_with_shadow_matches_golden_image)
 BOOST_AUTO_TEST_CASE(generic_beam_matches_golden_image)
 {
 	Run_Scene(SceneKind::Beam, "generic_beam");
+}
+
+BOOST_AUTO_TEST_CASE(laser_adapter_matches_golden_image)
+{
+	Run_Scene(SceneKind::LaserAdapter, "laser_adapter");
 }
