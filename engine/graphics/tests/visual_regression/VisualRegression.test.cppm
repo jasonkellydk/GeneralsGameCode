@@ -73,7 +73,8 @@ enum class SceneKind : std::uint8_t
 	TexturedMesh,
 	LitMeshWithShadow,
 	Beam,
-	LaserAdapter
+	LaserAdapter,
+	RopeAdapter
 };
 
 struct VisualScene final
@@ -138,7 +139,7 @@ struct VisualScene final
 
 	bool Initialize(Device &device)
 	{
-		if (kind == SceneKind::Beam || kind == SceneKind::LaserAdapter)
+		if (kind == SceneKind::Beam || kind == SceneKind::LaserAdapter || kind == SceneKind::RopeAdapter)
 			return Initialize_Beam(device);
 		if (kind == SceneKind::BasicTriangle)
 			return Initialize_Basic_Opaque(device);
@@ -223,7 +224,8 @@ struct VisualScene final
 
 	bool Initialize_Beam(Device &device)
 	{
-		if (!beam_renderer.Initialize(device, std::filesystem::path(GRAPHICS_RENDERER_SHADER_DIRECTORY), 4))
+		const std::size_t beam_capacity = kind == SceneKind::RopeAdapter ? 16 : 4;
+		if (!beam_renderer.Initialize(device, std::filesystem::path(GRAPHICS_RENDERER_SHADER_DIRECTORY), beam_capacity))
 			return false;
 
 		if (kind == SceneKind::Beam) {
@@ -234,6 +236,36 @@ struct VisualScene final
 			beam.color = {1.0f, 0.25f, 0.05f, 1.0f};
 			beam.opacity = 0.75f;
 			return beam_renderer.Create(beam).Is_Valid();
+		}
+
+		if (kind == SceneKind::RopeAdapter) {
+			constexpr std::array<Vec3, 7> points = {{
+				{-0.78f, -0.72f, 0.0f},
+				{-0.58f, -0.46f, 0.0f},
+				{-0.68f, -0.19f, 0.0f},
+				{-0.48f, 0.08f, 0.0f},
+				{-0.60f, 0.35f, 0.0f},
+				{-0.38f, 0.60f, 0.0f},
+				{-0.48f, 0.82f, 0.0f}
+			}};
+			for (std::size_t index = 0; index + 1 < points.size(); ++index) {
+				BeamDescription soft;
+				soft.start = points[index];
+				soft.end = points[index + 1];
+				soft.width = 0.13f;
+				soft.color = {0.95f, 0.35f, 0.08f, 1.0f};
+				soft.opacity = 0.35f;
+				if (!beam_renderer.Create(soft).Is_Valid())
+					return false;
+
+				BeamDescription hard = soft;
+				hard.width = 0.06f;
+				hard.color = {1.0f, 0.80f, 0.30f, 1.0f};
+				hard.opacity = 1.0f;
+				if (!beam_renderer.Create(hard).Is_Valid())
+					return false;
+			}
+			return true;
 		}
 
 		BeamDescription outer;
@@ -370,7 +402,7 @@ private:
 static bool Render_Scene(Device &, CommandList &commands, RHITextureHandle color_target, RHITextureHandle depth_target, RHIViewport viewport, void *context) noexcept
 {
 	VisualScene &scene = *static_cast<VisualScene *>(context);
-	if (scene.kind == SceneKind::Beam || scene.kind == SceneKind::LaserAdapter) {
+	if (scene.kind == SceneKind::Beam || scene.kind == SceneKind::LaserAdapter || scene.kind == SceneKind::RopeAdapter) {
 		return commands.Set_Render_Targets(color_target, depth_target)
 			&& commands.Clear({0.02f, 0.02f, 0.03f, 1.0f}, 1.0f)
 			&& scene.beam_renderer.Render(commands, color_target, depth_target, viewport);
@@ -489,4 +521,9 @@ BOOST_AUTO_TEST_CASE(generic_beam_matches_golden_image)
 BOOST_AUTO_TEST_CASE(laser_adapter_matches_golden_image)
 {
 	Run_Scene(SceneKind::LaserAdapter, "laser_adapter");
+}
+
+BOOST_AUTO_TEST_CASE(rope_adapter_matches_golden_image)
+{
+	Run_Scene(SceneKind::RopeAdapter, "rope_adapter");
 }

@@ -152,6 +152,38 @@ BOOST_AUTO_TEST_CASE(beam_vertex_generation_is_batched_and_deterministic)
 	}
 }
 
+BOOST_AUTO_TEST_CASE(segmented_line_data_remains_contiguous_and_updateable)
+{
+	BeamSet beams;
+	beams.Reserve(4);
+	std::array<BeamHandle, 4> handles{};
+	for (std::size_t index = 0; index < handles.size(); ++index) {
+		BeamDescription segment;
+		segment.start = {0.0f, 0.0f, static_cast<float>(index)};
+		segment.end = {0.1f * static_cast<float>(index), 0.0f, static_cast<float>(index + 1)};
+		segment.width = 0.25f;
+		handles[index] = beams.Create(segment);
+		BOOST_REQUIRE(handles[index].Is_Valid());
+	}
+
+	const BeamData initial = beams.Data();
+	BOOST_CHECK_EQUAL(initial.Size(), handles.size());
+	for (std::size_t index = 0; index < handles.size(); ++index)
+		BOOST_CHECK_EQUAL(initial.start_z[beams.Dense_Index(handles[index])], static_cast<float>(index));
+
+	BeamDescription updated;
+	updated.start = {-1.0f, 2.0f, 3.0f};
+	updated.end = {4.0f, 5.0f, 6.0f};
+	updated.width = 0.5f;
+	BOOST_REQUIRE(beams.Update(handles[2], updated));
+
+	const BeamData result = beams.Data();
+	const std::uint32_t dense_index = beams.Dense_Index(handles[2]);
+	BOOST_CHECK_EQUAL(result.start_x[dense_index], -1.0f);
+	BOOST_CHECK_EQUAL(result.end_z[dense_index], 6.0f);
+	BOOST_CHECK_EQUAL(result.widths[dense_index], 0.5f);
+}
+
 BOOST_AUTO_TEST_CASE(beam_presentation_payload_preserves_material_and_flags)
 {
 	BeamSet beams;

@@ -37,11 +37,22 @@
 #include "GameClient/Drawable.h"
 #include "GameClient/GameClient.h"
 #include "GameLogic/GameLogic.h"
-#include "W3DDevice/GameClient/W3DDisplay.h"
 #include "W3DDevice/GameClient/Module/W3DRopeDraw.h"
-#include "WW3D2/Line3D.h"
-#include "W3DDevice/GameClient/W3DScene.h"
-#include "Common/GameState.h"
+
+namespace
+{
+Graphics::BeamDescription Make_Modern_Rope_Beam(const Vector3 &start, const Vector3 &end, Real width, Real opacity, const RGBColor &color) noexcept
+{
+	Graphics::BeamDescription description;
+	description.start = {start.X, start.Y, start.Z};
+	description.end = {end.X, end.Y, end.Z};
+	description.width = width;
+	description.color = {color.red, color.green, color.blue, 1.0f};
+	description.opacity = opacity;
+	description.flags = width > 0.0f && opacity > 0.0f ? Graphics::BeamFlags::Enabled : Graphics::BeamFlags::None;
+	return description;
+}
+}
 
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////
@@ -66,6 +77,8 @@ W3DRopeDraw::W3DRopeDraw( Thing *thing, const ModuleData* moduleData ) : DrawMod
 	m_segments.clear();
 	m_curWobblePhase = 0.0f;
 	m_curZOffset = 0.0f;
+	m_modernEnabled = FALSE;
+	m_modernAttempted = FALSE;
 }
 
 //-------------------------------------------------------------------------------------------------
@@ -76,37 +89,22 @@ void W3DRopeDraw::buildSegments()
 	m_segments.clear();
 
 	Int numSegs = ceil(m_maxLen / m_wobbleLen);
-	Real eachLen = m_maxLen / (Real)numSegs;
-	Coord3D pos = *getDrawable()->getPosition();
-	for (int i = 0; i < numSegs; ++i, pos.z += eachLen)
+	for (int i = 0; i < numSegs; ++i)
 	{
 		SegInfo info;
 
 		Real axis = GameClientRandomValueReal(0, 2*PI);
 		info.wobbleAxisX = Cos(axis);
 		info.wobbleAxisY = Sin(axis);
-		info.line = NEW Line3DClass( Vector3(pos.x,pos.y,pos.z),
-																	 Vector3(pos.x,pos.y,pos.z+eachLen),
-																	 m_width * 0.5f,  // width
-																	 m_color.red,  // red
-																	 m_color.green,  // green
-																	 m_color.blue,  // blue
-																	 1.0f );  // transparency
-
-		info.softLine = NEW Line3DClass( Vector3(pos.x,pos.y,pos.z),
-																	 Vector3(pos.x,pos.y,pos.z+eachLen),
-																	 m_width,  // width
-																	 m_color.red,  // red
-																	 m_color.green,  // green
-																	 m_color.blue,  // blue
-																	 0.5f );  // transparency
-
-		if (W3DDisplay::m_3DScene)
-		{
-			W3DDisplay::m_3DScene->Add_Render_Object( info.line );
-			W3DDisplay::m_3DScene->Add_Render_Object( info.softLine );
-		}
 		m_segments.push_back(info);
+	}
+
+	if (Graphics::GetBeamRenderer().Is_Initialized())
+	{
+		m_modernAttempted = TRUE;
+		m_modernEnabled = createModernSegments() ? TRUE : FALSE;
+		if (!m_modernEnabled)
+			disableModernSegments();
 	}
 }
 
@@ -114,23 +112,46 @@ void W3DRopeDraw::buildSegments()
 //-------------------------------------------------------------------------------------------------
 void W3DRopeDraw::tossSegments()
 {
-	// remove tracer from the scene and delete
-	for (std::vector<SegInfo>::iterator it = m_segments.begin(); it != m_segments.end(); ++it)
-	{
-		if (it->line)
-		{
-			if (W3DDisplay::m_3DScene)
-				W3DDisplay::m_3DScene->Remove_Render_Object(it->line);
-			REF_PTR_RELEASE((it->line));
-		}
-		if (it->softLine)
-		{
-			if (W3DDisplay::m_3DScene)
-				W3DDisplay::m_3DScene->Remove_Render_Object(it->softLine);
-			REF_PTR_RELEASE((it->softLine));
-		}
-	}
+	disableModernSegments();
 	m_segments.clear();
+	m_modernEnabled = FALSE;
+	m_modernAttempted = FALSE;
+}
+
+bool W3DRopeDraw::createModernSegments() noexcept
+{
+	if (!Graphics::GetBeamRenderer().Is_Initialized())
+		return false;
+
+	Coord3D pos = *getDrawable()->getPosition();
+	const Int numSegs = static_cast<Int>(m_segments.size());
+	const Real eachLen = numSegs > 0 ? m_maxLen / static_cast<Real>(numSegs) : 0.0f;
+	for (SegInfo &segment : m_segments)
+	{
+		const Vector3 start(pos.x, pos.y, pos.z);
+		const Vector3 end(pos.x, pos.y, pos.z + eachLen);
+		segment.modernLine = Graphics::CreateBeam(Make_Modern_Rope_Beam(start, end, m_width * 0.5f, 1.0f, m_color));
+		segment.modernSoftLine = Graphics::CreateBeam(Make_Modern_Rope_Beam(start, end, m_width, 0.5f, m_color));
+		if (!segment.modernLine.Is_Valid() || !segment.modernSoftLine.Is_Valid())
+			return false;
+		pos.z += eachLen;
+	}
+
+	return true;
+}
+
+void W3DRopeDraw::disableModernSegments() noexcept
+{
+	for (SegInfo &segment : m_segments)
+	{
+		if (segment.modernLine.Is_Valid())
+			Graphics::DestroyBeam(segment.modernLine);
+		if (segment.modernSoftLine.Is_Valid())
+			Graphics::DestroyBeam(segment.modernSoftLine);
+		segment.modernLine = {};
+		segment.modernSoftLine = {};
+	}
+	m_modernEnabled = FALSE;
 }
 
 
@@ -182,6 +203,14 @@ void W3DRopeDraw::doDrawModule(const Matrix3D* transformMtx)
 	{
 		buildSegments();
 	}
+	else if (!m_modernAttempted && Graphics::GetBeamRenderer().Is_Initialized())
+	{
+		m_modernAttempted = TRUE;
+		if (createModernSegments())
+			m_modernEnabled = TRUE;
+		else
+			disableModernSegments();
+	}
 
 	if (!m_segments.empty())
 	{
@@ -192,10 +221,12 @@ void W3DRopeDraw::doDrawModule(const Matrix3D* transformMtx)
 		for (std::vector<SegInfo>::iterator it = m_segments.begin(); it != m_segments.end(); ++it)
 		{
 			Vector3 end(pos->x + deflection*it->wobbleAxisX, pos->y + deflection*it->wobbleAxisY, start.Z - eachLen);
-			if (it->line)
-				(it->line)->Reset(start, end);
-			if (it->softLine)
-				(it->softLine)->Reset(start, end);
+			if (m_modernEnabled)
+			{
+				if (!Graphics::UpdateBeam(it->modernLine, Make_Modern_Rope_Beam(start, end, m_width * 0.5f, 1.0f, m_color))
+					|| !Graphics::UpdateBeam(it->modernSoftLine, Make_Modern_Rope_Beam(start, end, m_width, 0.5f, m_color)))
+					disableModernSegments();
+			}
 			start = end;
 		}
 	}
