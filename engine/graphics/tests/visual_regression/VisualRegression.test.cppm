@@ -1,0 +1,436 @@
+module;
+
+#define BOOST_TEST_MODULE GraphicsVisualRegressionTests
+
+#include <boost/test/included/unit_test.hpp>
+
+#include <array>
+#include <cstddef>
+#include <cstdint>
+#include <filesystem>
+#include <memory>
+#include <span>
+#include <string>
+#include <vector>
+
+export module Graphics.Testing.VisualRegression.Tests;
+
+import Graphics.Passes.Opaque;
+import Graphics.Passes.Shadow;
+import Graphics.Resources.Bindless.BindlessResourceTable;
+import Graphics.Resources.Residency.GPUResourceResidency;
+import Graphics.Scene.DrawGeneration;
+import Graphics.Scene.GPUScene;
+import Graphics.Scene.LOD;
+import Graphics.Scene.Visibility;
+import Graphics.Shaders.Library;
+import Graphics.Testing.VisualRegression;
+import Graphics.RHI.DX11;
+
+#ifndef GRAPHICS_VISUAL_REFERENCE_DIRECTORY
+#define GRAPHICS_VISUAL_REFERENCE_DIRECTORY "."
+#endif
+
+#ifndef GRAPHICS_VISUAL_FAILURE_DIRECTORY
+#define GRAPHICS_VISUAL_FAILURE_DIRECTORY "."
+#endif
+
+#ifndef GRAPHICS_VISUAL_SHADER_DIRECTORY
+#define GRAPHICS_VISUAL_SHADER_DIRECTORY "."
+#endif
+
+#ifndef GRAPHICS_RENDERER_SHADER_DIRECTORY
+#define GRAPHICS_RENDERER_SHADER_DIRECTORY "."
+#endif
+
+namespace
+{
+struct Vertex final
+{
+	float position[3]{};
+	float color[4]{};
+	float uv[2]{};
+};
+
+static_assert(sizeof(Vertex) == 36);
+
+struct MaterialConstants final
+{
+	float color[4]{};
+	std::uint32_t texture_index = Invalid_GPU_Index;
+	std::uint32_t shadow_index = Invalid_GPU_Index;
+	std::uint32_t reserved[2]{};
+};
+
+static_assert(sizeof(MaterialConstants) == 32);
+
+enum class SceneKind : std::uint8_t
+{
+	BasicTriangle,
+	TexturedMesh,
+	LitMeshWithShadow
+};
+
+struct VisualScene final
+{
+	SceneKind kind = SceneKind::BasicTriangle;
+	RHIPipelineHandle pipeline{};
+	RHIPipelineHandle shadow_pipeline{};
+	std::array<RHIBufferHandle, 2> vertex_buffers{};
+	std::array<RHIBufferHandle, 2> index_buffers{};
+	std::array<OpaqueMeshBinding, 2> meshes{};
+	std::array<DrawData, 1> main_draws{};
+	std::array<DrawData, 1> shadow_draws{};
+	std::array<GPUInstanceData, 1> shadow_instances{};
+	std::array<Vertex, 3> basic_vertices{};
+	std::array<std::uint16_t, 3> basic_indices{};
+	MeshPool mesh_pool;
+	TexturePool texture_pool;
+	SamplerPool sampler_pool;
+	MaterialPool material_pool;
+	RenderScene render_scene;
+	GPUScene gpu_scene;
+	View view{};
+	ShaderLibrary shader_library;
+	std::unique_ptr<GPUResourceResidency> residency;
+	RHIBufferHandle instance_buffer{};
+	MeshHandle scene_mesh{};
+	MaterialHandle scene_material{};
+	InstanceHandle scene_instance{};
+	RHITextureHandle material_texture{};
+	RHITextureHandle shadow_texture{};
+	RHIBufferHandle material_constants{};
+	BindlessResourceTable bindless;
+
+	void Release(Device &device) noexcept
+	{
+		bindless.Clear();
+		if (instance_buffer.Is_Valid())
+			device.Destroy_Buffer(instance_buffer);
+		instance_buffer = {};
+		residency.reset();
+		if (shadow_texture.Is_Valid())
+			device.Destroy_Texture(shadow_texture);
+		if (material_texture.Is_Valid())
+			device.Destroy_Texture(material_texture);
+		if (material_constants.Is_Valid())
+			device.Destroy_Buffer(material_constants);
+		for (RHIBufferHandle buffer : index_buffers) {
+			if (buffer.Is_Valid())
+				device.Destroy_Buffer(buffer);
+		}
+		for (RHIBufferHandle buffer : vertex_buffers) {
+			if (buffer.Is_Valid())
+				device.Destroy_Buffer(buffer);
+		}
+		if (shadow_pipeline.Is_Valid())
+			device.Destroy_Pipeline(shadow_pipeline);
+		if (pipeline.Is_Valid())
+			device.Destroy_Pipeline(pipeline);
+	}
+
+	bool Initialize(Device &device)
+	{
+		if (kind == SceneKind::BasicTriangle)
+			return Initialize_Basic_Opaque(device);
+
+		std::vector<std::byte> vertex_shader;
+		std::vector<std::byte> pixel_shader;
+		if (!Load_Binary_File(std::filesystem::path(GRAPHICS_VISUAL_SHADER_DIRECTORY) / "visual_basic.vso", vertex_shader))
+			return false;
+
+		const char *pixel_name = kind == SceneKind::TexturedMesh ? "visual_textured.pso" : kind == SceneKind::LitMeshWithShadow ? "visual_lit_shadow.pso" : "visual_basic.pso";
+		if (!Load_Binary_File(std::filesystem::path(GRAPHICS_VISUAL_SHADER_DIRECTORY) / pixel_name, pixel_shader))
+			return false;
+
+		const RHIPipeline pipeline_description{static_cast<std::uint64_t>(kind) + 1, true, true, RHIPrimitiveTopology::TriangleList, RHIVertexFormat::Position3Color4UV2, RHIBlendMode::Disabled};
+		pipeline = device.Create_Pipeline(pipeline_description, {vertex_shader}, {pixel_shader});
+		if (!pipeline.Is_Valid())
+			return false;
+
+		ResourceIndex texture_index{};
+		if (kind == SceneKind::TexturedMesh) {
+			const std::array<std::uint8_t, 16> texture_data = {
+				255, 255, 255, 255, 20, 40, 220, 255,
+				20, 40, 220, 255, 255, 255, 255, 255
+			};
+			material_texture = device.Create_Texture_Initialized(
+				{2, 2, 1, RHITextureFormat::RGBA8_UNorm, static_cast<std::uint32_t>(RHITextureUsage::ShaderResource), 1},
+				{std::as_bytes(std::span<const std::uint8_t>(texture_data)), 8});
+			if (!material_texture.Is_Valid())
+				return false;
+			texture_index = bindless.Register_Texture(TextureHandle(0, 1), material_texture);
+			if (!texture_index.Is_Valid())
+				return false;
+		}
+
+		ResourceIndex shadow_index{};
+		if (kind == SceneKind::LitMeshWithShadow) {
+			if (!Load_Binary_File(std::filesystem::path(GRAPHICS_VISUAL_SHADER_DIRECTORY) / "visual_shadow.vso", vertex_shader))
+				return false;
+			if (!Load_Binary_File(std::filesystem::path(GRAPHICS_VISUAL_SHADER_DIRECTORY) / "visual_shadow.pso", pixel_shader))
+				return false;
+			shadow_pipeline = device.Create_Pipeline(pipeline_description, {vertex_shader}, {pixel_shader});
+			if (!shadow_pipeline.Is_Valid())
+				return false;
+
+			shadow_texture = device.Create_Texture({
+				32,
+				32,
+				1,
+				RHITextureFormat::D32_Float,
+				static_cast<std::uint32_t>(RHITextureUsage::ShaderResource) | static_cast<std::uint32_t>(RHITextureUsage::DepthStencil),
+				1
+			});
+			if (!shadow_texture.Is_Valid())
+				return false;
+			shadow_index = bindless.Register_Texture(TextureHandle(1, 1), shadow_texture);
+			if (!shadow_index.Is_Valid())
+				return false;
+		}
+
+		const MaterialConstants material_data{
+			{1.0f, 1.0f, 1.0f, 1.0f},
+			texture_index.Is_Valid() ? texture_index.Get_Index() : Invalid_GPU_Index,
+			shadow_index.Is_Valid() ? shadow_index.Get_Index() : Invalid_GPU_Index,
+			{0, 0}
+		};
+		material_constants = device.Create_Buffer_Initialized(
+			{static_cast<std::uint32_t>(sizeof(material_data)), RHIBufferUsage::Constant, 16},
+			std::as_bytes(std::span<const MaterialConstants>(&material_data, 1)));
+		if (!material_constants.Is_Valid())
+			return false;
+		if (!bindless.Register_Material(MaterialHandle(0, 1), material_constants).Is_Valid())
+			return false;
+
+		if (!Create_Geometry(device))
+			return false;
+
+		main_draws[0] = {0, 0, 0, 1, pipeline, 0};
+		shadow_draws[0] = {1, 0, 0, 1, shadow_pipeline, 0};
+		shadow_instances[0].flags = static_cast<std::uint32_t>(RenderInstanceFlags::CastsShadow);
+		return true;
+	}
+
+	bool Initialize_Basic_Opaque(Device &device)
+	{
+		basic_vertices = {{
+			{{0.0f, 0.78f, 0.35f}, {1.0f, 0.20f, 0.10f, 1.0f}, {0.5f, 0.0f}},
+			{{-0.72f, -0.62f, 0.35f}, {0.10f, 0.85f, 0.20f, 1.0f}, {0.0f, 1.0f}},
+			{{0.72f, -0.62f, 0.35f}, {0.10f, 0.20f, 0.95f, 1.0f}, {1.0f, 1.0f}}
+		}};
+	basic_indices = {0, 1, 2};
+
+		const ShaderHandle basic_shader = shader_library.Load_Basic_Opaque(std::filesystem::path(GRAPHICS_RENDERER_SHADER_DIRECTORY));
+		if (!basic_shader.Is_Valid())
+			return false;
+
+		Mesh mesh;
+		mesh.vertex_count = static_cast<std::uint32_t>(basic_vertices.size());
+		mesh.index_count = static_cast<std::uint32_t>(basic_indices.size());
+		mesh.vertex_stride = sizeof(Vertex);
+		mesh.index_format = MeshIndexFormat::UInt16;
+		mesh.vertex_data = std::as_bytes(std::span<const Vertex>(basic_vertices));
+		mesh.index_data = std::as_bytes(std::span<const std::uint16_t>(basic_indices));
+		scene_mesh = mesh_pool.Create(mesh);
+
+		Material material;
+		material.shader = basic_shader;
+		material.parameters.values[0] = 1.0f;
+		material.parameters.values[1] = 1.0f;
+		material.parameters.values[2] = 1.0f;
+		material.parameters.values[3] = 1.0f;
+		const ShaderHandle selected_shader = shader_library.Select_Shader(material, shader_library.Basic_Opaque());
+		const PipelineDesc pipeline_description = shader_library.Make_Pipeline_Description(selected_shader, Make_Basic_Opaque_Pipeline());
+		pipeline = shader_library.Create_Pipeline(device, selected_shader, pipeline_description);
+		if (!pipeline.Is_Valid())
+			return false;
+		scene_material = material_pool.Create(material);
+
+		RenderInstance instance;
+		instance.transform.matrix = Matrix4x4::Identity().values;
+		instance.bounds = {{0.0f, 0.0f, 0.35f}, 1.0f};
+		instance.mesh = scene_mesh;
+		instance.material = scene_material;
+		scene_instance = render_scene.Create(instance);
+		view = View(Matrix4x4::Identity(), Matrix4x4::Identity(), {}, {0.0f, 0.0f, 128.0f, 72.0f, 0.0f, 1.0f});
+
+		gpu_scene.Reserve(1, 1, 1);
+		if (!gpu_scene.Build(render_scene, mesh_pool, texture_pool, sampler_pool, material_pool))
+			return false;
+
+		residency = std::make_unique<GPUResourceResidency>(device);
+		if (!residency->Upload_Mesh(scene_mesh, mesh_pool) || !residency->Upload_Material(scene_material, material_pool))
+			return false;
+
+		const std::span<const GPUInstanceData> instance_data = gpu_scene.Instances();
+		instance_buffer = device.Create_Buffer_Initialized(
+			{static_cast<std::uint32_t>(instance_data.size_bytes()), RHIBufferUsage::Storage, sizeof(GPUInstanceData)},
+			std::as_bytes(instance_data));
+		if (!instance_buffer.Is_Valid() || !bindless.Register_Buffer(instance_buffer).Is_Valid())
+			return false;
+
+		const GPUResidentMaterial resident_material = residency->Material_Info(scene_material);
+		if (!resident_material.constants.Is_Valid() || !bindless.Register_Material(scene_material, resident_material.constants).Is_Valid())
+			return false;
+
+		const GPUResidentMesh resident_mesh = residency->Mesh_Info(scene_mesh);
+		meshes[0] = {
+			resident_mesh.vertex_buffer,
+			resident_mesh.index_buffer,
+			RHIIndexFormat::UInt16,
+			resident_mesh.vertex_stride,
+			resident_mesh.index_count,
+			0,
+			0
+		};
+		return resident_mesh.vertex_buffer.Is_Valid() && resident_mesh.index_buffer.Is_Valid();
+	}
+
+private:
+	bool Create_Geometry(Device &device)
+	{
+		constexpr std::array<Vertex, 3> triangle = {{
+			{{0.0f, 0.78f, 0.35f}, {1.0f, 0.20f, 0.10f, 1.0f}, {0.5f, 0.0f}},
+			{{-0.72f, -0.62f, 0.35f}, {0.10f, 0.85f, 0.20f, 1.0f}, {0.0f, 1.0f}},
+			{{0.72f, -0.62f, 0.35f}, {0.10f, 0.20f, 0.95f, 1.0f}, {1.0f, 1.0f}}
+		}};
+		constexpr std::array<std::uint16_t, 3> triangle_indices = {0, 1, 2};
+
+		std::array<Vertex, 4> receiver = {{
+			{{-0.86f, 0.82f, 0.80f}, {0.80f, 0.80f, 0.80f, 1.0f}, {0.0f, 0.0f}},
+			{{0.86f, 0.82f, 0.80f}, {0.80f, 0.80f, 0.80f, 1.0f}, {1.0f, 0.0f}},
+			{{0.86f, -0.82f, 0.80f}, {0.80f, 0.80f, 0.80f, 1.0f}, {1.0f, 1.0f}},
+			{{-0.86f, -0.82f, 0.80f}, {0.80f, 0.80f, 0.80f, 1.0f}, {0.0f, 1.0f}}
+		}};
+		constexpr std::array<std::uint16_t, 6> receiver_indices = {0, 1, 2, 0, 2, 3};
+		constexpr std::array<Vertex, 3> occluder = {{
+			{{-0.30f, 0.30f, 0.20f}, {1.0f, 1.0f, 1.0f, 1.0f}, {0.0f, 0.0f}},
+			{{0.30f, 0.30f, 0.20f}, {1.0f, 1.0f, 1.0f, 1.0f}, {1.0f, 0.0f}},
+			{{0.0f, -0.30f, 0.20f}, {1.0f, 1.0f, 1.0f, 1.0f}, {0.5f, 1.0f}}
+		}};
+
+		const auto create_mesh = [&](std::size_t index, std::span<const Vertex> vertices, std::span<const std::uint16_t> indices) {
+			vertex_buffers[index] = device.Create_Buffer_Initialized(
+				{static_cast<std::uint32_t>(vertices.size_bytes()), RHIBufferUsage::Vertex, sizeof(Vertex)},
+				std::as_bytes(vertices));
+			index_buffers[index] = device.Create_Buffer_Initialized(
+				{static_cast<std::uint32_t>(indices.size_bytes()), RHIBufferUsage::Index, 0},
+				std::as_bytes(indices));
+			meshes[index] = {vertex_buffers[index], index_buffers[index], RHIIndexFormat::UInt16, sizeof(Vertex), static_cast<std::uint32_t>(indices.size()), 0, 0};
+			return vertex_buffers[index].Is_Valid() && index_buffers[index].Is_Valid();
+		};
+
+		if (kind == SceneKind::LitMeshWithShadow)
+			return create_mesh(0, receiver, receiver_indices) && create_mesh(1, occluder, triangle_indices);
+		return create_mesh(0, triangle, triangle_indices);
+	}
+};
+
+static bool Render_Scene(Device &, CommandList &commands, RHITextureHandle color_target, RHITextureHandle depth_target, RHIViewport viewport, void *context) noexcept
+{
+	VisualScene &scene = *static_cast<VisualScene *>(context);
+	std::array<InstanceHandle, 1> visible_storage{};
+	VisibleSet visible_set(visible_storage);
+	std::array<LODSelection, 1> lod_storage{};
+	LODSet lod_set(lod_storage);
+	std::array<DrawData, 1> generated_draw_storage{};
+	DrawSet generated_draw_set(generated_draw_storage);
+	std::span<const DrawData> main_draws = scene.main_draws;
+	if (scene.kind == SceneKind::BasicTriangle) {
+		if (!Build_Visible_Set(scene.render_scene, scene.view, visible_set)
+			|| !Build_LOD_Set(scene.render_scene, scene.mesh_pool, visible_set, scene.view, lod_set)
+			|| !Build_Draw_Data(lod_set, scene.gpu_scene, {20, scene.pipeline, 0}, generated_draw_set))
+			return false;
+		main_draws = generated_draw_set.Records();
+	}
+
+	RenderGraph graph;
+	graph.Reserve(3, 2, 5, 1);
+	const GraphResourceHandle color = graph.Create_Resource({GraphResourceKind::Texture});
+	const GraphResourceHandle depth = graph.Create_Resource({GraphResourceKind::Texture});
+	const GraphResourceHandle shadow = graph.Create_Resource({GraphResourceKind::Texture});
+	const GraphPassHandle shadow_pass = scene.kind == SceneKind::LitMeshWithShadow ? ShadowPass::Add_To_Graph(graph, shadow, 10) : GraphPassHandle{};
+	const GraphPassHandle opaque_pass = OpaquePass::Add_To_Graph(graph, color, depth, 20);
+	if (!color.Is_Valid() || !depth.Is_Valid() || !opaque_pass.Is_Valid())
+		return false;
+	if (scene.kind == SceneKind::LitMeshWithShadow && (!shadow_pass.Is_Valid() || !graph.Add_Dependency(opaque_pass, shadow_pass)))
+		return false;
+
+	std::array<GraphResourceBinding, 3> bindings = {
+		GraphResourceBinding::Texture(color, color_target),
+		GraphResourceBinding::Texture(depth, depth_target),
+		GraphResourceBinding::Texture(shadow, scene.shadow_texture)
+	};
+	const std::size_t binding_count = scene.kind == SceneKind::LitMeshWithShadow ? 3 : 2;
+	ExecutionPlan plan;
+	if (!plan.Compile(graph, std::span<const GraphResourceBinding>(bindings.data(), binding_count)))
+		return false;
+
+	const OpaquePassInput opaque_input{
+		main_draws,
+		scene.meshes,
+		scene.bindless.Resources(),
+		color,
+		depth,
+		viewport,
+		{0.035f, 0.045f, 0.075f, 1.0f},
+		1.0f,
+		true
+	};
+	const ShadowPassInput shadow_input{
+		scene.shadow_draws,
+		scene.meshes,
+		scene.shadow_instances,
+		scene.shadow_pipeline,
+		shadow,
+		{0, 0, 32, 32, 0.0f, 1.0f},
+		1.0f
+	};
+	return plan.Execute(graph, commands, [&](GraphPassHandle pass, CommandList &command_list, const PassResources &resources) noexcept {
+		if (pass == opaque_pass)
+			return OpaquePass::Execute(command_list, resources, opaque_input);
+		return pass == shadow_pass && ShadowPass::Execute(command_list, resources, shadow_input);
+	});
+}
+
+static VisualRegressionConfig Make_Config() noexcept
+{
+	return {
+		128,
+		72,
+		2,
+		std::filesystem::path(GRAPHICS_VISUAL_REFERENCE_DIRECTORY),
+		std::filesystem::path(GRAPHICS_VISUAL_FAILURE_DIRECTORY)
+	};
+}
+
+static void Run_Scene(SceneKind kind, const char *name)
+{
+	DX11Device device({true});
+	BOOST_REQUIRE(device.Is_Valid());
+	VisualScene scene;
+	scene.kind = kind;
+	BOOST_REQUIRE(scene.Initialize(device));
+	VisualRegressionHarness harness(Make_Config());
+	const VisualComparisonResult result = harness.Run(device, name, Render_Scene, &scene);
+	BOOST_CHECK_MESSAGE(result.expected_loaded, "missing visual reference image");
+	BOOST_CHECK_MESSAGE(result.matched, "visual regression mismatch");
+	scene.Release(device);
+}
+}
+
+BOOST_AUTO_TEST_CASE(basic_triangle_matches_golden_image)
+{
+	Run_Scene(SceneKind::BasicTriangle, "basic_triangle");
+}
+
+BOOST_AUTO_TEST_CASE(textured_mesh_matches_golden_image)
+{
+	Run_Scene(SceneKind::TexturedMesh, "textured_mesh");
+}
+
+BOOST_AUTO_TEST_CASE(lit_mesh_with_shadow_matches_golden_image)
+{
+	Run_Scene(SceneKind::LitMeshWithShadow, "lit_mesh_with_shadow");
+}

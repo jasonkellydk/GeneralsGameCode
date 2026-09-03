@@ -93,6 +93,10 @@ add_subdirectory(resources)
 
 add_subdirectory(Core)
 
+if(RTS_BUILD_ZEROHOUR)
+    add_subdirectory(engine/graphics)
+endif()
+
 # Add main build targets
 if(RTS_BUILD_ZEROHOUR)
     add_subdirectory(GeneralsMD)
