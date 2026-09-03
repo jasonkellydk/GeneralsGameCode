@@ -34,6 +34,7 @@
 static void drawFramerateBar();
 
 // SYSTEM INCLUDES ////////////////////////////////////////////////////////////
+#include <cstdint>
 #include <numeric>
 #include <stdlib.h>
 #include "Platform/SDLPlatformWindow.h"
@@ -104,6 +105,38 @@ static void drawFramerateBar();
 #include "WW3D2/RDDesc.h"
 #include "WWLib/TARGA.h"
 
+extern "C" bool Graphics_DX11_Initialize_Shared_Frame(
+	void *device,
+	void *context,
+	void *swap_chain,
+	void *back_buffer,
+	void *back_buffer_view,
+	void *depth_buffer,
+	void *depth_buffer_view,
+	std::uint32_t width,
+	std::uint32_t height);
+extern "C" bool Graphics_DX11_Update_Shared_Frame(
+	void *device,
+	void *context,
+	void *swap_chain,
+	void *back_buffer,
+	void *back_buffer_view,
+	void *depth_buffer,
+	void *depth_buffer_view,
+	std::uint32_t width,
+	std::uint32_t height);
+extern "C" bool Graphics_DX11_Begin_Frame() noexcept;
+extern "C" bool Graphics_DX11_Begin_Modern_Phase() noexcept;
+extern "C" bool Graphics_DX11_Set_Modern_View(
+	const float *view_projection,
+	const float *camera_right,
+	const float *camera_up,
+	const float *camera_forward) noexcept;
+extern "C" bool Graphics_DX11_End_Frame() noexcept;
+extern "C" bool Graphics_DX11_Present() noexcept;
+extern "C" void Graphics_DX11_Abort_Frame() noexcept;
+extern "C" void Graphics_DX11_Shutdown_Shared_Frame() noexcept;
+
 #include "GameLogic/ScriptEngine.h"		// For TheScriptEngine - jkmcd
 #include "GameLogic/GameLogic.h"
 #ifdef DUMP_PERF_STATS
@@ -115,12 +148,104 @@ static void drawFramerateBar();
 // DEFINE AND ENUMS ///////////////////////////////////////////////////////////
 
 #define no_SAMPLE_DYNAMIC_LIGHT	1
+static bool modernRendererAvailable = false;
 #ifdef SAMPLE_DYNAMIC_LIGHT
 static W3DDynamicLight * theDynamicLight = nullptr;
 static Real theLightXOffset = 0.1f;
 static Real theLightYOffset = 0.07f;
 static Int theFlashCount = 0;
 #endif
+
+static bool initializeModernRenderer()
+{
+	DX11SharedFrameResources resources{};
+	IRenderBackend *backend = WW3D::Get_Render_Backend();
+	if (backend == nullptr || !backend->Get_Shared_Frame_Resources(resources))
+		return false;
+
+	return Graphics_DX11_Initialize_Shared_Frame(
+		resources.device,
+		resources.context,
+		resources.swap_chain,
+		resources.back_buffer,
+		resources.back_buffer_view,
+		resources.depth_buffer,
+		resources.depth_buffer_view,
+		resources.width,
+		resources.height);
+}
+
+static bool beginSharedFrame()
+{
+	DX11SharedFrameResources resources{};
+	IRenderBackend *backend = WW3D::Get_Render_Backend();
+	if (backend == nullptr || !backend->Get_Shared_Frame_Resources(resources)
+		|| !Graphics_DX11_Update_Shared_Frame(
+			resources.device,
+			resources.context,
+			resources.swap_chain,
+			resources.back_buffer,
+			resources.back_buffer_view,
+			resources.depth_buffer,
+			resources.depth_buffer_view,
+			resources.width,
+			resources.height)
+		|| !Graphics_DX11_Begin_Frame()) {
+		Graphics_DX11_Abort_Frame();
+		return false;
+	}
+	return true;
+}
+
+static void updateModernView(const CameraClass *camera)
+{
+	if (camera == nullptr || WW3D::Get_Render_Backend() == nullptr)
+		return;
+
+	Matrix4x4 view;
+	Matrix4x4 projection;
+	WW3D::Get_Render_Backend()->Get_Transform(RenderBackendTransform::View, view);
+	WW3D::Get_Render_Backend()->Get_Transform(RenderBackendTransform::Projection, projection);
+	const Matrix4x4 viewProjection = projection * view;
+	float viewProjectionElements[16] = {};
+	for (int row = 0; row < 4; ++row) {
+		for (int column = 0; column < 4; ++column)
+			viewProjectionElements[row * 4 + column] = viewProjection[row][column];
+	}
+
+	const Vector3 right = camera->Get_Right_Dir();
+	const Vector3 up = camera->Get_Up_Dir();
+	const Vector3 forward = camera->Get_Forward_Dir();
+	Graphics_DX11_Set_Modern_View(
+		viewProjectionElements,
+		&right.X,
+		&up.X,
+		&forward.X);
+}
+
+static bool renderModernAfterLegacy(const CameraClass *camera)
+{
+	updateModernView(camera);
+	if (!Graphics_DX11_Begin_Modern_Phase()) {
+		if (Graphics_DX11_End_Frame() && Graphics_DX11_Present())
+			return true;
+
+		Graphics_DX11_Abort_Frame();
+		return false;
+	}
+
+	if (!Graphics_DX11_End_Frame()) {
+		Graphics_DX11_Abort_Frame();
+		return false;
+	}
+
+	if (!Graphics_DX11_Present()) {
+		Graphics_DX11_Abort_Frame();
+		return false;
+	}
+
+	return true;
+}
 
 //*****************************************************************************************
 //*****************************************************************************************
@@ -466,6 +591,8 @@ W3DDisplay::~W3DDisplay()
 		W3DShaderManager::shutdown();
 	m_assetManager->Free_Assets();
 	delete m_assetManager;
+	modernRendererAvailable = false;
+	Graphics_DX11_Shutdown_Shared_Frame();
 	if (!TheGlobalData->m_headless)
 		WW3D::Shutdown();
 	WWMath::Shutdown();
@@ -600,9 +727,12 @@ Bool W3DDisplay::setDisplayMode( UnsignedInt xres, UnsignedInt yres, UnsignedInt
 	if (!setSDLWindowed(windowed))
 		return FALSE;
 	resizeSDLWindow(xres, yres, windowed);
+	modernRendererAvailable = false;
+	Graphics_DX11_Shutdown_Shared_Frame();
 	if (WW3D_ERROR_OK == WW3D::Set_Render_Device(
 		WW3D::Get_Render_Device(), xres, yres, bitdepth, windowed, false, true, true))
 	{
+		modernRendererAvailable = initializeModernRenderer();
 		Render2DClass::Set_Screen_Resolution(RectClass(0, 0, xres, yres));
 		Display::setDisplayMode(xres, yres, bitdepth, windowed);
 		return TRUE;
@@ -614,6 +744,7 @@ Bool W3DDisplay::setDisplayMode( UnsignedInt xres, UnsignedInt yres, UnsignedInt
 	WW3D::Set_Render_Device(
 		WW3D::Get_Render_Device(), oldWidth, oldHeight, oldBitDepth, oldWindowed,
 		false, true, true);
+	modernRendererAvailable = initializeModernRenderer();
 	Render2DClass::Set_Screen_Resolution(RectClass(0, 0, oldWidth, oldHeight));
 	Display::setDisplayMode(oldWidth, oldHeight, oldBitDepth, oldWindowed);
 	return FALSE;	//did not change to a new mode.
@@ -965,6 +1096,7 @@ void W3DDisplay::init()
 			return;
 		}
 		WW3D::Set_Texture_Bitdepth(getBitDepth());
+		modernRendererAvailable = initializeModernRenderer();
 
 		//Check if level was never set and default to setting most suitable for system.
 		if (TheGameLODManager->getStaticLODLevel() == STATIC_GAME_LOD_UNKNOWN)
@@ -2012,6 +2144,12 @@ AGAIN:
 		{
 			//USE_PERF_TIMER(BigAssRenderLoop)
 			static Bool couldRender = true;
+			bool modernFrame = false;
+			if (modernRendererAvailable) {
+				modernFrame = beginSharedFrame();
+				if (!modernFrame)
+					Graphics_DX11_Abort_Frame();
+			}
 			if ((TheGlobalData->m_breakTheMovie == FALSE) && (TheGlobalData->m_disableRender == false) && WW3D::Begin_Render( true, true, Vector3( 0.0f, 0.0f, 0.0f ), TheWaterTransparency->m_minWaterOpacity ) == WW3D_ERROR_OK)
 			{
 
@@ -2020,7 +2158,9 @@ AGAIN:
 					TheInGameUI->draw();
 					if( TheMouse )
 						TheMouse->draw();	//keep applying the current cursor style so it remains hidden if needed.
-					WW3D::End_Render();
+					WW3D::End_Render(!modernFrame);
+					if (modernFrame)
+						renderModernAfterLegacy(primaryW3DView->get3DCamera());
 					continue;
 				}
 				couldRender = true;
@@ -2109,12 +2249,16 @@ AGAIN:
 				{
 					m_profilerFrameCapture->Capture(getWidth(), getHeight());
 				}
-#endif
+				#endif
 				// render is all done!
-				WW3D::End_Render();
+				WW3D::End_Render(!modernFrame);
+				if (modernFrame)
+					renderModernAfterLegacy(primaryW3DView->get3DCamera());
 			}
 			else
 			{
+				if (modernFrame)
+					Graphics_DX11_Abort_Frame();
 				if (couldRender)
 				{
 					couldRender = false;

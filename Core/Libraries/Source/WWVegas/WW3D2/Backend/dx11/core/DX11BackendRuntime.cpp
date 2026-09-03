@@ -21,3 +21,23 @@ DX11BackendRuntime *DX11BackendRuntime::Create(void *window, bool lite)
 	}
 	return backend;
 }
+
+bool DX11BackendRuntime::Get_Shared_Frame_Resources(DX11SharedFrameResources &resources) const noexcept
+{
+	resources = {};
+	if (state == nullptr || !state->initialized || state->device_status != RenderBackendDeviceStatus::Ready || state->device == nullptr
+		|| state->context == nullptr || state->swap_chain == nullptr || state->back_buffer == nullptr || state->back_buffer_view == nullptr
+		|| state->depth_buffer == nullptr || state->depth_buffer_view == nullptr || state->width == 0 || state->height == 0)
+		return false;
+
+	resources.device = state->device;
+	resources.context = state->context;
+	resources.swap_chain = state->swap_chain;
+	resources.back_buffer = state->back_buffer;
+	resources.back_buffer_view = state->back_buffer_view;
+	resources.depth_buffer = state->depth_buffer;
+	resources.depth_buffer_view = state->depth_buffer_view;
+	resources.width = state->width;
+	resources.height = state->height;
+	return true;
+}

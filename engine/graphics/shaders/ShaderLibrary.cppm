@@ -15,6 +15,9 @@ export import Graphics.Resources.Materials.Material;
 export import Graphics.Resources.Pools.ResourcePool;
 export import Graphics.Shaders.Pipeline;
 
+namespace Graphics
+{
+
 export enum class ShaderStage : std::uint8_t
 {
 	Vertex,
@@ -270,3 +273,5 @@ private:
 	ResourcePool<ShaderProgram, ShaderHandle> m_programs;
 	ShaderHandle m_basic_opaque{};
 };
+
+}

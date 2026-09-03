@@ -16,6 +16,9 @@ export import Graphics.Scene.LOD;
 export import Graphics.Scene.RenderScene;
 export import Graphics.Scene.Views.View;
 
+namespace Graphics
+{
+
 export constexpr bool Is_Transparent_Material(MaterialFlags flags) noexcept
 {
 	return Has_Material_Flag(flags, MaterialFlags::Transparent);
@@ -174,4 +177,6 @@ export bool Build_Transparent_Draw_Data(
 
 	draw_set.Sort();
 	return true;
+}
+
 }

@@ -10,6 +10,8 @@ export module Graphics.Scene.ParticleVisibility.Tests;
 
 import Graphics.Scene.ParticleVisibility;
 
+using namespace Graphics;
+
 namespace
 {
 Matrix4x4 Make_Perspective(float near_clip, float far_clip) noexcept

@@ -12,6 +12,9 @@ export import Graphics.Scene.DrawGeneration;
 export import Graphics.Scene.GPUScene;
 export import Graphics.Shaders.Pipeline;
 
+namespace Graphics
+{
+
 export class DecalDrawSet final
 {
 public:
@@ -106,4 +109,6 @@ export bool Build_Decal_Draw_Data(
 
 	draw_set.Sort();
 	return true;
+}
+
 }

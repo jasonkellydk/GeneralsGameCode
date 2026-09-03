@@ -10,6 +10,8 @@ export module Graphics.Scene.DecalVisibility.Tests;
 
 import Graphics.Scene.DecalVisibility;
 
+using namespace Graphics;
+
 namespace
 {
 Matrix4x4 Make_Perspective(float near_clip, float far_clip) noexcept

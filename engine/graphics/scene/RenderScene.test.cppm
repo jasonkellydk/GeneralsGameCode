@@ -11,6 +11,8 @@ export module Graphics.Scene.RenderScene.Tests;
 
 import Graphics.Scene.RenderScene;
 
+using namespace Graphics;
+
 static_assert(std::is_nothrow_move_constructible_v<RenderInstance>);
 static_assert(std::is_nothrow_move_assignable_v<RenderInstance>);
 

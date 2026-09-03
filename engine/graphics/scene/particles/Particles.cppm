@@ -17,6 +17,9 @@ export import Graphics.Scene.Views.View;
 
 import Graphics.Memory.AlignedAllocator;
 
+namespace Graphics
+{
+
 export inline constexpr std::uint32_t Invalid_Particle_Index = std::numeric_limits<std::uint32_t>::max();
 export inline constexpr std::uint32_t Invalid_Particle_Material_Index = std::numeric_limits<std::uint32_t>::max();
 
@@ -468,3 +471,5 @@ private:
 	AlignedVector<ParticleEmitterFlags> m_particle_emitter_flags;
 	AlignedVector<ParticleEmitterHandle> m_particle_emitters;
 };
+
+}

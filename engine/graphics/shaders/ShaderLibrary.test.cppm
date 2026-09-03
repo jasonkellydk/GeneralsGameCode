@@ -15,6 +15,8 @@ export module Graphics.Shaders.Library.Tests;
 
 import Graphics.Shaders.Library;
 
+using namespace Graphics;
+
 class TestCommandList final : public CommandList
 {
 public:

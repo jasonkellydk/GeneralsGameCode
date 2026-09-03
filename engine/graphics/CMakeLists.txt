@@ -33,6 +33,7 @@ target_sources(generals_graphics
             scene/particles/Particles.cppm
             scene/particles/ParticleVisibility.cppm
             scene/particles/ParticleDraw.cppm
+            scene/beams/Beam.cppm
             scene/transparency/Transparency.cppm
             scene/views/View.cppm
             scene/visibility/Visibility.cppm
@@ -100,9 +101,11 @@ if(WIN32)
             BASE_DIRS "${CMAKE_CURRENT_SOURCE_DIR}"
             FILES
                 rhi/backends/dx11/DX11RHI.cppm
+                rhi/backends/dx11/DX11Coexistence.cppm
     )
 
     target_link_libraries(generals_graphics PRIVATE d3d11)
+    set_property(TARGET generals_graphics PROPERTY GRAPHICS_SHADER_ASSET_DIRECTORY "${GRAPHICS_SHADER_ASSET_DIRECTORY}")
 endif()
 
 option(RTS_BUILD_GRAPHICS_TESTS "Build modern graphics unit tests." OFF)
@@ -307,6 +310,11 @@ if(RTS_BUILD_GRAPHICS_TESTS)
     add_graphics_test(
         generals_graphics_particle_pass_test
         passes/particles/ParticlePass.test.cppm
+    )
+
+    add_graphics_test(
+        generals_graphics_beam_test
+        scene/beams/Beam.test.cppm
     )
 
     add_graphics_test(

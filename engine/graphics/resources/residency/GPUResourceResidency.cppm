@@ -14,6 +14,9 @@ export import Graphics.Resources.Meshes.Mesh;
 export import Graphics.Resources.Textures.Texture;
 export import Graphics.RHI;
 
+namespace Graphics
+{
+
 export inline constexpr std::uint32_t Invalid_GPU_Resource_Index = std::numeric_limits<std::uint32_t>::max();
 
 export struct GPUResidentMesh final
@@ -543,3 +546,5 @@ private:
 	std::vector<TextureSlot> m_textures;
 	std::vector<MaterialSlot> m_materials;
 };
+
+}

@@ -13,6 +13,9 @@ export import Graphics.Scene.RenderScene;
 export import Graphics.Scene.Visibility;
 export import Graphics.Scene.Views.View;
 
+namespace Graphics
+{
+
 export struct LODSelection final
 {
 	InstanceHandle instance{};
@@ -152,4 +155,6 @@ export bool Build_LOD_Set(const RenderScene &scene, const MeshPool &meshes, cons
 	}
 
 	return true;
+}
+
 }

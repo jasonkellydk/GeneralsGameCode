@@ -10,6 +10,9 @@ export module Graphics.Resources.Meshes.Mesh;
 export import Graphics.Resources.Handles.ResourceHandle;
 export import Graphics.Resources.Pools.ResourcePool;
 
+namespace Graphics
+{
+
 export enum class MeshIndexFormat : std::uint8_t
 {
 	None,
@@ -48,3 +51,5 @@ export struct Mesh final
 };
 
 export using MeshPool = ResourcePool<Mesh, MeshHandle>;
+
+}

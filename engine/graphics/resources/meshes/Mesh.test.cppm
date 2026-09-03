@@ -10,6 +10,8 @@ export module Graphics.Resources.Meshes.Mesh.Tests;
 
 import Graphics.Resources.Meshes.Mesh;
 
+using namespace Graphics;
+
 static_assert(std::is_nothrow_move_constructible_v<Mesh>);
 static_assert(std::is_nothrow_move_assignable_v<Mesh>);
 

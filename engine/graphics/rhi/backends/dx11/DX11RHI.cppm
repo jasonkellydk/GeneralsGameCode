@@ -24,6 +24,11 @@ export module Graphics.RHI.DX11;
 export import Graphics.RHI;
 
 import Graphics.Resources.Pools.ResourcePool;
+import Graphics.RHI.Frame;
+import Graphics.Scene.Beams;
+
+namespace Graphics
+{
 
 template <typename Interface>
 class DX11NativeObject final
@@ -112,6 +117,19 @@ static_assert(std::is_nothrow_move_assignable_v<DX11Pipeline>);
 
 struct DX11DeviceState;
 
+export struct DX11SharedFrameResources final
+{
+	void *device = nullptr;
+	void *context = nullptr;
+	void *swap_chain = nullptr;
+	void *back_buffer = nullptr;
+	void *back_buffer_view = nullptr;
+	void *depth_buffer = nullptr;
+	void *depth_buffer_view = nullptr;
+	std::uint32_t width = 0;
+	std::uint32_t height = 0;
+};
+
 class DX11SwapChain final : public SwapChain
 {
 public:
@@ -129,6 +147,7 @@ public:
 	bool Present() noexcept override;
 
 	bool Create_Targets(std::uint32_t width, std::uint32_t height);
+	bool Adopt_Targets(const DX11SharedFrameResources &resources);
 
 private:
 	DX11DeviceState *m_state = nullptr;
@@ -158,6 +177,8 @@ public:
 	bool Set_Index_Buffer(RHIBufferHandle buffer, RHIIndexFormat format, std::uint32_t offset) noexcept override;
 	bool Draw(std::uint32_t vertex_count, std::uint32_t first_vertex, std::uint32_t instance_count, std::uint32_t first_instance) noexcept override;
 	bool Draw_Indexed(std::uint32_t index_count, std::uint32_t first_index, std::int32_t base_vertex, std::uint32_t instance_count, std::uint32_t first_instance) noexcept override;
+	bool Reset_State() noexcept override;
+	void Reset_Frame_State() noexcept;
 
 private:
 	bool Is_Ready() const noexcept;
@@ -186,6 +207,9 @@ struct DX11DeviceState final
 	std::string vertex_shader_name;
 	std::string fragment_shader_name;
 	bool frame_active = false;
+	bool shared_frame = false;
+	bool ready_to_present = false;
+	bool presented = false;
 
 	DX11DeviceState() noexcept
 		: swap_chain(this),
@@ -193,6 +217,15 @@ struct DX11DeviceState final
 	{
 	}
 };
+
+template <typename Interface>
+static Interface *Retain(Interface *object) noexcept
+{
+	if (object != nullptr)
+		object->AddRef();
+
+	return object;
+}
 
 static DXGI_FORMAT To_DX11_Format(RHITextureFormat format) noexcept
 {
@@ -370,10 +403,22 @@ export struct DX11DeviceOptions final
 	const char *shader_directory = nullptr;
 	const char *vertex_shader_name = "visual_basic.vso";
 	const char *fragment_shader_name = "visual_basic.pso";
+	const DX11SharedFrameResources *shared_frame = nullptr;
 };
 
 static bool Create_DX11_Device(DX11DeviceState &state, const DX11DeviceOptions &options) noexcept
 {
+	if (options.shared_frame != nullptr) {
+		const DX11SharedFrameResources &resources = *options.shared_frame;
+		if (resources.device == nullptr || resources.context == nullptr || resources.swap_chain == nullptr)
+			return false;
+
+		state.device.Reset(Retain(static_cast<ID3D11Device *>(resources.device)));
+		state.context.Reset(Retain(static_cast<ID3D11DeviceContext *>(resources.context)));
+		state.native_swap_chain.Reset(Retain(static_cast<IDXGISwapChain *>(resources.swap_chain)));
+		return state.device.Get() != nullptr && state.context.Get() != nullptr && state.native_swap_chain.Get() != nullptr;
+	}
+
 	const D3D_FEATURE_LEVEL feature_levels[] = {
 		D3D_FEATURE_LEVEL_11_0,
 		D3D_FEATURE_LEVEL_10_1,
@@ -531,6 +576,7 @@ public:
 	bool Destroy_Pipeline(RHIPipelineHandle pipeline) noexcept override;
 	CommandList &Immediate_Command_List() noexcept override;
 	SwapChain &Get_Swap_Chain() noexcept override;
+	bool Adopt_Shared_Frame(const DX11SharedFrameResources &resources);
 	bool Begin_Frame() noexcept override;
 	bool End_Frame() noexcept override;
 
@@ -635,9 +681,64 @@ bool DX11SwapChain::Create_Targets(std::uint32_t width, std::uint32_t height)
 	return true;
 }
 
+bool DX11SwapChain::Adopt_Targets(const DX11SharedFrameResources &resources)
+{
+	if (m_state == nullptr || m_state->device.Get() == nullptr || m_state->context.Get() == nullptr || m_state->native_swap_chain.Get() == nullptr
+		|| resources.back_buffer == nullptr || resources.back_buffer_view == nullptr || resources.depth_buffer == nullptr || resources.depth_buffer_view == nullptr
+		|| resources.width == 0 || resources.height == 0)
+		return false;
+
+	DX11Texture *current_backbuffer = m_state->textures.Resolve(m_backbuffer);
+	DX11Texture *current_depth = m_state->textures.Resolve(m_depth_target);
+	if (current_backbuffer != nullptr && current_depth != nullptr
+		&& current_backbuffer->object.Get() == static_cast<ID3D11Texture2D *>(resources.back_buffer)
+		&& current_backbuffer->render_target_view.Get() == static_cast<ID3D11RenderTargetView *>(resources.back_buffer_view)
+		&& current_depth->object.Get() == static_cast<ID3D11Texture2D *>(resources.depth_buffer)
+		&& current_depth->depth_stencil_view.Get() == static_cast<ID3D11DepthStencilView *>(resources.depth_buffer_view)) {
+		m_width = resources.width;
+		m_height = resources.height;
+		return true;
+	}
+
+	DX11Texture backbuffer;
+	backbuffer.object.Reset(Retain(static_cast<ID3D11Texture2D *>(resources.back_buffer)));
+	backbuffer.render_target_view.Reset(Retain(static_cast<ID3D11RenderTargetView *>(resources.back_buffer_view)));
+	backbuffer.width = resources.width;
+	backbuffer.height = resources.height;
+	backbuffer.format = RHITextureFormat::BGRA8_UNorm;
+
+	DX11Texture depth;
+	depth.object.Reset(Retain(static_cast<ID3D11Texture2D *>(resources.depth_buffer)));
+	depth.depth_stencil_view.Reset(Retain(static_cast<ID3D11DepthStencilView *>(resources.depth_buffer_view)));
+	depth.width = resources.width;
+	depth.height = resources.height;
+	depth.format = RHITextureFormat::D24_UNorm_S8;
+
+	if (m_backbuffer.Is_Valid() && m_depth_target.Is_Valid() && current_backbuffer != nullptr && current_depth != nullptr) {
+		*current_backbuffer = std::move(backbuffer);
+		*current_depth = std::move(depth);
+	} else {
+		m_state->textures.Destroy(m_backbuffer);
+		m_state->textures.Destroy(m_depth_target);
+		m_backbuffer = m_state->textures.Create(std::move(backbuffer));
+		if (!m_backbuffer.Is_Valid())
+			return false;
+		m_depth_target = m_state->textures.Create(std::move(depth));
+		if (!m_depth_target.Is_Valid()) {
+			m_state->textures.Destroy(m_backbuffer);
+			m_backbuffer = {};
+			return false;
+		}
+	}
+
+	m_width = resources.width;
+	m_height = resources.height;
+	return true;
+}
+
 bool DX11SwapChain::Resize(std::uint32_t width, std::uint32_t height)
 {
-	if (!Is_Valid() || m_state->frame_active || width == 0 || height == 0)
+	if (!Is_Valid() || m_state->frame_active || m_state->shared_frame || width == 0 || height == 0)
 		return false;
 
 	m_state->context.Get()->OMSetRenderTargets(0, nullptr, nullptr);
@@ -655,10 +756,15 @@ bool DX11SwapChain::Resize(std::uint32_t width, std::uint32_t height)
 
 bool DX11SwapChain::Present() noexcept
 {
-	if (!Is_Valid() || m_state->frame_active)
+	if (!Is_Valid() || m_state->frame_active || !m_state->ready_to_present || m_state->presented)
 		return false;
 
-	return SUCCEEDED(m_state->native_swap_chain.Get()->Present(0, 0));
+	if (FAILED(m_state->native_swap_chain.Get()->Present(0, 0)))
+		return false;
+
+	m_state->ready_to_present = false;
+	m_state->presented = true;
+	return true;
 }
 
 bool DX11CommandList::Is_Ready() const noexcept
@@ -915,6 +1021,23 @@ bool DX11CommandList::Draw_Indexed(std::uint32_t index_count, std::uint32_t firs
 	return true;
 }
 
+void DX11CommandList::Reset_Frame_State() noexcept
+{
+	m_pipeline = {};
+	m_color_target = {};
+	m_depth_target = {};
+	m_bindless_resources = {};
+}
+
+bool DX11CommandList::Reset_State() noexcept
+{
+	if (!Is_Ready())
+		return false;
+
+	Reset_Frame_State();
+	return true;
+}
+
 DX11Device::DX11Device(DX11DeviceOptions options)
 	: m_state(std::make_unique<DX11DeviceState>())
 {
@@ -924,7 +1047,11 @@ DX11Device::DX11Device(DX11DeviceOptions options)
 	if (!Create_DX11_Device(*m_state, options))
 		return;
 
-	if (m_state->native_swap_chain.Get() != nullptr && !m_state->swap_chain.Create_Targets(options.width, options.height))
+	if (options.shared_frame != nullptr) {
+		m_state->shared_frame = true;
+		if (!m_state->swap_chain.Adopt_Targets(*options.shared_frame))
+			m_state->native_swap_chain.Reset();
+	} else if (m_state->native_swap_chain.Get() != nullptr && !m_state->swap_chain.Create_Targets(options.width, options.height))
 		m_state->native_swap_chain.Reset();
 }
 
@@ -1210,17 +1337,28 @@ SwapChain &DX11Device::Get_Swap_Chain() noexcept
 	return m_state->swap_chain;
 }
 
+bool DX11Device::Adopt_Shared_Frame(const DX11SharedFrameResources &resources)
+{
+	if (!Is_Valid() || !m_state->shared_frame || resources.device != m_state->device.Get() || resources.context != m_state->context.Get() || resources.swap_chain != m_state->native_swap_chain.Get() || m_state->frame_active)
+		return false;
+
+	return m_state->swap_chain.Adopt_Targets(resources);
+}
+
 bool DX11Device::Begin_Frame() noexcept
 {
 	if (!Is_Valid() || m_state->frame_active || !m_state->swap_chain.Is_Valid())
 		return false;
 
+	m_state->command_list.Reset_Frame_State();
 	const RHIBackbuffer backbuffer = m_state->swap_chain.Backbuffer();
 	const RHIDepthTarget depth_target = m_state->swap_chain.Depth_Target();
 	if (!m_state->command_list.Set_Render_Targets(backbuffer.texture, depth_target.texture))
 		return false;
 
 	m_state->frame_active = true;
+	m_state->ready_to_present = false;
+	m_state->presented = false;
 	return true;
 }
 
@@ -1231,5 +1369,134 @@ bool DX11Device::End_Frame() noexcept
 
 	m_state->context.Get()->OMSetRenderTargets(0, nullptr, nullptr);
 	m_state->frame_active = false;
+	m_state->ready_to_present = true;
+	m_state->presented = false;
 	return true;
+}
+
+namespace
+{
+	std::unique_ptr<DX11Device> g_shared_frame_device;
+	FrameOwner g_frame_owner;
+
+	DX11SharedFrameResources Make_Shared_Frame_Resources(
+		void *device,
+		void *context,
+		void *swap_chain,
+		void *back_buffer,
+		void *back_buffer_view,
+		void *depth_buffer,
+		void *depth_buffer_view,
+		std::uint32_t width,
+		std::uint32_t height) noexcept
+	{
+		return {device, context, swap_chain, back_buffer, back_buffer_view, depth_buffer, depth_buffer_view, width, height};
+	}
+}
+
+export extern "C" bool Graphics_DX11_Initialize_Shared_Frame(
+	void *device,
+	void *context,
+	void *swap_chain,
+	void *back_buffer,
+	void *back_buffer_view,
+	void *depth_buffer,
+	void *depth_buffer_view,
+	std::uint32_t width,
+	std::uint32_t height)
+{
+	if (device == nullptr || context == nullptr || swap_chain == nullptr || back_buffer == nullptr || back_buffer_view == nullptr
+		|| depth_buffer == nullptr || depth_buffer_view == nullptr || width == 0 || height == 0 || g_frame_owner.Phase() != FrameOwnerPhase::Idle)
+		return false;
+
+	const DX11SharedFrameResources resources = Make_Shared_Frame_Resources(device, context, swap_chain, back_buffer, back_buffer_view, depth_buffer, depth_buffer_view, width, height);
+	if (g_shared_frame_device != nullptr)
+		return g_shared_frame_device->Adopt_Shared_Frame(resources);
+
+	DX11DeviceOptions options;
+	options.shared_frame = &resources;
+	std::unique_ptr<DX11Device> device_instance = std::make_unique<DX11Device>(options);
+	if (!device_instance->Is_Valid() || !device_instance->Get_Swap_Chain().Is_Valid())
+		return false;
+
+	g_shared_frame_device = std::move(device_instance);
+	const RHIBackbuffer backbuffer = g_shared_frame_device->Get_Swap_Chain().Backbuffer();
+	const RHIDepthTarget depth = g_shared_frame_device->Get_Swap_Chain().Depth_Target();
+	if (!Graphics_Beam_Initialize(g_shared_frame_device.get(), "GraphicsShaders", 4096)) {
+		g_shared_frame_device.reset();
+		return false;
+	}
+	return backbuffer.texture.Is_Valid() && depth.texture.Is_Valid();
+}
+
+export extern "C" bool Graphics_DX11_Update_Shared_Frame(
+	void *device,
+	void *context,
+	void *swap_chain,
+	void *back_buffer,
+	void *back_buffer_view,
+	void *depth_buffer,
+	void *depth_buffer_view,
+	std::uint32_t width,
+	std::uint32_t height)
+{
+	if (g_shared_frame_device == nullptr || g_frame_owner.Phase() != FrameOwnerPhase::Idle)
+		return false;
+
+	return g_shared_frame_device->Adopt_Shared_Frame(Make_Shared_Frame_Resources(device, context, swap_chain, back_buffer, back_buffer_view, depth_buffer, depth_buffer_view, width, height));
+}
+
+export extern "C" bool Graphics_DX11_Begin_Frame() noexcept
+{
+	return g_shared_frame_device != nullptr && g_frame_owner.Begin_Frame(*g_shared_frame_device);
+}
+
+export extern "C" bool Graphics_DX11_Begin_Modern_Phase() noexcept
+{
+	if (g_shared_frame_device == nullptr || !g_frame_owner.Begin_Modern_Phase(*g_shared_frame_device))
+		return false;
+
+	const FrameTargets targets = g_frame_owner.Targets();
+	return Graphics_Beam_Render(targets.backbuffer.texture, targets.depth.texture, targets.backbuffer.width, targets.backbuffer.height);
+}
+
+export extern "C" bool Graphics_DX11_Set_Modern_View(
+	const float *view_projection,
+	const float *camera_right,
+	const float *camera_up,
+	const float *camera_forward) noexcept
+{
+	return Graphics_Beam_Set_View(view_projection, camera_right, camera_up, camera_forward);
+}
+
+export extern "C" bool Graphics_DX11_End_Frame() noexcept
+{
+	return g_shared_frame_device != nullptr && g_frame_owner.End_Frame(*g_shared_frame_device);
+}
+
+export extern "C" bool Graphics_DX11_Present() noexcept
+{
+	return g_shared_frame_device != nullptr && g_frame_owner.Present(*g_shared_frame_device);
+}
+
+export extern "C" void Graphics_DX11_Abort_Frame() noexcept
+{
+	if (g_shared_frame_device != nullptr)
+		g_frame_owner.Abort(*g_shared_frame_device);
+}
+
+export extern "C" std::uint32_t Graphics_DX11_Frame_Invalid_Operation_Count() noexcept
+{
+	return g_frame_owner.Invalid_Operation_Count();
+}
+
+export extern "C" void Graphics_DX11_Shutdown_Shared_Frame() noexcept
+{
+	if (g_shared_frame_device != nullptr)
+		g_frame_owner.Abort(*g_shared_frame_device);
+
+	Graphics_Beam_Shutdown();
+	g_shared_frame_device.reset();
+}
+
 }

@@ -12,6 +12,9 @@ export module Graphics.Shaders.ParameterLayout;
 
 export import Graphics.Resources.Handles.ResourceHandle;
 
+namespace Graphics
+{
+
 export using ShaderLayoutKey = std::uint64_t;
 
 export inline constexpr std::uint16_t Invalid_Shader_Parameter_Offset = std::numeric_limits<std::uint16_t>::max();
@@ -379,3 +382,5 @@ export struct ShaderInterfaceLayout final
 			&& draw.Is_Compatible(other.draw);
 	}
 };
+
+}

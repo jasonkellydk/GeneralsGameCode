@@ -6,6 +6,9 @@ module;
 
 export module Graphics.Resources.Handles.ResourceHandle;
 
+namespace Graphics
+{
+
 export template <typename Tag>
 class ResourceHandle final
 {
@@ -133,6 +136,10 @@ export struct ParticleEmitterHandleTag
 {
 };
 
+export struct BeamHandleTag
+{
+};
+
 export struct ResourceIndexTag
 {
 };
@@ -147,4 +154,7 @@ export using ShaderHandle = ResourceHandle<ShaderHandleTag>;
 export using LightHandle = ResourceHandle<LightHandleTag>;
 export using DecalHandle = ResourceHandle<DecalHandleTag>;
 export using ParticleEmitterHandle = ResourceHandle<ParticleEmitterHandleTag>;
+export using BeamHandle = ResourceHandle<BeamHandleTag>;
 export using ResourceIndex = ResourceHandle<ResourceIndexTag>;
+
+}

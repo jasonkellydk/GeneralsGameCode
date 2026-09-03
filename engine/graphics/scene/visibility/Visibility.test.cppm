@@ -10,6 +10,8 @@ export module Graphics.Scene.Visibility.Tests;
 
 import Graphics.Scene.Visibility;
 
+using namespace Graphics;
+
 static Matrix4x4 Make_Projection() noexcept
 {
 	constexpr float near_clip = 1.0f;

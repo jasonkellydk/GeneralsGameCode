@@ -13,6 +13,9 @@ export import Graphics.RHI;
 export import Graphics.Scene.Environment;
 export import Graphics.Shaders.Pipeline;
 
+namespace Graphics
+{
+
 export enum class PostProcessToneMap : std::uint32_t
 {
 	Reinhard,
@@ -131,3 +134,5 @@ private:
 		return false;
 	}
 };
+
+}

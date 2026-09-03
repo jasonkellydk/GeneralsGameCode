@@ -10,6 +10,8 @@ export module Graphics.Resources.Samplers.Sampler.Tests;
 
 import Graphics.Resources.Samplers.Sampler;
 
+using namespace Graphics;
+
 static_assert(std::is_nothrow_move_constructible_v<Sampler>);
 static_assert(std::is_nothrow_move_assignable_v<Sampler>);
 

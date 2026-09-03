@@ -18,6 +18,8 @@ import Graphics.Passes.Opaque;
 
 #if defined(_WIN32)
 import Graphics.RHI.DX11;
+
+using namespace Graphics;
 #endif
 
 class RecordingOpaqueCommandList final : public CommandList

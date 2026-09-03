@@ -11,6 +11,8 @@ export module Graphics.Scene.GPUScene.Tests;
 
 import Graphics.Scene.GPUScene;
 
+using namespace Graphics;
+
 static Mesh Make_Mesh(std::uint32_t vertex_count, std::uint32_t index_count) noexcept
 {
 	Mesh mesh;

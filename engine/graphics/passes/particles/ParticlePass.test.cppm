@@ -13,6 +13,8 @@ export module Graphics.Passes.Particles.Tests;
 import Graphics.Passes.Opaque;
 import Graphics.Passes.Particles;
 
+using namespace Graphics;
+
 class RecordingParticleCommandList final : public CommandList
 {
 public:

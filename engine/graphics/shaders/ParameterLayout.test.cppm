@@ -15,6 +15,8 @@ export module Graphics.Shaders.ParameterLayout.Tests;
 import Graphics.Scene.DrawGeneration;
 import Graphics.Shaders.ParameterLayout;
 
+using namespace Graphics;
+
 static_assert(std::is_trivially_copyable_v<ShaderFloat4>);
 static_assert(std::is_trivially_copyable_v<ShaderMatrix4x4>);
 static_assert(std::is_nothrow_move_constructible_v<ShaderParameterBlockData>);

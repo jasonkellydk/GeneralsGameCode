@@ -13,6 +13,8 @@ export module Graphics.Passes.Decal.Tests;
 import Graphics.Passes.Decal;
 import Graphics.Passes.Opaque;
 
+using namespace Graphics;
+
 class RecordingDecalCommandList final : public CommandList
 {
 public:

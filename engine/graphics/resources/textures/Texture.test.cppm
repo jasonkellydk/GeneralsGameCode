@@ -10,6 +10,8 @@ export module Graphics.Resources.Textures.Texture.Tests;
 
 import Graphics.Resources.Textures.Texture;
 
+using namespace Graphics;
+
 static_assert(std::is_nothrow_move_constructible_v<Texture>);
 static_assert(std::is_nothrow_move_assignable_v<Texture>);
 

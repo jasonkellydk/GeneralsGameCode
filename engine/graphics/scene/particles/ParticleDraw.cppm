@@ -14,6 +14,9 @@ export import Graphics.Scene.DrawGeneration;
 export import Graphics.Scene.ParticleVisibility;
 export import Graphics.Scene.Particles;
 
+namespace Graphics
+{
+
 export struct alignas(16) ParticleDrawData final
 {
 	std::uint32_t particle_index = Invalid_Particle_Index;
@@ -143,4 +146,6 @@ export bool Build_Particle_Draw_Data(
 
 	draw_set.Sort();
 	return true;
+}
+
 }

@@ -12,6 +12,8 @@ export module Graphics.Passes.Transparent.Tests;
 
 import Graphics.Passes.Transparent;
 
+using namespace Graphics;
+
 class RecordingCommandList final : public CommandList
 {
 public:

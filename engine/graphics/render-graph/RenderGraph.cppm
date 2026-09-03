@@ -12,6 +12,9 @@ export module Graphics.RenderGraph;
 import Graphics.Resources.Handles.ResourceHandle;
 import Graphics.Resources.Pools.ResourcePool;
 
+namespace Graphics
+{
+
 export struct GraphResourceHandleTag
 {
 };
@@ -76,9 +79,11 @@ public:
 		m_ready.reserve(pass_capacity);
 		m_pass_slot_to_node.reserve(pass_capacity);
 		m_indegree.reserve(pass_capacity);
-		const std::size_t hazard_capacity = pass_capacity > std::numeric_limits<std::size_t>::max() / (pass_capacity > 0 ? pass_capacity - 1 : 1)
-			? std::numeric_limits<std::size_t>::max()
-			: pass_capacity * (pass_capacity > 0 ? pass_capacity - 1 : 0) / 2;
+		const std::size_t hazard_capacity = pass_capacity < 2
+			? 0
+			: pass_capacity > std::numeric_limits<std::size_t>::max() / (pass_capacity - 1)
+				? std::numeric_limits<std::size_t>::max()
+				: pass_capacity * (pass_capacity - 1) / 2;
 		const std::size_t edge_capacity = dependency_capacity > std::numeric_limits<std::size_t>::max() - hazard_capacity
 			? hazard_capacity
 			: hazard_capacity + dependency_capacity;
@@ -329,3 +334,5 @@ private:
 	std::vector<GraphPassHandle> m_execution_order;
 	bool m_compiled = false;
 };
+
+}

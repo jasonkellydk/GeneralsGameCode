@@ -11,6 +11,8 @@ export module Graphics.Scene.Views.View.Tests;
 
 import Graphics.Scene.Views.View;
 
+using namespace Graphics;
+
 static_assert(std::is_nothrow_move_constructible_v<View>);
 static_assert(std::is_nothrow_move_assignable_v<View>);
 

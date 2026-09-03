@@ -9,6 +9,9 @@ export module Graphics.RHI;
 
 export import Graphics.Resources.Handles.ResourceHandle;
 
+namespace Graphics
+{
+
 export struct RHIBufferHandleTag
 {
 };
@@ -176,6 +179,11 @@ export class CommandList
 public:
 	virtual ~CommandList() noexcept = default;
 
+	virtual bool Reset_State() noexcept
+	{
+		return true;
+	}
+
 	virtual bool Bind_Pipeline(RHIPipelineHandle pipeline) noexcept = 0;
 	virtual bool Set_Bindless_Resources(std::span<const RHIBindlessResource> resources) noexcept = 0;
 	virtual bool Set_Render_Targets(RHITextureHandle color_target, RHITextureHandle depth_target) noexcept = 0;
@@ -234,3 +242,5 @@ public:
 	virtual bool Begin_Frame() noexcept = 0;
 	virtual bool End_Frame() noexcept = 0;
 };
+
+}

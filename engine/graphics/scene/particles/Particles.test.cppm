@@ -10,6 +10,8 @@ export module Graphics.Scene.Particles.Tests;
 
 import Graphics.Scene.Particles;
 
+using namespace Graphics;
+
 static_assert(!std::is_convertible_v<ParticleEmitterHandle, MaterialHandle>);
 static_assert(std::is_nothrow_move_constructible_v<ParticleEmitter>);
 static_assert(std::is_nothrow_move_assignable_v<ParticleEmitter>);

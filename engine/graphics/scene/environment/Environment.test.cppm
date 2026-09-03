@@ -10,6 +10,8 @@ export module Graphics.Scene.Environment.Tests;
 
 import Graphics.Scene.Environment;
 
+using namespace Graphics;
+
 static_assert(std::is_nothrow_move_constructible_v<RenderEnvironment>);
 static_assert(std::is_nothrow_move_assignable_v<RenderEnvironment>);
 static_assert(std::is_trivially_copyable_v<GPUEnvironmentData>);

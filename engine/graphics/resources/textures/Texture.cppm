@@ -9,6 +9,9 @@ export module Graphics.Resources.Textures.Texture;
 export import Graphics.Resources.Handles.ResourceHandle;
 export import Graphics.Resources.Pools.ResourcePool;
 
+namespace Graphics
+{
+
 export enum class TextureFormat : std::uint8_t
 {
 	Unknown,
@@ -69,3 +72,5 @@ export struct Texture final
 };
 
 export using TexturePool = ResourcePool<Texture, TextureHandle>;
+
+}

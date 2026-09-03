@@ -11,6 +11,9 @@ export import Graphics.RHI;
 export import Graphics.Scene.Environment;
 export import Graphics.Shaders.Pipeline;
 
+namespace Graphics
+{
+
 export struct SkyPassInput final
 {
 	std::span<const RHIBindlessResource> bindless_resources{};
@@ -88,3 +91,5 @@ public:
 		return true;
 	}
 };
+
+}

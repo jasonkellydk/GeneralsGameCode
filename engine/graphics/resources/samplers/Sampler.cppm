@@ -7,6 +7,9 @@ export module Graphics.Resources.Samplers.Sampler;
 export import Graphics.Resources.Handles.ResourceHandle;
 export import Graphics.Resources.Pools.ResourcePool;
 
+namespace Graphics
+{
+
 export enum class SamplerFilter : std::uint8_t
 {
 	Nearest,
@@ -32,3 +35,5 @@ export struct Sampler final
 };
 
 export using SamplerPool = ResourcePool<Sampler, SamplerHandle>;
+
+}

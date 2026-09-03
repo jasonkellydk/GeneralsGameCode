@@ -11,6 +11,9 @@ export import Graphics.RenderGraph.Execution;
 export import Graphics.Scene.ParticleDraw;
 export import Graphics.RHI;
 
+namespace Graphics
+{
+
 export struct ParticleBillboardBinding final
 {
 	RHIBufferHandle vertex_buffer{};
@@ -79,3 +82,5 @@ public:
 		return true;
 	}
 };
+
+}

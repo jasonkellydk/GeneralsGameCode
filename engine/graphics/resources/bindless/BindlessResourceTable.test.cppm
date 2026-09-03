@@ -8,6 +8,8 @@ export module Graphics.Resources.Bindless.BindlessResourceTable.Tests;
 
 import Graphics.Resources.Bindless.BindlessResourceTable;
 
+using namespace Graphics;
+
 BOOST_AUTO_TEST_CASE(resource_indices_are_stable_and_updates_keep_their_slot)
 {
 	BindlessResourceTable table;

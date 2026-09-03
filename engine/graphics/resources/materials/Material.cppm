@@ -13,6 +13,9 @@ export import Graphics.Resources.Samplers.Sampler;
 export import Graphics.Resources.Textures.Texture;
 export import Graphics.Shaders.ParameterLayout;
 
+namespace Graphics
+{
+
 export enum class MaterialFlags : std::uint32_t
 {
 	None = 0,
@@ -71,3 +74,5 @@ export struct Material final
 };
 
 export using MaterialPool = ResourcePool<Material, MaterialHandle>;
+
+}

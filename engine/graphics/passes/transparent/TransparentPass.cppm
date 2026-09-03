@@ -11,6 +11,9 @@ export import Graphics.Passes.Opaque;
 export import Graphics.RenderGraph.Execution;
 export import Graphics.Scene.Transparency;
 
+namespace Graphics
+{
+
 export struct TransparentPassInput final
 {
 	std::span<const DrawData> draws{};
@@ -90,3 +93,5 @@ public:
 		return true;
 	}
 };
+
+}

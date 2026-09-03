@@ -11,6 +11,8 @@ export module Graphics.Scene.Decals.Tests;
 import Graphics.Scene.Decals;
 import Graphics.Scene.RenderScene;
 
+using namespace Graphics;
+
 static_assert(!std::is_convertible_v<DecalHandle, MaterialHandle>);
 static_assert(std::is_nothrow_move_constructible_v<RenderDecal>);
 static_assert(std::is_nothrow_move_assignable_v<RenderDecal>);

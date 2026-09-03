@@ -10,6 +10,8 @@ export module Graphics.Resources.Materials.Material.Tests;
 
 import Graphics.Resources.Materials.Material;
 
+using namespace Graphics;
+
 static_assert(std::is_nothrow_move_constructible_v<MaterialParameterBlock>);
 static_assert(std::is_nothrow_move_assignable_v<MaterialParameterBlock>);
 static_assert(std::is_nothrow_move_constructible_v<Material>);

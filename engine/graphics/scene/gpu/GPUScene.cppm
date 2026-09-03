@@ -20,6 +20,9 @@ export import Graphics.Scene.Lighting;
 export import Graphics.Scene.Shadows;
 export import Graphics.Scene.Decals;
 
+namespace Graphics
+{
+
 export inline constexpr std::uint32_t Invalid_GPU_Index = std::numeric_limits<std::uint32_t>::max();
 
 export struct alignas(16) GPUInstanceData final
@@ -719,3 +722,5 @@ private:
 	DenseTable<GPUDecalData, DecalHandle> m_decals;
 	std::vector<GPUSceneDirtyRange> m_dirty_ranges;
 };
+
+}

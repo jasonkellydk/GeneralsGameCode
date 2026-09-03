@@ -10,6 +10,8 @@ export module Graphics.Memory.AlignedAllocator.Tests;
 
 import Graphics.Memory.AlignedAllocator;
 
+using namespace Graphics;
+
 BOOST_AUTO_TEST_CASE(aligned_vector_has_contiguous_aligned_storage)
 {
 	AlignedVector<float> values;

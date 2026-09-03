@@ -11,6 +11,8 @@ export module Graphics.Scene.Transparency.Tests;
 
 import Graphics.Scene.Transparency;
 
+using namespace Graphics;
+
 static Mesh Make_Mesh() noexcept
 {
 	Mesh mesh;

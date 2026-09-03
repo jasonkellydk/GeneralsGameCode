@@ -13,6 +13,8 @@ export module Graphics.Resources.Residency.GPUResourceResidency.Tests;
 
 import Graphics.Resources.Residency.GPUResourceResidency;
 
+using namespace Graphics;
+
 class TestCommandList final : public CommandList
 {
 public:

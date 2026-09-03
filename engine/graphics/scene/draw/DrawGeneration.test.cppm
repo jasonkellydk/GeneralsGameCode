@@ -10,6 +10,8 @@ export module Graphics.Scene.DrawGeneration.Tests;
 
 import Graphics.Scene.DrawGeneration;
 
+using namespace Graphics;
+
 static constexpr PipelineHandle Test_Pipeline(8, 1);
 
 static Mesh Make_Mesh() noexcept

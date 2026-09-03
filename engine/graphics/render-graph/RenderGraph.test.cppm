@@ -10,6 +10,8 @@ export module Graphics.RenderGraph.Tests;
 
 import Graphics.RenderGraph;
 
+using namespace Graphics;
+
 BOOST_AUTO_TEST_CASE(render_graph_orders_resource_dependencies)
 {
 	RenderGraph graph;

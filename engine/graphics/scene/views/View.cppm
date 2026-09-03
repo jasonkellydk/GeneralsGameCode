@@ -6,6 +6,9 @@ module;
 
 export module Graphics.Scene.Views.View;
 
+namespace Graphics
+{
+
 export struct Matrix4x4 final
 {
 	std::array<float, 16> values{};
@@ -140,3 +143,5 @@ private:
 		};
 	}
 };
+
+}

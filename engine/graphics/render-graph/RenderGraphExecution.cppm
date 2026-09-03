@@ -10,6 +10,9 @@ export module Graphics.RenderGraph.Execution;
 export import Graphics.RenderGraph;
 export import Graphics.RHI;
 
+namespace Graphics
+{
+
 export struct GraphResourceBinding final
 {
 	GraphResourceHandle resource{};
@@ -295,3 +298,5 @@ private:
 	std::span<const PassExecution> m_executions;
 	bool m_valid = false;
 };
+
+}

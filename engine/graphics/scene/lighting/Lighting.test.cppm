@@ -10,6 +10,8 @@ export module Graphics.Scene.Lighting.Tests;
 
 import Graphics.Scene.Lighting;
 
+using namespace Graphics;
+
 static_assert(std::is_nothrow_move_constructible_v<RenderLight>);
 static_assert(std::is_nothrow_move_assignable_v<RenderLight>);
 static_assert(std::is_nothrow_move_constructible_v<GPULightData>);

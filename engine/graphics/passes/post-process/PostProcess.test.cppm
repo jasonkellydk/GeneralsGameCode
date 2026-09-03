@@ -14,6 +14,8 @@ export module Graphics.Passes.PostProcess.Tests;
 import Graphics.Passes.Opaque;
 import Graphics.Passes.PostProcess;
 
+using namespace Graphics;
+
 static_assert(std::is_trivially_copyable_v<PostProcessParameterData>);
 static_assert(std::is_nothrow_move_constructible_v<PostProcessParameterData>);
 

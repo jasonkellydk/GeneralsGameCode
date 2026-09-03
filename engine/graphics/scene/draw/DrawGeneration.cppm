@@ -11,6 +11,9 @@ export import Graphics.Scene.GPUScene;
 export import Graphics.Scene.LOD;
 export import Graphics.Shaders.Pipeline;
 
+namespace Graphics
+{
+
 export struct DrawPass final
 {
 	std::uint32_t pass_key = 0;
@@ -126,4 +129,6 @@ export bool Build_Draw_Data(const LODSet &lod_set, const GPUScene &gpu_scene, Dr
 
 	draw_set.Sort();
 	return true;
+}
+
 }

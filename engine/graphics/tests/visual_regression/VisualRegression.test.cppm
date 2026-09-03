@@ -23,9 +23,12 @@ import Graphics.Scene.DrawGeneration;
 import Graphics.Scene.GPUScene;
 import Graphics.Scene.LOD;
 import Graphics.Scene.Visibility;
+import Graphics.Scene.Beams;
 import Graphics.Shaders.Library;
 import Graphics.Testing.VisualRegression;
 import Graphics.RHI.DX11;
+
+using namespace Graphics;
 
 #ifndef GRAPHICS_VISUAL_REFERENCE_DIRECTORY
 #define GRAPHICS_VISUAL_REFERENCE_DIRECTORY "."
@@ -69,6 +72,8 @@ enum class SceneKind : std::uint8_t
 	BasicTriangle,
 	TexturedMesh,
 	LitMeshWithShadow
+	,
+	Beam
 };
 
 struct VisualScene final
@@ -101,9 +106,11 @@ struct VisualScene final
 	RHITextureHandle shadow_texture{};
 	RHIBufferHandle material_constants{};
 	BindlessResourceTable bindless;
+	BeamRenderer beam_renderer;
 
 	void Release(Device &device) noexcept
 	{
+		beam_renderer.Shutdown();
 		bindless.Clear();
 		if (instance_buffer.Is_Valid())
 			device.Destroy_Buffer(instance_buffer);
@@ -131,6 +138,8 @@ struct VisualScene final
 
 	bool Initialize(Device &device)
 	{
+		if (kind == SceneKind::Beam)
+			return Initialize_Beam(device);
 		if (kind == SceneKind::BasicTriangle)
 			return Initialize_Basic_Opaque(device);
 
@@ -210,6 +219,20 @@ struct VisualScene final
 		shadow_draws[0] = {1, 0, 0, 1, shadow_pipeline, 0};
 		shadow_instances[0].flags = static_cast<std::uint32_t>(RenderInstanceFlags::CastsShadow);
 		return true;
+	}
+
+	bool Initialize_Beam(Device &device)
+	{
+		if (!beam_renderer.Initialize(device, std::filesystem::path(GRAPHICS_RENDERER_SHADER_DIRECTORY), 4))
+			return false;
+
+		BeamDescription beam;
+		beam.start = {-0.75f, -0.15f, 0.0f};
+		beam.end = {0.75f, 0.15f, 0.0f};
+		beam.width = 0.10f;
+		beam.color = {1.0f, 0.25f, 0.05f, 1.0f};
+		beam.opacity = 0.75f;
+		return beam_renderer.Create(beam).Is_Valid();
 	}
 
 	bool Initialize_Basic_Opaque(Device &device)
@@ -330,6 +353,12 @@ private:
 static bool Render_Scene(Device &, CommandList &commands, RHITextureHandle color_target, RHITextureHandle depth_target, RHIViewport viewport, void *context) noexcept
 {
 	VisualScene &scene = *static_cast<VisualScene *>(context);
+	if (scene.kind == SceneKind::Beam) {
+		return commands.Set_Render_Targets(color_target, depth_target)
+			&& commands.Clear({0.02f, 0.02f, 0.03f, 1.0f}, 1.0f)
+			&& scene.beam_renderer.Render(commands, color_target, depth_target, viewport);
+	}
+
 	std::array<InstanceHandle, 1> visible_storage{};
 	VisibleSet visible_set(visible_storage);
 	std::array<LODSelection, 1> lod_storage{};
@@ -433,4 +462,9 @@ BOOST_AUTO_TEST_CASE(textured_mesh_matches_golden_image)
 BOOST_AUTO_TEST_CASE(lit_mesh_with_shadow_matches_golden_image)
 {
 	Run_Scene(SceneKind::LitMeshWithShadow, "lit_mesh_with_shadow");
+}
+
+BOOST_AUTO_TEST_CASE(generic_beam_matches_golden_image)
+{
+	Run_Scene(SceneKind::Beam, "generic_beam");
 }

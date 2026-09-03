@@ -12,6 +12,8 @@ export module Graphics.RenderGraph.Execution.Tests;
 
 import Graphics.RenderGraph.Execution;
 
+using namespace Graphics;
+
 class RecordingCommandList final : public CommandList
 {
 public:

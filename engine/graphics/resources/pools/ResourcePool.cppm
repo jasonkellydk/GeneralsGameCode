@@ -10,6 +10,9 @@ export module Graphics.Resources.Pools.ResourcePool;
 
 import Graphics.Resources.Handles.ResourceHandle;
 
+namespace Graphics
+{
+
 export template <typename Resource, typename Handle>
 class ResourcePool final
 {
@@ -162,3 +165,5 @@ public:
 	std::vector<Handle> m_dense_handles;
 	Index m_free_head = InvalidIndex;
 };
+
+}

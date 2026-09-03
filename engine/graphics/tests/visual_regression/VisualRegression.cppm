@@ -19,6 +19,9 @@ export module Graphics.Testing.VisualRegression;
 
 export import Graphics.RHI;
 
+namespace Graphics
+{
+
 export struct RGBAImage final
 {
 	std::uint32_t width = 0;
@@ -464,3 +467,5 @@ private:
 
 	VisualRegressionConfig m_config;
 };
+
+}

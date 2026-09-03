@@ -13,6 +13,8 @@ export module Graphics.Passes.Sky.Tests;
 import Graphics.Passes.Opaque;
 import Graphics.Passes.Sky;
 
+using namespace Graphics;
+
 class RecordingSkyCommandList final : public CommandList
 {
 public:

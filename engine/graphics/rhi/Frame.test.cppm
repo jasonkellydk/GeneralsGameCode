@@ -11,12 +11,25 @@ export module Graphics.RHI.Frame.Tests;
 
 import Graphics.RHI.Frame;
 
+using namespace Graphics;
+
 class TestCommandList final : public CommandList
 {
 public:
+	bool Reset_State() noexcept override
+	{
+		++m_reset_count;
+		return true;
+	}
+
 	bool Bind_Pipeline(RHIPipelineHandle) noexcept override { return true; }
 	bool Set_Bindless_Resources(std::span<const RHIBindlessResource>) noexcept override { return true; }
-	bool Set_Render_Targets(RHITextureHandle, RHITextureHandle) noexcept override { return true; }
+	bool Set_Render_Targets(RHITextureHandle color_target, RHITextureHandle depth_target) noexcept override
+	{
+		m_color_target = color_target;
+		m_depth_target = depth_target;
+		return color_target.Is_Valid() && depth_target.Is_Valid();
+	}
 	bool Set_Depth_Target(RHITextureHandle) noexcept override { return true; }
 	bool Clear(const std::array<float, 4> &, float) noexcept override { return true; }
 	bool Clear_Depth(float) noexcept override { return true; }
@@ -25,6 +38,15 @@ public:
 	bool Set_Index_Buffer(RHIBufferHandle, RHIIndexFormat, std::uint32_t) noexcept override { return true; }
 	bool Draw(std::uint32_t, std::uint32_t, std::uint32_t, std::uint32_t) noexcept override { return true; }
 	bool Draw_Indexed(std::uint32_t, std::uint32_t, std::int32_t, std::uint32_t, std::uint32_t) noexcept override { return true; }
+
+	std::uint32_t Reset_Count() const noexcept { return m_reset_count; }
+	RHITextureHandle Color_Target() const noexcept { return m_color_target; }
+	RHITextureHandle Depth_Target() const noexcept { return m_depth_target; }
+
+private:
+	std::uint32_t m_reset_count = 0;
+	RHITextureHandle m_color_target{};
+	RHITextureHandle m_depth_target{};
 };
 
 class TestSwapChain final : public SwapChain
@@ -139,4 +161,60 @@ BOOST_AUTO_TEST_CASE(frame_rejects_invalid_graph_targets)
 
 	BOOST_CHECK(!frame.Begin(graph, device, color, buffer, bindings));
 	BOOST_CHECK(!frame.Begin(graph, device, color, {}, bindings));
+}
+
+BOOST_AUTO_TEST_CASE(frame_owner_owns_legacy_modern_and_present_phases)
+{
+	TestDevice device;
+	FrameOwner owner;
+
+	BOOST_REQUIRE(owner.Begin_Frame(device));
+	BOOST_CHECK(owner.Phase() == FrameOwnerPhase::Legacy);
+	BOOST_CHECK(owner.Targets().backbuffer.texture == device.Get_Swap_Chain().Backbuffer().texture);
+	BOOST_CHECK(owner.Targets().depth.texture == device.Get_Swap_Chain().Depth_Target().texture);
+	BOOST_CHECK(owner.Modern_Commands(device) == nullptr);
+	BOOST_REQUIRE(owner.Begin_Modern_Phase(device));
+	BOOST_REQUIRE(owner.Modern_Commands(device) != nullptr);
+	BOOST_CHECK_EQUAL(static_cast<TestCommandList &>(device.Immediate_Command_List()).Reset_Count(), 1);
+	BOOST_CHECK(static_cast<TestCommandList &>(device.Immediate_Command_List()).Color_Target() == owner.Targets().backbuffer.texture);
+	BOOST_CHECK(static_cast<TestCommandList &>(device.Immediate_Command_List()).Depth_Target() == owner.Targets().depth.texture);
+	BOOST_CHECK(owner.Phase() == FrameOwnerPhase::Modern);
+	BOOST_REQUIRE(owner.End_Frame(device));
+	BOOST_CHECK(owner.Phase() == FrameOwnerPhase::ReadyToPresent);
+	BOOST_REQUIRE(owner.Present(device));
+	BOOST_CHECK(owner.Phase() == FrameOwnerPhase::Idle);
+	BOOST_CHECK_EQUAL(device.Test_Swap_Chain().Present_Count(), 1);
+	BOOST_CHECK_EQUAL(owner.Invalid_Operation_Count(), 1);
+}
+
+BOOST_AUTO_TEST_CASE(frame_handoff_rejects_double_present_and_invalid_ownership)
+{
+	TestDevice device;
+	FrameOwner owner;
+
+	BOOST_CHECK(!owner.Present(device));
+	BOOST_REQUIRE(owner.Begin_Frame(device));
+	BOOST_CHECK(!owner.Begin_Frame(device));
+	owner.Abort(device);
+	BOOST_CHECK(owner.Phase() == FrameOwnerPhase::Idle);
+	BOOST_REQUIRE(owner.Begin_Frame(device));
+	BOOST_REQUIRE(owner.Begin_Modern_Phase(device));
+	BOOST_REQUIRE(owner.End_Frame(device));
+	BOOST_REQUIRE(owner.Present(device));
+	BOOST_CHECK(!owner.Present(device));
+	BOOST_CHECK_EQUAL(device.Test_Swap_Chain().Present_Count(), 1);
+	BOOST_CHECK_EQUAL(owner.Invalid_Operation_Count(), 3);
+}
+
+BOOST_AUTO_TEST_CASE(frame_owner_rejects_foreign_device_phase_access)
+{
+	TestDevice owner_device;
+	TestDevice foreign_device;
+	FrameOwner owner;
+
+	BOOST_REQUIRE(owner.Begin_Frame(owner_device));
+	BOOST_CHECK(!owner.Begin_Modern_Phase(foreign_device));
+	owner.Abort(owner_device);
+	BOOST_CHECK(owner.Phase() == FrameOwnerPhase::Idle);
+	BOOST_CHECK_EQUAL(owner.Invalid_Operation_Count(), 1);
 }

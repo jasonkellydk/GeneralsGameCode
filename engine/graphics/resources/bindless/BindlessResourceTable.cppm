@@ -10,6 +10,9 @@ export module Graphics.Resources.Bindless.BindlessResourceTable;
 
 export import Graphics.RHI;
 
+namespace Graphics
+{
+
 export class BindlessResourceTable final
 {
 public:
@@ -344,3 +347,5 @@ private:
 	std::vector<MappingSlot> m_materials;
 	std::uint32_t m_free_head = Invalid_Index;
 };
+
+}

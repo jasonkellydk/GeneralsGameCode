@@ -11,6 +11,8 @@ export module Graphics.Scene.LOD.Tests;
 
 import Graphics.Scene.LOD;
 
+using namespace Graphics;
+
 static Matrix4x4 Make_Projection() noexcept
 {
 	constexpr float near_clip = 1.0f;

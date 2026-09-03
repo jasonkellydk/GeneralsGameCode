@@ -14,6 +14,8 @@ export module Graphics.Shaders.Pipeline.Tests;
 
 import Graphics.Shaders.Pipeline;
 
+using namespace Graphics;
+
 class TestCommandList final : public CommandList
 {
 public:

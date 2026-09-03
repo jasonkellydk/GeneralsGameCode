@@ -19,6 +19,9 @@ export import Graphics.Scene.Lighting;
 
 import Graphics.Memory.AlignedAllocator;
 
+namespace Graphics
+{
+
 export struct alignas(16) RenderTransform final
 {
 	std::array<float, 16> matrix{};
@@ -958,3 +961,5 @@ private:
 	std::vector<DecalSlot> m_decal_slots;
 	Index m_decal_free_head = Invalid_Render_Scene_Index;
 };
+
+}

@@ -9,6 +9,9 @@ module;
 
 export module Graphics.Memory.AlignedAllocator;
 
+namespace Graphics
+{
+
 export template <typename Type, std::size_t Alignment>
 class AlignedAllocator
 {
@@ -60,3 +63,5 @@ constexpr bool operator!=(const AlignedAllocator<LeftType, Alignment> &, const A
 
 export template <typename Type, std::size_t Alignment = 16>
 using AlignedVector = std::vector<Type, AlignedAllocator<Type, Alignment>>;
+
+}

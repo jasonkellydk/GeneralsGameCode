@@ -10,6 +10,8 @@ export module Graphics.Resources.Handles.ResourceHandle.Tests;
 
 import Graphics.Resources.Handles.ResourceHandle;
 
+using namespace Graphics;
+
 BOOST_AUTO_TEST_CASE(default_handle_is_invalid)
 {
 	const MeshHandle handle;

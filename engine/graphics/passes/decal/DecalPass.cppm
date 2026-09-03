@@ -11,6 +11,9 @@ export import Graphics.RenderGraph.Execution;
 export import Graphics.Scene.DecalDraw;
 export import Graphics.RHI;
 
+namespace Graphics
+{
+
 export struct DecalVolumeBinding final
 {
 	RHIBufferHandle vertex_buffer{};
@@ -84,3 +87,5 @@ public:
 		return true;
 	}
 };
+
+}

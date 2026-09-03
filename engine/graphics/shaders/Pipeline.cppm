@@ -11,6 +11,9 @@ export import Graphics.Resources.Handles.ResourceHandle;
 export import Graphics.RHI;
 export import Graphics.Shaders.ParameterLayout;
 
+namespace Graphics
+{
+
 export struct PipelineDesc;
 
 export struct PipelineKey final
@@ -181,3 +184,5 @@ private:
 	std::vector<Entry> m_entries;
 	PipelineHandle m_fallback{};
 };
+
+}

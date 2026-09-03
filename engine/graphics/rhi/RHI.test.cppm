@@ -12,6 +12,8 @@ export module Graphics.RHI.Tests;
 
 import Graphics.RHI;
 
+using namespace Graphics;
+
 static_assert(!std::is_convertible_v<RHIBufferHandle, RHITextureHandle>);
 static_assert(!std::is_convertible_v<RHITextureHandle, RHIPipelineHandle>);
 

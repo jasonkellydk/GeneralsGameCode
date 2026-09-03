@@ -9,6 +9,8 @@ export module Graphics.Resources.Pools.ResourcePool.Tests;
 import Graphics.Resources.Handles.ResourceHandle;
 import Graphics.Resources.Pools.ResourcePool;
 
+using namespace Graphics;
+
 BOOST_AUTO_TEST_CASE(create_and_resolve)
 {
 	ResourcePool<int, MeshHandle> pool;

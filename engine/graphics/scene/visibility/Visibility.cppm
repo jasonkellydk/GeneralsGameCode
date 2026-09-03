@@ -8,6 +8,9 @@ export module Graphics.Scene.Visibility;
 export import Graphics.Scene.RenderScene;
 export import Graphics.Scene.Views.View;
 
+namespace Graphics
+{
+
 export class VisibleSet;
 
 export bool Build_Visible_Set(const RenderScene &scene, const View &view, VisibleSet &visible_set) noexcept;
@@ -91,4 +94,6 @@ export bool Build_Visible_Set(const RenderScene &scene, const View &view, Visibl
 	}
 
 	return true;
+}
+
 }

@@ -12,6 +12,9 @@ export import Graphics.RenderGraph.Execution;
 export import Graphics.Scene.GPUScene;
 export import Graphics.Scene.Shadows;
 
+namespace Graphics
+{
+
 export struct ShadowPassInput final
 {
 	std::span<const DrawData> draws{};
@@ -110,3 +113,5 @@ public:
 		return true;
 	}
 };
+
+}

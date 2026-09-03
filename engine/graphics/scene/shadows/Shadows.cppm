@@ -14,6 +14,9 @@ export import Graphics.RenderGraph;
 export import Graphics.Scene.Lighting;
 export import Graphics.Scene.Views.View;
 
+namespace Graphics
+{
+
 export inline constexpr std::size_t Max_Shadow_Cascades = 4;
 
 export struct ShadowSettings final
@@ -523,4 +526,6 @@ void ShadowMapResources::Shutdown(Device &device) noexcept
 	}
 	m_count = 0;
 	m_map_size = 0;
+}
+
 }

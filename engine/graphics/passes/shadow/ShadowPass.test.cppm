@@ -12,6 +12,8 @@ export module Graphics.Passes.Shadow.Tests;
 
 import Graphics.Passes.Shadow;
 
+using namespace Graphics;
+
 class RecordingCommandList final : public CommandList
 {
 public:

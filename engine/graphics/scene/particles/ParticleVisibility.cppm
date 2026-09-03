@@ -9,6 +9,9 @@ export module Graphics.Scene.ParticleVisibility;
 export import Graphics.Scene.Particles;
 export import Graphics.Scene.Views.View;
 
+namespace Graphics
+{
+
 export class VisibleParticleSet;
 
 export bool Build_Visible_Particles(const ParticleSystem &particles, const View &view, VisibleParticleSet &visible_particles) noexcept;
@@ -100,4 +103,6 @@ export bool Build_Visible_Particles(const ParticleSystem &particles, const View 
 	}
 
 	return true;
+}
+
 }

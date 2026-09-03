@@ -11,6 +11,9 @@ export import Graphics.RenderGraph.Execution;
 export import Graphics.Scene.DrawGeneration;
 export import Graphics.RHI;
 
+namespace Graphics
+{
+
 export struct OpaqueMeshBinding final
 {
 	RHIBufferHandle vertex_buffer{};
@@ -107,3 +110,5 @@ public:
 		return true;
 	}
 };
+
+}

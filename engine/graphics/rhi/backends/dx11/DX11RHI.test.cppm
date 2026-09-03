@@ -20,6 +20,8 @@ import Graphics.Passes.Opaque;
 import Graphics.Resources.Bindless.BindlessResourceTable;
 import Graphics.Resources.Residency.GPUResourceResidency;
 
+using namespace Graphics;
+
 static LRESULT CALLBACK Frame_Test_Window_Proc(HWND window, UINT message, WPARAM wparam, LPARAM lparam)
 {
 	return DefWindowProcA(window, message, wparam, lparam);

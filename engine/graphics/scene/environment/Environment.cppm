@@ -9,6 +9,9 @@ export module Graphics.Scene.Environment;
 export import Graphics.Scene.Lighting;
 export import Graphics.Scene.Views.View;
 
+namespace Graphics
+{
+
 export enum class EnvironmentFlags : std::uint32_t
 {
 	None = 0,
@@ -192,4 +195,6 @@ export RenderLight Make_Environment_Sun_Light(const RenderEnvironment &environme
 	light.intensity = environment.sun_intensity;
 	light.range = 0.0f;
 	return light;
+}
+
 }

@@ -30,6 +30,8 @@
 #pragma once
 
 // INCLUDES ///////////////////////////////////////////////////////////////////////////////////////
+#include <cstdint>
+
 #include "Common/DrawModule.h"
 #include "WW3D2/Line3D.h"
 
@@ -61,8 +63,13 @@ public:
 	virtual const TracerDrawInterface* getTracerDrawInterface() const override { return this; }
 
 protected:
+	void createLegacyTracer(const Matrix3D& transform);
+	bool updateModernTracer() noexcept;
 
 	Line3DClass *m_theTracer;			///< the tracer render object in the W3D scene
+	std::uint64_t m_modernBeam;
+	Matrix3D m_modernTransform;
+	Bool m_modernTransformValid;
 	Real m_length;								///< length of tracer
 	Real m_width;									///< width of tracer
 	RGBColor m_color;							///< color of tracer

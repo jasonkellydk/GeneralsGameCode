@@ -11,6 +11,8 @@ export module Graphics.Scene.Shadows.Tests;
 
 import Graphics.Scene.Shadows;
 
+using namespace Graphics;
+
 namespace
 {
 Matrix4x4 Make_Perspective(float near_clip, float far_clip) noexcept

@@ -9,6 +9,9 @@ export import Graphics.Scene.Decals;
 export import Graphics.Scene.RenderScene;
 export import Graphics.Scene.Views.View;
 
+namespace Graphics
+{
+
 export class VisibleDecalSet;
 
 export bool Build_Visible_Decals(const RenderScene &scene, const View &view, VisibleDecalSet &visible_decals) noexcept;
@@ -96,4 +99,6 @@ export bool Build_Visible_Decals(const RenderScene &scene, const View &view, Vis
 	}
 
 	return true;
+}
+
 }

@@ -11,6 +11,9 @@ export module Graphics.Scene.Lighting;
 export import Graphics.Resources.Handles.ResourceHandle;
 export import Graphics.Scene.Views.View;
 
+namespace Graphics
+{
+
 export inline constexpr std::uint32_t Invalid_Shadow_Data_Index = std::numeric_limits<std::uint32_t>::max();
 
 export enum class RenderLightType : std::uint8_t
@@ -105,3 +108,5 @@ export struct alignas(16) GPULightData final
 };
 
 static_assert(sizeof(GPULightData) == 64);
+
+}

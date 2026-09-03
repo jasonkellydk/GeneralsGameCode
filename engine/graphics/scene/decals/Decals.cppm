@@ -12,6 +12,9 @@ export import Graphics.Resources.Handles.ResourceHandle;
 export import Graphics.Shaders.Pipeline;
 export import Graphics.Scene.Views.View;
 
+namespace Graphics
+{
+
 export inline constexpr std::uint32_t Invalid_Decal_GPU_Index = std::numeric_limits<std::uint32_t>::max();
 
 export enum class RenderDecalFlags : std::uint32_t
@@ -125,4 +128,6 @@ export PipelineDesc Make_Decal_Pipeline(PipelineDesc description) noexcept
 	description.depth_write = false;
 	description.blend_mode = RHIBlendMode::Alpha;
 	return description;
+}
+
 }
