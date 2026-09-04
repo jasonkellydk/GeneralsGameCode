@@ -2,6 +2,12 @@
     "version": 1,
     "dependencies": [
         {
+            "name": "boost-test",
+            "version-string": "1.87.0",
+            "port-version": 0,
+            "git-tree": "a07be6aeeebd497a3d493721e3f7ea3c2e35c5f8"
+        },
+        {
             "name": "ffmpeg",
             "version-string": "7.1.1",
             "port-version": 1,

@@ -48,6 +48,8 @@ thumbs.db
 /.vscode
 /Dependencies/MaxSDK/maxsdk
 /tmp/
+/vcpkg_installed/
+/gcm.cache/
 
 ## AI assistant config (user-specific)
 /.claude/

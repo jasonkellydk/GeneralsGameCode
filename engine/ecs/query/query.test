@@ -1,0 +1,86 @@
+#include <boost/test/unit_test.hpp>
+
+#include <cstddef>
+
+import engine.ecs.query.query;
+
+namespace
+{
+
+struct QueryPosition
+{
+	int value{0};
+};
+
+struct QueryVelocity
+{
+	int value{0};
+};
+
+struct QueryTag
+{
+};
+
+struct QueryExcludedTag
+{
+};
+
+} // namespace
+
+BOOST_AUTO_TEST_SUITE(ecs_query)
+
+BOOST_AUTO_TEST_CASE(typed_chunk_iteration_and_filters)
+{
+	ecs::World world{ecs::WorldConfig{256}};
+	const ecs::Entity first = world.Create<QueryPosition, QueryVelocity>();
+	const ecs::Entity second = world.Create<QueryPosition>();
+	world.Get<QueryPosition>(first)->value = 10;
+	world.Get<QueryVelocity>(first)->value = 20;
+	world.Get<QueryPosition>(second)->value = 30;
+
+	ecs::Query<ecs::Write<QueryPosition>, ecs::Read<QueryVelocity>, ecs::Optional<QueryTag>, ecs::Exclude<QueryExcludedTag>> query(world);
+	std::size_t entities = 0;
+	std::size_t chunks = 0;
+	query.ForEachChunk([&](ecs::Query<ecs::Write<QueryPosition>, ecs::Read<QueryVelocity>, ecs::Optional<QueryTag>, ecs::Exclude<QueryExcludedTag>>::Chunk chunk) {
+		++chunks;
+		auto positions = chunk.Get<QueryPosition>();
+		auto velocities = chunk.Get<QueryVelocity>();
+		auto optionalTags = chunk.Get<QueryTag>();
+		BOOST_TEST(positions.size() == chunk.Count());
+		BOOST_TEST(velocities.size() == chunk.Count());
+		BOOST_TEST(optionalTags.empty());
+		for (std::size_t i = 0; i < positions.size(); ++i)
+		{
+			positions[i].value += 1;
+			++entities;
+		}
+	});
+
+	BOOST_TEST(chunks == 1);
+	BOOST_TEST(entities == 1);
+	BOOST_TEST(world.Get<QueryPosition>(first)->value == 11);
+	BOOST_TEST(world.Get<QueryPosition>(second)->value == 30);
+
+	const auto accesses = query.Accesses();
+	BOOST_TEST(static_cast<int>(accesses[0].mode) == static_cast<int>(ecs::AccessMode::Write));
+	BOOST_TEST(static_cast<int>(accesses[1].mode) == static_cast<int>(ecs::AccessMode::Read));
+	BOOST_TEST(accesses[2].optional);
+	BOOST_TEST(accesses[3].excluded);
+}
+
+BOOST_AUTO_TEST_CASE(queries_scale_across_many_entities)
+{
+	ecs::World world{ecs::WorldConfig{512}};
+	constexpr std::size_t entityCount = 4096;
+	for (std::size_t i = 0; i < entityCount; ++i)
+		world.Create<QueryPosition>();
+
+	ecs::Query<ecs::Read<QueryPosition>> query(world);
+	std::size_t visited = 0;
+	query.ForEachChunk([&](auto chunk) { visited += chunk.Count(); });
+
+	BOOST_TEST(visited == entityCount);
+	BOOST_TEST(query.CachedArchetypeCount() == 1);
+}
+
+BOOST_AUTO_TEST_SUITE_END()

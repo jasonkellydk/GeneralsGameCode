@@ -1,0 +1,44 @@
+#include <boost/test/unit_test.hpp>
+
+#include <vector>
+
+import engine.ecs.storage.archetype;
+
+namespace
+{
+
+struct ArchetypeTestComponent
+{
+	int value{0};
+};
+
+} // namespace
+
+BOOST_AUTO_TEST_SUITE(ecs_archetype)
+
+BOOST_AUTO_TEST_CASE(entities_use_dense_chunks_and_signature_lookup)
+{
+	ecs::ComponentRegistry registry;
+	const ecs::ComponentId component = registry.Register<ArchetypeTestComponent>();
+	const ecs::Signature signature{component};
+	const std::vector<const ecs::ComponentInfo *> components{&registry.Get(component)};
+	ecs::Archetype archetype(signature, components, 256);
+
+	const ecs::Entity first{1, 1};
+	const ecs::Entity second{2, 1};
+	const ecs::Archetype::Slot firstSlot = archetype.AddEntity(first);
+	const ecs::Archetype::Slot secondSlot = archetype.AddEntity(second);
+
+	BOOST_TEST(archetype.Has(component));
+	BOOST_TEST(archetype.ColumnIndex(component) == 0);
+	BOOST_TEST(archetype.EntityCount() == 2);
+	BOOST_TEST(firstSlot.chunk != nullptr);
+	BOOST_CHECK(secondSlot.chunk == firstSlot.chunk);
+
+	const ecs::Entity moved = archetype.RemoveEntity(firstSlot.chunk, firstSlot.row);
+	BOOST_CHECK(moved == second);
+	BOOST_TEST(archetype.EntityCount() == 1);
+	BOOST_CHECK(firstSlot.chunk->Entities()[0] == second);
+}
+
+BOOST_AUTO_TEST_SUITE_END()

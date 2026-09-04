@@ -1,0 +1,77 @@
+#include <boost/test/unit_test.hpp>
+
+#include <cstdint>
+
+import engine.ecs.core.world;
+
+namespace
+{
+
+struct Position
+{
+	int x{0};
+	int y{0};
+};
+
+struct Velocity
+{
+	int x{0};
+	int y{0};
+};
+
+struct Marker
+{
+	std::uint64_t value{0};
+};
+
+} // namespace
+
+BOOST_AUTO_TEST_SUITE(ecs_world)
+
+BOOST_AUTO_TEST_CASE(stale_handles_and_reuse)
+{
+	ecs::World world;
+	const ecs::Entity first = world.Create<Position>();
+
+	BOOST_TEST(world.IsAlive(first));
+	BOOST_TEST(world.Destroy(first));
+	BOOST_TEST(!world.IsAlive(first));
+	BOOST_TEST(!world.Destroy(first));
+
+	const ecs::Entity replacement = world.Create<Position>();
+	BOOST_TEST(replacement.index == first.index);
+	BOOST_TEST(replacement.generation != first.generation);
+	BOOST_TEST(world.IsAlive(replacement));
+	BOOST_TEST(!world.IsAlive(first));
+}
+
+BOOST_AUTO_TEST_CASE(archetype_transitions_preserve_components)
+{
+	ecs::World world;
+	const ecs::Entity first = world.Create<Position, Velocity>();
+	const ecs::Entity second = world.Create<Position, Velocity>();
+	world.Get<Position>(first)->x = 10;
+	world.Get<Position>(first)->y = 11;
+	world.Get<Velocity>(first)->x = 12;
+	world.Get<Position>(second)->x = 20;
+	world.Get<Position>(second)->y = 21;
+
+	BOOST_TEST(world.Add<Marker>(first));
+	BOOST_TEST(world.Has<Marker>(first));
+	BOOST_TEST(world.Get<Position>(first)->x == 10);
+	BOOST_TEST(world.Get<Position>(first)->y == 11);
+	BOOST_TEST(world.Get<Velocity>(first)->x == 12);
+	BOOST_TEST(world.Get<Position>(second)->x == 20);
+	BOOST_TEST(world.Get<Position>(second)->y == 21);
+	BOOST_TEST(!world.Add<Marker>(first));
+
+	BOOST_TEST(world.Remove<Velocity>(first));
+	BOOST_TEST(!world.Has<Velocity>(first));
+	BOOST_TEST(world.Get<Position>(first)->x == 10);
+	BOOST_TEST(world.Get<Marker>(first) != nullptr);
+	BOOST_TEST(!world.Remove<Velocity>(first));
+	const ecs::Entity invalid{999, 1};
+	BOOST_TEST(!world.Add<Marker>(invalid));
+}
+
+BOOST_AUTO_TEST_SUITE_END()

@@ -1,0 +1,36 @@
+#include <boost/test/unit_test.hpp>
+
+#include <vector>
+
+import engine.ecs.storage.signature;
+
+namespace
+{
+
+struct SignatureTestComponentA
+{
+};
+
+struct SignatureTestComponentB
+{
+};
+
+} // namespace
+
+BOOST_AUTO_TEST_SUITE(ecs_signature)
+
+BOOST_AUTO_TEST_CASE(canonicalization_sorts_and_deduplicates)
+{
+	ecs::ComponentRegistry registry;
+	const ecs::ComponentId a = registry.Register<SignatureTestComponentA>();
+	const ecs::ComponentId b = registry.Register<SignatureTestComponentB>();
+	ecs::Signature signature{b, a, b};
+
+	ecs::CanonicalizeSignature(signature);
+
+	const ecs::Signature expected{a, b};
+	BOOST_CHECK(signature == expected);
+	BOOST_TEST(ecs::SignatureLess{}(ecs::Signature({a}), ecs::Signature({b})));
+}
+
+BOOST_AUTO_TEST_SUITE_END()

@@ -1,0 +1,37 @@
+#include <boost/test/unit_test.hpp>
+
+import engine.ecs.core.component_registry;
+
+namespace
+{
+
+struct Position
+{
+	int value{0};
+};
+
+struct Velocity
+{
+	int value{0};
+};
+
+} // namespace
+
+BOOST_AUTO_TEST_SUITE(ecs_component_registry)
+
+BOOST_AUTO_TEST_CASE(registers_types_once_with_structural_metadata)
+{
+	ecs::ComponentRegistry registry;
+	const ecs::ComponentId position = registry.Register<Position>();
+	const ecs::ComponentId positionAgain = registry.Register<Position>();
+	const ecs::ComponentId velocity = registry.Register<Velocity>();
+
+	BOOST_TEST(position == positionAgain);
+	BOOST_TEST(position != velocity);
+	BOOST_TEST(registry.Count() == 2);
+	BOOST_TEST(registry.Get(position).size == sizeof(Position));
+	BOOST_TEST(registry.Get(position).alignment == alignof(Position));
+	BOOST_TEST(registry.TryGet<Velocity>() == velocity);
+}
+
+BOOST_AUTO_TEST_SUITE_END()

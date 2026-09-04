@@ -1,0 +1,16 @@
+#include <boost/test/unit_test.hpp>
+
+import engine.ecs;
+
+BOOST_AUTO_TEST_SUITE(ecs_module)
+
+BOOST_AUTO_TEST_CASE(umbrella_module_exports_foundation)
+{
+	ecs::World world;
+	const ecs::Entity entity = world.Create<>();
+
+	BOOST_TEST(world.IsAlive(entity));
+	BOOST_TEST(world.EntityCount() == 1);
+}
+
+BOOST_AUTO_TEST_SUITE_END()

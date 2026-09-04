@@ -1,0 +1,46 @@
+#include <boost/test/unit_test.hpp>
+
+#include <cstddef>
+#include <vector>
+
+import engine.ecs.storage.chunk_layout;
+import engine.ecs.core.entity;
+
+namespace
+{
+
+struct LayoutSmall
+{
+	int value{0};
+};
+
+struct alignas(32) LayoutAligned
+{
+	int value{0};
+};
+
+} // namespace
+
+BOOST_AUTO_TEST_SUITE(ecs_chunk_layout)
+
+BOOST_AUTO_TEST_CASE(respects_target_capacity_and_alignment)
+{
+	ecs::ComponentRegistry registry;
+	const ecs::ComponentId smallId = registry.Register<LayoutSmall>();
+	const ecs::ComponentId alignedId = registry.Register<LayoutAligned>();
+	const std::vector<const ecs::ComponentInfo *> components{
+		&registry.Get(smallId),
+		&registry.Get(alignedId)};
+
+	const ecs::ChunkLayout layout = ecs::ChunkLayout::Build(components, 1024);
+
+	BOOST_TEST(layout.Capacity() >= 1);
+	const bool withinTarget = layout.TotalBytes() <= 1024 || layout.Capacity() == 1;
+	BOOST_TEST(withinTarget);
+	BOOST_TEST(layout.Alignment() >= alignof(LayoutAligned));
+	BOOST_TEST(layout.EntityOffset() % alignof(ecs::Entity) == 0);
+	for (const ecs::ChunkLayout::Column &column : layout.Columns())
+		BOOST_TEST(column.offset % column.alignment == 0);
+}
+
+BOOST_AUTO_TEST_SUITE_END()

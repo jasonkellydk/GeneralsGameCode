@@ -1,0 +1,44 @@
+#include <boost/test/unit_test.hpp>
+
+#include <cstdint>
+
+import engine.ecs.query.query;
+
+namespace
+{
+
+struct CachePosition
+{
+	int value{0};
+};
+
+} // namespace
+
+BOOST_AUTO_TEST_SUITE(ecs_query_cache)
+
+BOOST_AUTO_TEST_CASE(cache_updates_when_an_archetype_is_created)
+{
+	ecs::World world;
+	ecs::Query<ecs::Read<CachePosition>> query(world);
+	bool firstRun = false;
+	query.ForEachChunk([&](auto chunk) {
+		firstRun = true;
+		BOOST_TEST(chunk.Count() == 1);
+	});
+
+	BOOST_TEST(!firstRun);
+	const std::uint64_t initialRevision = query.CachedRevision();
+	world.Create<CachePosition>();
+
+	bool secondRun = false;
+	query.ForEachChunk([&](auto chunk) {
+		secondRun = true;
+		BOOST_TEST(chunk.Count() == 1);
+	});
+
+	BOOST_TEST(secondRun);
+	BOOST_TEST(query.CachedArchetypeCount() == 1);
+	BOOST_TEST(query.CachedRevision() > initialRevision);
+}
+
+BOOST_AUTO_TEST_SUITE_END()
