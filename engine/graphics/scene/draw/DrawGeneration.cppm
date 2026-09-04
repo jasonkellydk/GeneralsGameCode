@@ -36,9 +36,11 @@ export struct alignas(16) DrawData final
 	std::uint32_t instance_count = 1;
 	PipelineHandle pipeline{};
 	std::uint64_t sort_key = 0;
+	std::uint32_t submesh_index = 0;
+	std::uint32_t reserved = 0;
 };
 
-static_assert(sizeof(DrawData) == 32);
+static_assert(sizeof(DrawData) == 48);
 
 export class DrawSet;
 
@@ -92,6 +94,8 @@ private:
 				return left.mesh_index < right.mesh_index;
 			if (left.sort_key != right.sort_key)
 				return left.sort_key < right.sort_key;
+			if (left.submesh_index != right.submesh_index)
+				return left.submesh_index < right.submesh_index;
 			if (left.instance_count != right.instance_count)
 				return left.instance_count < right.instance_count;
 			return left.instance_index < right.instance_index;
@@ -115,23 +119,35 @@ export bool Build_Draw_Data(const LODSet &lod_set, const GPUScene &gpu_scene, Dr
 	for (const LODSelection &selection : lod_set.Selections()) {
 		const std::uint32_t mesh_index = gpu_scene.Mesh_Index(selection.mesh);
 		const std::uint32_t instance_index = gpu_scene.Instance_Index(selection.instance);
-		if (mesh_index == Invalid_GPU_Index || instance_index == Invalid_GPU_Index || instance_index >= instances.size())
+		if (mesh_index == Invalid_GPU_Index || mesh_index >= gpu_scene.Meshes().size()
+			|| instance_index == Invalid_GPU_Index || instance_index >= instances.size())
 			continue;
 
 		const std::uint32_t material_index = instances[instance_index].material_index;
 		if (material_index == Invalid_GPU_Index || material_index >= materials.size())
 			continue;
 
-		if (!draw_set.Try_Append({
-			mesh_index,
-			material_index,
-			instance_index,
-			1,
-			pass.pipeline,
-			pass.sort_key
-		})) {
-			draw_set.Clear();
-			return false;
+		const GPUMeshData &mesh = gpu_scene.Meshes()[mesh_index];
+		if (mesh.part_count == 0 || mesh.part_count > Max_Model_Part_Count
+			|| static_cast<std::uint64_t>(mesh.part_offset) + mesh.part_count > gpu_scene.Mesh_Parts().size())
+			continue;
+
+		for (std::uint32_t submesh_index = 0; submesh_index < mesh.part_count; ++submesh_index) {
+			if (!Is_Submesh_Visible(instances[instance_index].visibility_mask, submesh_index))
+				continue;
+			if (!draw_set.Try_Append({
+				mesh_index,
+				material_index,
+				instance_index,
+				1,
+				pass.pipeline,
+				pass.sort_key,
+				submesh_index,
+				0
+			})) {
+				draw_set.Clear();
+				return false;
+			}
 		}
 	}
 

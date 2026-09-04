@@ -17,6 +17,7 @@ export import Graphics.Resources.Materials.Material;
 export import Graphics.Resources.Residency.GPUResourceResidency;
 export import Graphics.Scene.DrawGeneration;
 export import Graphics.Scene.GPUScene;
+export import Graphics.Scene.Models.ModelVisibility;
 export import Graphics.Scene.Views.View;
 export import Graphics.Scene.Visibility;
 export import Graphics.Shaders.Library;
@@ -44,6 +45,7 @@ export struct StaticMeshSource final
 	std::span<const std::byte> index_data{};
 	std::array<float, 3> bounds_center{};
 	float bounds_radius = 0.0f;
+	std::span<const MeshPart> parts{};
 };
 
 export bool Validate_Static_Mesh_Source(const StaticMeshSource &source) noexcept
@@ -60,7 +62,8 @@ export bool Validate_Static_Mesh_Source(const StaticMeshSource &source) noexcept
 		&& source.index_data.size() == static_cast<std::size_t>(source.index_count) * index_stride
 		&& source.vertex_data.size() <= std::numeric_limits<std::uint32_t>::max()
 		&& source.index_data.size() <= std::numeric_limits<std::uint32_t>::max()
-		&& source.bounds_radius >= 0.0f;
+		&& source.bounds_radius >= 0.0f
+		&& source.parts.size() <= Max_Model_Part_Count;
 }
 
 export struct alignas(16) GPUViewData final
@@ -91,6 +94,7 @@ public:
 		m_lod = std::make_unique<LODSet>(m_lod_storage);
 		m_draws = std::make_unique<DrawSet>(m_draw_storage);
 		m_mesh_bindings.resize(max_meshes);
+		m_mesh_part_bindings.reserve(max_meshes * Max_Model_Part_Count);
 		m_dirty_instances.reserve(max_instances);
 		m_instance_capacity = max_instances;
 
@@ -209,6 +213,7 @@ public:
 		m_lod_storage.clear();
 		m_draw_storage.clear();
 		m_mesh_bindings.clear();
+		m_mesh_part_bindings.clear();
 		m_dirty_instances.clear();
 		m_graph = {};
 		m_plan = {};
@@ -232,6 +237,13 @@ public:
 		auto storage = std::make_unique<MeshStorage>();
 		storage->vertex_data.assign(source.vertex_data.begin(), source.vertex_data.end());
 		storage->index_data.assign(source.index_data.begin(), source.index_data.end());
+		storage->parts.assign(source.parts.begin(), source.parts.end());
+		if (storage->parts.empty())
+			storage->parts.push_back({0, source.index_count, 0});
+		for (const MeshPart &part : storage->parts) {
+			if (part.index_count == 0 || static_cast<std::uint64_t>(part.first_index) + part.index_count > source.index_count)
+				return {};
+		}
 		Mesh resource;
 		resource.vertex_count = source.vertex_count;
 		resource.index_count = source.index_count;
@@ -239,6 +251,7 @@ public:
 		resource.index_format = source.index_format;
 		resource.vertex_data = std::span<const std::byte>(storage->vertex_data);
 		resource.index_data = std::span<const std::byte>(storage->index_data);
+		resource.parts = std::span<const MeshPart>(storage->parts);
 		const MeshHandle handle = m_meshes.Create(std::move(resource));
 		if (!handle.Is_Valid())
 			return {};
@@ -294,6 +307,22 @@ public:
 		if (!m_scene_dirty && m_dirty_instances.size() < m_dirty_instances.capacity())
 			m_dirty_instances.push_back(handle);
 		return true;
+	}
+
+	bool Update_Instance_Visibility(InstanceHandle handle, SubmeshVisibilityMask visibility_mask) noexcept
+	{
+		if (!Is_Initialized() || !m_scene.Update_Visibility(handle, visibility_mask))
+			return false;
+
+		if (!m_scene_dirty && m_dirty_instances.size() < m_dirty_instances.capacity())
+			m_dirty_instances.push_back(handle);
+		return true;
+	}
+
+	std::size_t Mesh_Part_Count(MeshHandle handle) const noexcept
+	{
+		const Mesh *mesh = m_meshes.Resolve(handle);
+		return mesh == nullptr ? 0 : mesh->parts.size();
 	}
 
 	bool Destroy_Instance(InstanceHandle handle) noexcept
@@ -353,7 +382,8 @@ public:
 			{0.035f, 0.045f, 0.075f, 1.0f},
 			1.0f,
 			clear_targets,
-			clear_targets
+			clear_targets,
+			{m_mesh_part_bindings.data(), m_mesh_part_bindings.size()}
 		};
 		return m_plan.Execute(m_graph, command_list, [&input](GraphPassHandle, CommandList &commands, const PassResources &resources) noexcept {
 			return OpaquePass::Execute(commands, resources, input);
@@ -366,6 +396,7 @@ private:
 		MeshHandle handle{};
 		std::vector<std::byte> vertex_data;
 		std::vector<std::byte> index_data;
+		std::vector<MeshPart> parts;
 	};
 
 	static std::array<float, 16> Multiply(const Matrix4x4 &left, const Matrix4x4 &right) noexcept
@@ -418,9 +449,10 @@ private:
 			return false;
 		for (OpaqueMeshBinding &binding : m_mesh_bindings)
 			binding = {};
+		m_mesh_part_bindings.clear();
 
 		bool complete = true;
-		m_meshes.For_Each([&](MeshHandle handle, const Mesh &) noexcept {
+		m_meshes.For_Each([&](MeshHandle handle, const Mesh &mesh) noexcept {
 			const std::uint32_t gpu_index = m_gpu_scene.Mesh_Index(handle);
 			const GPUResidentMesh resident = m_residency->Mesh_Info(handle);
 			if (gpu_index >= gpu_meshes.size() || !resident.vertex_buffer.Is_Valid() || !resident.index_buffer.Is_Valid()) {
@@ -434,6 +466,10 @@ private:
 			binding.index_format = resident.index_format == MeshIndexFormat::UInt16 ? RHIIndexFormat::UInt16 : RHIIndexFormat::UInt32;
 			binding.vertex_stride = resident.vertex_stride;
 			binding.index_count = resident.index_count;
+			binding.submesh_offset = static_cast<std::uint32_t>(m_mesh_part_bindings.size());
+			binding.submesh_count = static_cast<std::uint32_t>(mesh.parts.size());
+			for (const MeshPart &part : mesh.parts)
+				m_mesh_part_bindings.push_back({part.first_index, part.index_count, part.base_vertex, 0});
 		});
 		return complete;
 	}
@@ -455,6 +491,7 @@ private:
 	std::vector<LODSelection> m_lod_storage;
 	std::vector<DrawData> m_draw_storage;
 	std::vector<OpaqueMeshBinding> m_mesh_bindings;
+	std::vector<OpaqueSubmeshBinding> m_mesh_part_bindings;
 	std::unique_ptr<VisibleSet> m_visible;
 	std::unique_ptr<LODSet> m_lod;
 	std::unique_ptr<DrawSet> m_draws;
@@ -481,7 +518,8 @@ export class StaticMeshBinding final
 {
 public:
 	bool Replace(StaticMeshRenderer &renderer, const StaticMeshSource &source, const RenderTransform &transform,
-		const RenderBounds &bounds, MaterialHandle material, RenderInstanceFlags flags)
+		const RenderBounds &bounds, MaterialHandle material, RenderInstanceFlags flags,
+		SubmeshVisibilityMask visibility_mask = All_Submeshes_Visible)
 	{
 		if (!renderer.Is_Initialized() || !material.Is_Valid())
 			return false;
@@ -490,7 +528,7 @@ public:
 		if (!new_mesh.Is_Valid())
 			return false;
 
-		const RenderInstance instance = Make_Instance(new_mesh, material, transform, bounds, flags);
+		const RenderInstance instance = Make_Instance(new_mesh, material, transform, bounds, flags, visibility_mask);
 		if (m_instance.Is_Valid()) {
 			if (!renderer.Update_Instance(m_instance, instance)) {
 				renderer.Destroy_Mesh(new_mesh);
@@ -511,6 +549,7 @@ public:
 		m_material = material;
 		m_bounds = bounds;
 		m_flags = flags;
+		m_visibility_mask = visibility_mask;
 		m_active = true;
 		return true;
 	}
@@ -520,12 +559,31 @@ public:
 		if (!renderer.Is_Initialized() || !m_active || !m_instance.Is_Valid() || !m_mesh.Is_Valid() || !m_material.Is_Valid())
 			return false;
 
-		const RenderInstance instance = Make_Instance(m_mesh, m_material, transform, m_bounds, flags);
+		const RenderInstance instance = Make_Instance(m_mesh, m_material, transform, m_bounds, flags, m_visibility_mask);
 		if (!renderer.Update_Instance(m_instance, instance))
 			return false;
 
 		m_flags = flags;
 		return true;
+	}
+
+	bool Set_Submesh_Visibility(StaticMeshRenderer &renderer, SubmeshVisibilityMask visibility_mask) noexcept
+	{
+		if (!renderer.Is_Initialized() || !m_instance.Is_Valid() || !m_mesh.Is_Valid() || !m_material.Is_Valid())
+			return false;
+		if (!renderer.Update_Instance_Visibility(m_instance, visibility_mask))
+			return false;
+
+		m_visibility_mask = visibility_mask;
+		return true;
+	}
+
+	bool Set_Submesh_Visible(StaticMeshRenderer &renderer, ModelPartId part, bool visible) noexcept
+	{
+		if (part >= renderer.Mesh_Part_Count(m_mesh))
+			return false;
+
+		return Set_Submesh_Visibility(renderer, Graphics::Set_Submesh_Visible(m_visibility_mask, part, visible));
 	}
 
 	bool Suspend(StaticMeshRenderer &renderer, const RenderTransform &transform) noexcept
@@ -534,7 +592,7 @@ public:
 			return false;
 
 		const RenderInstance instance = Make_Instance(m_mesh, m_material, transform,
-			m_bounds, m_flags | RenderInstanceFlags::Hidden);
+			m_bounds, m_flags | RenderInstanceFlags::Hidden, m_visibility_mask);
 		if (!renderer.Update_Instance(m_instance, instance))
 			return false;
 
@@ -560,6 +618,7 @@ public:
 		m_instance = {};
 		m_bounds = {};
 		m_flags = RenderInstanceFlags::None;
+		m_visibility_mask = All_Submeshes_Visible;
 		m_active = false;
 	}
 
@@ -593,9 +652,14 @@ public:
 		return m_bounds;
 	}
 
+	SubmeshVisibilityMask Visibility() const noexcept
+	{
+		return m_visibility_mask;
+	}
+
 private:
 	static RenderInstance Make_Instance(MeshHandle mesh, MaterialHandle material, const RenderTransform &transform,
-		const RenderBounds &bounds, RenderInstanceFlags flags) noexcept
+		const RenderBounds &bounds, RenderInstanceFlags flags, SubmeshVisibilityMask visibility_mask) noexcept
 	{
 		RenderInstance instance;
 		instance.transform = transform;
@@ -603,6 +667,7 @@ private:
 		instance.mesh = mesh;
 		instance.material = material;
 		instance.flags = flags;
+		instance.visibility_mask = visibility_mask;
 		return instance;
 	}
 
@@ -611,6 +676,7 @@ private:
 	InstanceHandle m_instance{};
 	RenderBounds m_bounds{};
 	RenderInstanceFlags m_flags = RenderInstanceFlags::None;
+	SubmeshVisibilityMask m_visibility_mask = All_Submeshes_Visible;
 	bool m_active = false;
 };
 

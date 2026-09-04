@@ -20,6 +20,13 @@ export enum class MeshIndexFormat : std::uint8_t
 	UInt32
 };
 
+export struct MeshPart final
+{
+	std::uint32_t first_index = 0;
+	std::uint32_t index_count = 0;
+	std::int32_t base_vertex = 0;
+};
+
 export struct MeshLod final
 {
 	MeshHandle mesh{};
@@ -40,6 +47,7 @@ export struct Mesh final
 	std::uint8_t lod_count = 0;
 	std::span<const std::byte> vertex_data{};
 	std::span<const std::byte> index_data{};
+	std::span<const MeshPart> parts{};
 	std::uint32_t revision = 1;
 
 	void Mark_Dirty() noexcept

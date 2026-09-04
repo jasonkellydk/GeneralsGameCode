@@ -158,3 +158,39 @@ BOOST_AUTO_TEST_CASE(draw_generation_skips_invalid_inputs_and_rejects_capacity_o
 	BOOST_CHECK(!Build_Draw_Data(lod_set, gpu_scene, {0, Test_Pipeline, 0}, small_draw_set));
 	BOOST_CHECK(small_draw_set.Size() == 0);
 }
+
+BOOST_AUTO_TEST_CASE(draw_generation_filters_hidden_submeshes)
+{
+	const std::array<MeshPart, 2> parts = {{{0, 3, 0}, {3, 3, 0}}};
+	Mesh mesh = Make_Mesh();
+	mesh.index_count = 6;
+	mesh.parts = parts;
+
+	MeshPool meshes;
+	MaterialPool materials;
+	const MeshHandle mesh_handle = meshes.Create(mesh);
+	const MaterialHandle material_handle = materials.Create();
+	RenderInstance instance = Make_Instance(mesh_handle, material_handle, 0.0f);
+	instance.visibility_mask = Set_Submesh_Visible(All_Submeshes_Visible, 1, false);
+	RenderScene scene;
+	const InstanceHandle instance_handle = scene.Create(instance);
+
+	std::array<InstanceHandle, 1> visible_storage{};
+	std::array<LODSelection, 1> lod_storage{};
+	VisibleSet visible_set(visible_storage);
+	LODSet lod_set(lod_storage);
+	BOOST_REQUIRE(Build_Visible_Set(scene, Make_View(), visible_set));
+	BOOST_REQUIRE(Build_LOD_Set(scene, meshes, visible_set, Make_View(), lod_set));
+
+	TexturePool textures;
+	SamplerPool samplers;
+	GPUScene gpu_scene;
+	BOOST_REQUIRE(gpu_scene.Build(scene, meshes, textures, samplers, materials));
+
+	std::array<DrawData, 2> draw_storage{};
+	DrawSet draw_set(draw_storage);
+	BOOST_REQUIRE(Build_Draw_Data(lod_set, gpu_scene, {0, Test_Pipeline, 0}, draw_set));
+	BOOST_REQUIRE(draw_set.Size() == 1);
+	BOOST_CHECK(draw_set.Records()[0].instance_index == gpu_scene.Instance_Index(instance_handle));
+	BOOST_CHECK(draw_set.Records()[0].submesh_index == 0);
+}

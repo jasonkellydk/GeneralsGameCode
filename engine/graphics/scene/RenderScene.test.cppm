@@ -41,6 +41,7 @@ BOOST_AUTO_TEST_CASE(render_scene_exposes_dense_soa_data_and_proxy_views)
 	BOOST_CHECK(data.meshes[0] == instance.mesh);
 	BOOST_CHECK(data.materials[0] == instance.material);
 	BOOST_CHECK(data.flags[0] == RenderInstanceFlags::CastsShadow);
+	BOOST_CHECK(data.visibility_masks[0] == instance.visibility_mask);
 	BOOST_CHECK(data.handles[0] == handle);
 	BOOST_CHECK((reinterpret_cast<std::uintptr_t>(data.transforms.elements[0].data()) % 16u) == 0u);
 	BOOST_CHECK((reinterpret_cast<std::uintptr_t>(data.bounds.center[0].data()) % 16u) == 0u);
@@ -56,7 +57,8 @@ BOOST_AUTO_TEST_CASE(render_scene_exposes_dense_soa_data_and_proxy_views)
 			&& view.bounds.center[1] == 2.0f
 			&& view.mesh == instance.mesh
 			&& view.material == instance.material
-			&& view.flags == RenderInstanceFlags::CastsShadow;
+			&& view.flags == RenderInstanceFlags::CastsShadow
+			&& view.visibility_mask == instance.visibility_mask;
 	}));
 	BOOST_CHECK(visited);
 }
@@ -106,6 +108,31 @@ BOOST_AUTO_TEST_CASE(render_scene_updates_soa_columns)
 	BOOST_CHECK(data.meshes[0] == updated_instance.mesh);
 	BOOST_CHECK(data.materials[0] == updated_instance.material);
 	BOOST_CHECK(data.flags[0] == RenderInstanceFlags::ReceivesShadow);
+}
+
+BOOST_AUTO_TEST_CASE(render_scene_updates_submesh_visibility_without_replacing_instance_state)
+{
+	RenderScene scene;
+	RenderInstance instance;
+	instance.transform.matrix[3] = 7.0f;
+	instance.bounds.radius = 3.0f;
+	instance.mesh = MeshHandle(4, 1);
+	instance.material = MaterialHandle(5, 1);
+	instance.flags = RenderInstanceFlags::ReceivesShadow;
+	const InstanceHandle handle = scene.Create(instance);
+
+	const SubmeshVisibilityMask hidden_part_mask = Set_Submesh_Visible(All_Submeshes_Visible, 2, false);
+	BOOST_REQUIRE(scene.Update_Visibility(handle, hidden_part_mask));
+
+	const RenderSceneData data = scene.Data();
+	BOOST_REQUIRE(data.Size() == 1);
+	BOOST_CHECK(data.transforms[0].matrix[3] == 7.0f);
+	BOOST_CHECK(data.bounds[0].radius == 3.0f);
+	BOOST_CHECK(data.meshes[0] == instance.mesh);
+	BOOST_CHECK(data.materials[0] == instance.material);
+	BOOST_CHECK(data.flags[0] == instance.flags);
+	BOOST_CHECK(data.visibility_masks[0] == hidden_part_mask);
+	BOOST_CHECK(!scene.Update_Visibility(InstanceHandle(handle.Get_Index(), handle.Get_Generation() + 1), All_Submeshes_Visible));
 }
 
 BOOST_AUTO_TEST_CASE(render_scene_keeps_instance_handle_when_static_variant_changes)

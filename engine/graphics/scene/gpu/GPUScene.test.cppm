@@ -37,6 +37,7 @@ static RenderInstance Make_Instance(MeshHandle mesh, MaterialHandle material) no
 	instance.mesh = mesh;
 	instance.material = material;
 	instance.flags = RenderInstanceFlags::CastsShadow;
+	instance.visibility_mask = Set_Submesh_Visible(All_Submeshes_Visible, 1, false);
 	return instance;
 }
 
@@ -101,6 +102,7 @@ BOOST_AUTO_TEST_CASE(gpu_scene_packs_tables_and_translates_handles)
 	BOOST_CHECK(gpu_instance.mesh_index == 1);
 	BOOST_CHECK(gpu_instance.material_index == 0);
 	BOOST_CHECK(gpu_instance.flags == static_cast<std::uint32_t>(RenderInstanceFlags::CastsShadow));
+	BOOST_CHECK(gpu_instance.visibility_mask == Set_Submesh_Visible(All_Submeshes_Visible, 1, false));
 
 	const GPUMeshData &gpu_mesh = gpu_scene.Meshes()[1];
 	BOOST_CHECK(gpu_mesh.vertex_count == 100);
@@ -108,6 +110,8 @@ BOOST_AUTO_TEST_CASE(gpu_scene_packs_tables_and_translates_handles)
 	BOOST_CHECK(gpu_mesh.lod_count == 1);
 	BOOST_CHECK(gpu_mesh.lod_indices[0] == 0);
 	BOOST_CHECK(gpu_mesh.lod_max_screen_sizes[0] == 0.25f);
+	BOOST_CHECK(gpu_mesh.part_count == 1);
+	BOOST_CHECK(gpu_scene.Mesh_Parts()[gpu_mesh.part_offset].index_count == 300);
 
 	const GPUMaterialData &gpu_material = gpu_scene.Materials()[0];
 	BOOST_CHECK(gpu_material.parameters[0] == 3.5f);

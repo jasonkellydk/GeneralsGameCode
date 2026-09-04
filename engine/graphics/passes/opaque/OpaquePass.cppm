@@ -23,6 +23,16 @@ export struct OpaqueMeshBinding final
 	std::uint32_t index_count = 0;
 	std::uint32_t first_index = 0;
 	std::int32_t base_vertex = 0;
+	std::uint32_t submesh_offset = 0;
+	std::uint32_t submesh_count = 0;
+};
+
+export struct OpaqueSubmeshBinding final
+{
+	std::uint32_t first_index = 0;
+	std::uint32_t index_count = 0;
+	std::int32_t base_vertex = 0;
+	std::uint32_t reserved = 0;
 };
 
 export struct OpaquePassInput final
@@ -37,6 +47,7 @@ export struct OpaquePassInput final
 	float clear_depth = 1.0f;
 	bool clear_color_target = true;
 	bool clear_depth_target = true;
+	std::span<const OpaqueSubmeshBinding> submeshes{};
 };
 
 export class OpaquePass final
@@ -84,6 +95,24 @@ public:
 			if (!mesh.vertex_buffer.Is_Valid() || !mesh.index_buffer.Is_Valid() || mesh.vertex_stride == 0 || mesh.index_count == 0)
 				return false;
 
+			std::uint32_t index_count = mesh.index_count;
+			std::uint32_t first_index = mesh.first_index;
+			std::int32_t base_vertex = mesh.base_vertex;
+			if (mesh.submesh_count != 0) {
+				if (draw.submesh_index >= mesh.submesh_count)
+					return false;
+				const std::uint64_t submesh_index = static_cast<std::uint64_t>(mesh.submesh_offset) + draw.submesh_index;
+				if (submesh_index >= input.submeshes.size())
+					return false;
+
+				const OpaqueSubmeshBinding &submesh = input.submeshes[static_cast<std::size_t>(submesh_index)];
+				if (submesh.index_count == 0)
+					return false;
+				index_count = submesh.index_count;
+				first_index = submesh.first_index;
+				base_vertex = submesh.base_vertex;
+			}
+
 			if (!has_bound_pipeline || draw.pipeline != bound_pipeline) {
 				if (!command_list.Bind_Pipeline(draw.pipeline))
 					return false;
@@ -104,7 +133,7 @@ public:
 				has_bound_mesh = true;
 			}
 
-			if (!command_list.Draw_Indexed(mesh.index_count, mesh.first_index, mesh.base_vertex, draw.instance_count, draw.instance_index))
+			if (!command_list.Draw_Indexed(index_count, first_index, base_vertex, draw.instance_count, draw.instance_index))
 				return false;
 		}
 

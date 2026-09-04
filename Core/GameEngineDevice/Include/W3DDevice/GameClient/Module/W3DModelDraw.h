@@ -514,6 +514,9 @@ private:
 	Bool													m_modernHidden;
 
 	bool isModernStaticOpaqueState() const noexcept;
+	bool canUseModernSubobjectVisibility() const;
+	Graphics::SubmeshVisibilityMask modernSubobjectVisibility() const;
+	bool updateModernSubobjectVisibility();
 	bool submitModernVariant();
 	void syncModernVariant();
 	void updateModernInstance(const Matrix3D *transformMtx);

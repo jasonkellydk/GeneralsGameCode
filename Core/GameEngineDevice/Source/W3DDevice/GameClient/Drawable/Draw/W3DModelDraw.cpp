@@ -1357,6 +1357,20 @@ void W3DModelDraw::showSubObject( const AsciiString& name, Bool show )
 			info.hide = !show;
 			m_subObjectVec.push_back( info );
 		}
+
+		if (m_modernBinding.Is_Active()) {
+			Int object_index = -1;
+			RenderObjClass *subobject = m_renderObject != nullptr
+				? m_renderObject->Get_Sub_Object_By_Name(name.str(), &object_index)
+				: nullptr;
+			if (subobject == nullptr || object_index < 0
+				|| !m_modernBinding.Set_Submesh_Visible(Graphics::GetStaticMeshRenderer(),
+					static_cast<Graphics::ModelPartId>(object_index), show)) {
+				releaseModernVariant();
+			}
+			if (subobject != nullptr)
+				subobject->Release_Ref();
+		}
 	}
 }
 
@@ -1846,7 +1860,7 @@ bool W3DModelDraw::isModernStaticOpaqueState() const noexcept
 		return false;
 
 	const ModelConditionInfo &state = *m_curState;
-	if (!state.m_animations.empty() || !state.m_hideShowVec.empty() || !state.m_particleSysBones.empty()
+	if (!state.m_animations.empty() || !state.m_particleSysBones.empty()
 		|| state.m_transitionSig != NO_TRANSITION
 		|| (state.m_validStuff & (ModelConditionInfo::TURRETS_VALID
 			| ModelConditionInfo::HAS_PROJECTILE_BONES
@@ -1855,6 +1869,8 @@ bool W3DModelDraw::isModernStaticOpaqueState() const noexcept
 
 	MeshClass *mesh = static_cast<MeshClass *>(m_renderObject);
 	MeshModelClass *model = mesh->Peek_Model();
+	if (!canUseModernSubobjectVisibility())
+		return false;
 	if (model == nullptr || model->Get_Flag(MeshGeometryClass::SKIN) != 0
 		|| model->Get_Flag(MeshGeometryClass::TWO_SIDED) != 0
 		|| model->Get_Pass_Count() != 1
@@ -1872,6 +1888,61 @@ bool W3DModelDraw::isModernStaticOpaqueState() const noexcept
 		&& !shader.Uses_Primary_Gradient()
 		&& !shader.Uses_Secondary_Gradient()
 		&& shader.Get_Cull_Mode() != ShaderClass::CULL_MODE_DISABLE;
+}
+
+bool W3DModelDraw::canUseModernSubobjectVisibility() const
+{
+	if (m_renderObject == nullptr)
+		return false;
+
+	const auto can_translate = [this](const std::vector<ModelConditionInfo::HideShowSubObjInfo> &entries) {
+		for (const ModelConditionInfo::HideShowSubObjInfo &entry : entries) {
+			Int object_index = -1;
+			RenderObjClass *subobject = m_renderObject->Get_Sub_Object_By_Name(entry.subObjName.str(), &object_index);
+			if (subobject == nullptr)
+				return false;
+			subobject->Release_Ref();
+			if (object_index < 0 || object_index >= static_cast<Int>(Graphics::Max_Model_Part_Count))
+				return false;
+		}
+		return true;
+	};
+
+	return m_curState != nullptr
+		&& can_translate(m_curState->m_hideShowVec)
+		&& can_translate(m_subObjectVec);
+}
+
+Graphics::SubmeshVisibilityMask W3DModelDraw::modernSubobjectVisibility() const
+{
+	Graphics::SubmeshVisibilityMask visibility = Graphics::All_Submeshes_Visible;
+	const auto apply = [this, &visibility](const std::vector<ModelConditionInfo::HideShowSubObjInfo> &entries) {
+		for (const ModelConditionInfo::HideShowSubObjInfo &entry : entries) {
+			Int object_index = -1;
+			RenderObjClass *subobject = m_renderObject->Get_Sub_Object_By_Name(entry.subObjName.str(), &object_index);
+			if (subobject == nullptr)
+				continue;
+			subobject->Release_Ref();
+			visibility = Graphics::Set_Submesh_Visible(visibility, static_cast<Graphics::ModelPartId>(object_index), !entry.hide);
+		}
+	};
+
+	if (m_curState != nullptr)
+		apply(m_curState->m_hideShowVec);
+	apply(m_subObjectVec);
+	return visibility;
+}
+
+bool W3DModelDraw::updateModernSubobjectVisibility()
+{
+	if (!m_modernBinding.Is_Active())
+		return false;
+
+	if (!m_modernBinding.Set_Submesh_Visibility(Graphics::GetStaticMeshRenderer(), modernSubobjectVisibility())) {
+		releaseModernVariant();
+		return false;
+	}
+	return true;
 }
 
 bool W3DModelDraw::submitModernVariant()
@@ -1950,6 +2021,8 @@ bool W3DModelDraw::submitModernVariant()
 
 	if (!m_modernBinding.Replace(renderer, source, transform, bounds, renderer.Default_Material(), flags))
 		return false;
+	if (!updateModernSubobjectVisibility())
+		return false;
 
 	m_renderObject->Set_Hidden(TRUE);
 	return true;
@@ -1962,7 +2035,13 @@ void W3DModelDraw::syncModernVariant()
 		return;
 	}
 
-	if (!m_modernBinding.Is_Active() && !submitModernVariant())
+	if (!m_modernBinding.Is_Active()) {
+		if (!submitModernVariant())
+			releaseModernVariant();
+		return;
+	}
+
+	if (!updateModernSubobjectVisibility())
 		releaseModernVariant();
 }
 

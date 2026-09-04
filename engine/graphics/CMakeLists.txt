@@ -38,6 +38,7 @@ target_sources(generals_graphics
             scene/particles/ParticleRenderer.cppm
             scene/screen/ScreenDistortion.cppm
             scene/beams/Beam.cppm
+            scene/models/ModelVisibility.cppm
             scene/transparency/Transparency.cppm
             scene/views/View.cppm
             scene/visibility/Visibility.cppm
@@ -312,6 +313,11 @@ if(RTS_BUILD_GRAPHICS_TESTS)
     add_graphics_test(
         generals_graphics_render_scene_test
         scene/RenderScene.test.cppm
+    )
+
+    add_graphics_test(
+        generals_graphics_model_visibility_test
+        scene/models/ModelVisibility.test.cppm
     )
 
     add_graphics_test(

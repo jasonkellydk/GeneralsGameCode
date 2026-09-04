@@ -41,7 +41,7 @@ export struct alignas(16) GPUInstanceData final
 	std::uint32_t mesh_index = Invalid_GPU_Index;
 	std::uint32_t material_index = Invalid_GPU_Index;
 	std::uint32_t flags = 0;
-	std::uint32_t reserved = 0;
+	std::uint32_t visibility_mask = All_Submeshes_Visible;
 };
 
 export struct alignas(16) GPUMeshData final
@@ -53,7 +53,17 @@ export struct alignas(16) GPUMeshData final
 	std::uint32_t lod_count = 0;
 	std::array<std::uint32_t, Mesh::MaxLodCount> lod_indices{};
 	std::array<float, Mesh::MaxLodCount> lod_max_screen_sizes{};
-	std::array<std::uint32_t, 3> reserved{};
+	std::uint32_t part_offset = 0;
+	std::uint32_t part_count = 0;
+	std::uint32_t reserved = 0;
+};
+
+export struct alignas(16) GPUMeshPartData final
+{
+	std::uint32_t first_index = 0;
+	std::uint32_t index_count = 0;
+	std::int32_t base_vertex = 0;
+	std::uint32_t reserved = 0;
 };
 
 export struct alignas(16) GPUMaterialData final
@@ -67,6 +77,7 @@ export struct alignas(16) GPUMaterialData final
 
 static_assert(sizeof(GPUInstanceData) == 96);
 static_assert(sizeof(GPUMeshData) == 64);
+static_assert(sizeof(GPUMeshPartData) == 16);
 static_assert(sizeof(GPUMaterialData) == 144);
 
 export enum class GPUSceneTable : std::uint8_t
@@ -227,7 +238,7 @@ std::size_t Required_Slot_Capacity(const Pool &pool) noexcept
 	return capacity;
 }
 
-GPUInstanceData Pack_Instance(const RenderTransformData &transforms, std::size_t dense_index, const RenderBoundsData &bounds, RenderInstanceFlags flags, std::uint32_t mesh_index, std::uint32_t material_index) noexcept
+GPUInstanceData Pack_Instance(const RenderTransformData &transforms, std::size_t dense_index, const RenderBoundsData &bounds, RenderInstanceFlags flags, SubmeshVisibilityMask visibility_mask, std::uint32_t mesh_index, std::uint32_t material_index) noexcept
 {
 	GPUInstanceData data;
 	for (std::size_t element = 0; element < data.transform.size(); ++element)
@@ -241,10 +252,11 @@ GPUInstanceData Pack_Instance(const RenderTransformData &transforms, std::size_t
 	data.mesh_index = mesh_index;
 	data.material_index = material_index;
 	data.flags = static_cast<std::uint32_t>(flags);
+	data.visibility_mask = visibility_mask;
 	return data;
 }
 
-GPUMeshData Pack_Mesh(const Mesh &mesh, const DenseTable<GPUMeshData, MeshHandle> &mesh_table) noexcept
+GPUMeshData Pack_Mesh(const Mesh &mesh, const DenseTable<GPUMeshData, MeshHandle> &mesh_table, std::uint32_t part_offset) noexcept
 {
 	GPUMeshData data;
 	data.vertex_count = mesh.vertex_count;
@@ -258,6 +270,8 @@ GPUMeshData Pack_Mesh(const Mesh &mesh, const DenseTable<GPUMeshData, MeshHandle
 		data.lod_indices[lod_index] = mesh_table.Index_Of(mesh.lods[lod_index].mesh);
 		data.lod_max_screen_sizes[lod_index] = mesh.lods[lod_index].max_screen_size;
 	}
+	data.part_offset = part_offset;
+	data.part_count = mesh.parts.empty() ? 1u : static_cast<std::uint32_t>(mesh.parts.size());
 
 	return data;
 }
@@ -357,6 +371,7 @@ public:
 		m_instances.Reserve(instance_capacity, instance_capacity);
 		m_meshes.Reserve(mesh_capacity, mesh_capacity);
 		m_materials.Reserve(material_capacity, material_capacity);
+		m_mesh_parts.reserve(mesh_capacity * Max_Model_Part_Count);
 		m_lights.Reserve(light_capacity, light_capacity);
 		m_shadows.Reserve(light_capacity, light_capacity);
 		m_decals.Reserve(decal_capacity, decal_capacity);
@@ -371,6 +386,7 @@ public:
 		m_instances.Clear();
 		m_meshes.Clear();
 		m_materials.Clear();
+		m_mesh_parts.clear();
 		m_lights.Clear();
 		m_shadows.Clear();
 		m_decals.Clear();
@@ -387,7 +403,13 @@ public:
 
 		bool complete = true;
 		meshes.For_Each([&](MeshHandle handle, const Mesh &mesh) noexcept {
-			complete = m_meshes.Upsert(handle, Pack_Mesh(mesh, m_meshes)) && complete;
+			const std::uint32_t part_offset = static_cast<std::uint32_t>(m_mesh_parts.size());
+			if (mesh.parts.empty())
+				m_mesh_parts.push_back({0, mesh.index_count, 0, 0});
+			else
+				for (const MeshPart &part : mesh.parts)
+					m_mesh_parts.push_back({part.first_index, part.index_count, part.base_vertex, 0});
+			complete = m_meshes.Upsert(handle, Pack_Mesh(mesh, m_meshes, part_offset)) && complete;
 		});
 		materials.For_Each([&](MaterialHandle handle, const Material &material) noexcept {
 			complete = m_materials.Upsert(handle, Pack_Material(material, textures, samplers)) && complete;
@@ -401,8 +423,9 @@ public:
 			const GPUInstanceData data = Pack_Instance(
 				scene_data.transforms,
 				dense_index,
-				scene_data.bounds,
+				 scene_data.bounds,
 				scene_data.flags[dense_index],
+				scene_data.visibility_masks[dense_index],
 				m_meshes.Index_Of(scene_data.meshes[dense_index]),
 				m_materials.Index_Of(scene_data.materials[dense_index]));
 			complete = m_instances.Upsert(scene_data.handles[dense_index], data) && complete;
@@ -437,6 +460,7 @@ public:
 			dense_index,
 			scene_data.bounds,
 			scene_data.flags[dense_index],
+			scene_data.visibility_masks[dense_index],
 			m_meshes.Index_Of(scene_data.meshes[dense_index]),
 			m_materials.Index_Of(scene_data.materials[dense_index]));
 		if (!m_instances.Upsert(handle, data))
@@ -452,11 +476,38 @@ public:
 		if (mesh == nullptr || !m_meshes.Can_Upsert(handle))
 			return false;
 
+		const std::uint32_t existing_index = m_meshes.Index_Of(handle);
 		const std::uint32_t index = Existing_Or_Next_Index(m_meshes, handle);
 		if (!Can_Mark(GPUSceneTable::Meshes, index))
 			return false;
 
-		if (!m_meshes.Upsert(handle, Pack_Mesh(*mesh, m_meshes)))
+		const std::uint32_t part_count = mesh->parts.empty() ? 1u : static_cast<std::uint32_t>(mesh->parts.size());
+		std::uint32_t part_offset = 0;
+		if (existing_index != Invalid_GPU_Index) {
+			const GPUMeshData &current = m_meshes.Values()[existing_index];
+			if (part_count != current.part_count || static_cast<std::uint64_t>(current.part_offset) + part_count > m_mesh_parts.size())
+				return false;
+			part_offset = current.part_offset;
+		} else {
+			part_offset = static_cast<std::uint32_t>(m_mesh_parts.size());
+			if (mesh->parts.empty())
+				m_mesh_parts.push_back({0, mesh->index_count, 0, 0});
+			else
+				for (const MeshPart &part : mesh->parts)
+					m_mesh_parts.push_back({part.first_index, part.index_count, part.base_vertex, 0});
+		}
+
+		if (existing_index != Invalid_GPU_Index) {
+			if (mesh->parts.empty())
+				m_mesh_parts[part_offset] = {0, mesh->index_count, 0, 0};
+			else
+				for (std::uint32_t part_index = 0; part_index < part_count; ++part_index) {
+					const MeshPart &part = mesh->parts[part_index];
+					m_mesh_parts[part_offset + part_index] = {part.first_index, part.index_count, part.base_vertex, 0};
+				}
+		}
+
+		if (!m_meshes.Upsert(handle, Pack_Mesh(*mesh, m_meshes, part_offset)))
 			return false;
 
 		Mark_Dirty(GPUSceneTable::Meshes, index, 1);
@@ -640,6 +691,11 @@ public:
 		return m_meshes.Values();
 	}
 
+	std::span<const GPUMeshPartData> Mesh_Parts() const noexcept
+	{
+		return m_mesh_parts;
+	}
+
 	std::span<const GPUMaterialData> Materials() const noexcept
 	{
 		return m_materials.Values();
@@ -726,6 +782,7 @@ private:
 
 	DenseTable<GPUInstanceData, InstanceHandle> m_instances;
 	DenseTable<GPUMeshData, MeshHandle> m_meshes;
+	std::vector<GPUMeshPartData> m_mesh_parts;
 	DenseTable<GPUMaterialData, MaterialHandle> m_materials;
 	DenseTable<GPULightData, LightHandle> m_lights;
 	DenseTable<GPUShadowData, LightHandle> m_shadows;
