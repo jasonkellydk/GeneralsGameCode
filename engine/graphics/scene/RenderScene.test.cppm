@@ -108,6 +108,30 @@ BOOST_AUTO_TEST_CASE(render_scene_updates_soa_columns)
 	BOOST_CHECK(data.flags[0] == RenderInstanceFlags::ReceivesShadow);
 }
 
+BOOST_AUTO_TEST_CASE(render_scene_keeps_instance_handle_when_static_variant_changes)
+{
+	RenderScene scene;
+	RenderInstance first;
+	first.mesh = MeshHandle(1, 1);
+	first.material = MaterialHandle(2, 1);
+	first.flags = RenderInstanceFlags::CastsShadow;
+	const InstanceHandle handle = scene.Create(first);
+
+	RenderInstance variant = first;
+	variant.mesh = MeshHandle(4, 1);
+	variant.material = MaterialHandle(5, 1);
+	variant.flags = RenderInstanceFlags::ReceivesShadow;
+
+	BOOST_REQUIRE(scene.Update(handle, variant));
+	BOOST_CHECK(scene.Dense_Index(handle) == 0);
+	BOOST_REQUIRE(scene.Visit(handle, [&](InstanceHandle visited_handle, const RenderInstanceView &view) noexcept {
+		BOOST_CHECK(visited_handle == handle);
+		BOOST_CHECK(view.mesh == variant.mesh);
+		BOOST_CHECK(view.material == variant.material);
+		BOOST_CHECK(view.flags == variant.flags);
+	}));
+}
+
 BOOST_AUTO_TEST_CASE(render_scene_stores_lights_in_soa_columns)
 {
 	RenderScene scene;

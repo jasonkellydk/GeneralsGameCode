@@ -80,6 +80,73 @@ bool Render_Static_Mesh(Device &, CommandList &commands, RHITextureHandle color_
 }
 }
 
+BOOST_AUTO_TEST_CASE(static_mesh_variant_switch_keeps_instance_handle)
+{
+	DX11Device device({true});
+	BOOST_REQUIRE(device.Is_Valid());
+
+	StaticMeshRenderer renderer;
+	BOOST_REQUIRE(renderer.Initialize(device, std::filesystem::path(GRAPHICS_STATIC_MESH_SHADER_DIRECTORY), 2, 1));
+
+	const std::array<StaticMeshVertex, 3> vertices = {{
+		{{-0.5f, -0.5f, 0.0f}, {1.0f, 1.0f, 1.0f, 1.0f}, {0.0f, 1.0f}},
+		{{0.0f, 0.5f, 0.0f}, {1.0f, 1.0f, 1.0f, 1.0f}, {0.5f, 0.0f}},
+		{{0.5f, -0.5f, 0.0f}, {1.0f, 1.0f, 1.0f, 1.0f}, {1.0f, 1.0f}}
+	}};
+	const std::array<std::uint16_t, 3> indices = {0, 1, 2};
+	const StaticMeshSource source{
+		3,
+		3,
+		static_cast<std::uint32_t>(sizeof(StaticMeshVertex)),
+		MeshIndexFormat::UInt16,
+		std::as_bytes(std::span<const StaticMeshVertex>(vertices)),
+		std::as_bytes(std::span<const std::uint16_t>(indices)),
+		{0.0f, 0.0f, 0.0f},
+		1.0f
+	};
+	const MeshHandle first_mesh = renderer.Create_Mesh(source);
+	const MeshHandle second_mesh = renderer.Create_Mesh(source);
+	BOOST_REQUIRE(first_mesh.Is_Valid());
+	BOOST_REQUIRE(second_mesh.Is_Valid());
+
+	StaticMeshBinding binding;
+	const RenderTransform transform{};
+	const RenderBounds bounds{{0.0f, 0.0f, 0.0f}, 1.0f};
+	const RenderInstanceFlags flags = RenderInstanceFlags::CastsShadow;
+	const StaticMeshSource invalid_source{};
+	BOOST_CHECK(!binding.Replace(renderer, invalid_source, transform, bounds, renderer.Default_Material(), flags));
+	BOOST_CHECK(!binding.Is_Active());
+
+	BOOST_REQUIRE(binding.Replace(renderer, source, transform, bounds, renderer.Default_Material(), flags));
+	BOOST_REQUIRE(binding.Is_Active());
+	BOOST_REQUIRE(binding.Instance().Is_Valid());
+	const InstanceHandle stable_instance = binding.Instance();
+	const MeshHandle stable_mesh = binding.Mesh();
+	BOOST_CHECK(!binding.Replace(renderer, invalid_source, transform, bounds, renderer.Default_Material(), flags));
+	BOOST_CHECK(binding.Is_Active());
+	BOOST_CHECK(binding.Instance() == stable_instance);
+	BOOST_CHECK(binding.Mesh() == stable_mesh);
+	BOOST_REQUIRE(binding.Replace(renderer, source, transform, bounds, renderer.Default_Material(), flags));
+	BOOST_CHECK(binding.Instance() == stable_instance);
+	BOOST_CHECK(binding.Mesh() != first_mesh);
+	BOOST_CHECK(binding.Mesh() != second_mesh);
+
+	BOOST_REQUIRE(binding.Suspend(renderer, transform));
+	BOOST_CHECK(!binding.Is_Active());
+	BOOST_CHECK(binding.Instance() == stable_instance);
+	BOOST_CHECK(!binding.Replace(renderer, invalid_source, transform, bounds, renderer.Default_Material(), flags));
+	BOOST_CHECK(binding.Instance() == stable_instance);
+
+	binding.Destroy(renderer);
+	BOOST_CHECK(!binding.Has_Instance());
+	BOOST_CHECK(!binding.Is_Active());
+	BOOST_CHECK(!binding.Instance().Is_Valid());
+
+	BOOST_CHECK(renderer.Destroy_Mesh(second_mesh));
+	BOOST_CHECK(renderer.Destroy_Mesh(first_mesh));
+	renderer.Shutdown();
+}
+
 BOOST_AUTO_TEST_CASE(static_mesh_renderer_matches_colocated_production_golden_image)
 {
 	DX11Device device({true});

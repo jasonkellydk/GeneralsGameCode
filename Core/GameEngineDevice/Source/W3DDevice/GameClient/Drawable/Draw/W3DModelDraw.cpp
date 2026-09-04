@@ -1766,11 +1766,7 @@ W3DModelDraw::W3DModelDraw(Thing *thing, const ModuleData* moduleData) : DrawMod
 	m_whichAnimInCurState = -1;
 	m_nextState = nullptr;
 	m_nextStateAnimLoopDuration = NO_NEXT_DURATION;
-	m_modernMesh = {};
-	m_modernMaterial = {};
-	m_modernInstance = {};
-	m_modernBounds = {};
-	m_modernActive = FALSE;
+	m_modernBinding.Reset();
 	m_modernHidden = FALSE;
 	for (i = 0; i < WEAPONSLOT_COUNT; ++i)
 	{
@@ -1878,7 +1874,7 @@ bool W3DModelDraw::isModernStaticOpaqueState() const noexcept
 		&& shader.Get_Cull_Mode() != ShaderClass::CULL_MODE_DISABLE;
 }
 
-bool W3DModelDraw::createModernMesh()
+bool W3DModelDraw::submitModernVariant()
 {
 	Graphics::StaticMeshRenderer &renderer = Graphics::GetStaticMeshRenderer();
 	if (!renderer.Is_Initialized() || !isModernStaticOpaqueState())
@@ -1935,7 +1931,7 @@ bool W3DModelDraw::createModernMesh()
 
 	SphereClass sphere;
 	mesh->Get_Obj_Space_Bounding_Sphere(sphere);
-	const Graphics::MeshHandle modern_mesh = renderer.Create_Mesh({
+	const Graphics::StaticMeshSource source{
 		static_cast<std::uint32_t>(vertex_count),
 		static_cast<std::uint32_t>(indices.size()),
 		static_cast<std::uint32_t>(sizeof(Graphics::StaticMeshVertex)),
@@ -1944,80 +1940,50 @@ bool W3DModelDraw::createModernMesh()
 		std::as_bytes(std::span<const std::uint16_t>(indices)),
 		{sphere.Center.X, sphere.Center.Y, sphere.Center.Z},
 		sphere.Radius
-	});
-	if (!modern_mesh.Is_Valid())
-		return false;
-
-	Graphics::RenderInstance instance;
+	};
 	const Matrix3D legacy_transform = m_renderObject->Get_Transform();
-	instance.transform = Make_Modern_Transform(legacy_transform);
-	instance.bounds = {{sphere.Center.X, sphere.Center.Y, sphere.Center.Z}, sphere.Radius};
-	instance.mesh = modern_mesh;
-	instance.material = renderer.Default_Material();
-	instance.flags = Graphics::RenderInstanceFlags::CastsShadow | Graphics::RenderInstanceFlags::ReceivesShadow;
+	const Graphics::RenderTransform transform = Make_Modern_Transform(legacy_transform);
+	const Graphics::RenderBounds bounds = {{sphere.Center.X, sphere.Center.Y, sphere.Center.Z}, sphere.Radius};
+	Graphics::RenderInstanceFlags flags = Graphics::RenderInstanceFlags::CastsShadow | Graphics::RenderInstanceFlags::ReceivesShadow;
 	if (m_modernHidden || getDrawable()->isDrawableEffectivelyHidden())
-		instance.flags = instance.flags | Graphics::RenderInstanceFlags::Hidden;
+		flags = flags | Graphics::RenderInstanceFlags::Hidden;
 
-	const Graphics::InstanceHandle modern_instance = renderer.Create_Instance(instance);
-	if (!modern_instance.Is_Valid()) {
-		renderer.Destroy_Mesh(modern_mesh);
+	if (!m_modernBinding.Replace(renderer, source, transform, bounds, renderer.Default_Material(), flags))
 		return false;
-	}
 
-	m_modernMesh = modern_mesh;
-	m_modernMaterial = instance.material;
-	m_modernInstance = modern_instance;
-	m_modernBounds = instance.bounds;
-	m_modernActive = TRUE;
 	m_renderObject->Set_Hidden(TRUE);
 	return true;
 }
 
-void W3DModelDraw::syncModernModel()
+void W3DModelDraw::syncModernVariant()
 {
 	if (!isModernStaticOpaqueState()) {
-		releaseModernMesh();
+		releaseModernVariant();
 		return;
 	}
 
-	if (!m_modernActive)
-		createModernMesh();
+	if (!m_modernBinding.Is_Active() && !submitModernVariant())
+		releaseModernVariant();
 }
 
 void W3DModelDraw::updateModernInstance(const Matrix3D *transformMtx)
 {
-	if (!m_modernActive || transformMtx == nullptr)
+	if (!m_modernBinding.Is_Active() || transformMtx == nullptr)
 		return;
 
-	Graphics::RenderInstance instance;
-	instance.transform = Make_Modern_Transform(*transformMtx);
-	instance.bounds = m_modernBounds;
-	instance.mesh = m_modernMesh;
-	instance.material = m_modernMaterial;
-	instance.flags = Graphics::RenderInstanceFlags::CastsShadow | Graphics::RenderInstanceFlags::ReceivesShadow;
+	Graphics::RenderInstanceFlags flags = Graphics::RenderInstanceFlags::CastsShadow | Graphics::RenderInstanceFlags::ReceivesShadow;
 	if (m_modernHidden || getDrawable()->isDrawableEffectivelyHidden())
-		instance.flags = instance.flags | Graphics::RenderInstanceFlags::Hidden;
+		flags = flags | Graphics::RenderInstanceFlags::Hidden;
 
-	if (!Graphics::GetStaticMeshRenderer().Update_Instance(m_modernInstance, instance)) {
-		releaseModernMesh();
+	if (!m_modernBinding.Update(Graphics::GetStaticMeshRenderer(), Make_Modern_Transform(*transformMtx), flags)) {
+		releaseModernVariant();
 	}
 }
 
-void W3DModelDraw::releaseModernMesh() noexcept
+void W3DModelDraw::releaseModernVariant() noexcept
 {
 	Graphics::StaticMeshRenderer &renderer = Graphics::GetStaticMeshRenderer();
-	if (renderer.Is_Initialized()) {
-		if (m_modernInstance.Is_Valid())
-			renderer.Destroy_Instance(m_modernInstance);
-		if (m_modernMesh.Is_Valid())
-			renderer.Destroy_Mesh(m_modernMesh);
-	}
-
-	m_modernMesh = {};
-	m_modernMaterial = {};
-	m_modernInstance = {};
-	m_modernBounds = {};
-	m_modernActive = FALSE;
+	m_modernBinding.Destroy(renderer);
 	if (m_renderObject != nullptr) {
 		const Bool drawable_hidden = getDrawable() != nullptr && getDrawable()->isDrawableEffectivelyHidden();
 		m_renderObject->Set_Hidden(m_modernHidden || drawable_hidden);
@@ -2048,14 +2014,14 @@ void W3DModelDraw::doStartOrStopParticleSys()
 void W3DModelDraw::setHidden(Bool hidden)
 {
 	m_modernHidden = hidden;
-	if (m_modernActive) {
+	if (m_modernBinding.Is_Active()) {
 		Matrix3D transform = *getDrawable()->getTransformMatrix();
 		adjustTransformMtx(transform);
 		updateModernInstance(&transform);
 	}
 
 	if (m_renderObject)
-		m_renderObject->Set_Hidden(m_modernActive ? TRUE : hidden);
+		m_renderObject->Set_Hidden(m_modernBinding.Is_Active() ? TRUE : hidden);
 
 	if (m_shadow)
 		m_shadow->enableShadowRender(!hidden);
@@ -2329,8 +2295,8 @@ void W3DModelDraw::doDrawModule(const Matrix3D* transformMtx)
 		Matrix3D mtx = *transformMtx;
 		adjustTransformMtx(mtx);
 		m_renderObject->Set_Transform(mtx);
-		if (!m_modernActive)
-			syncModernModel();
+		if (!m_modernBinding.Is_Active())
+			syncModernVariant();
 		updateModernInstance(&mtx);
 	}
 
@@ -3008,9 +2974,14 @@ void W3DModelDraw::setTerrainDecalOpacity(Real o)
 
 
 //-------------------------------------------------------------------------------------------------
-void W3DModelDraw::nukeCurrentRender(Matrix3D* xform)
+void W3DModelDraw::nukeCurrentRender(Matrix3D* xform, Bool preserveModernInstance)
 {
-	releaseModernMesh();
+	if (preserveModernInstance && m_modernBinding.Has_Instance() && xform != nullptr) {
+		if (!m_modernBinding.Suspend(Graphics::GetStaticMeshRenderer(), Make_Modern_Transform(*xform)))
+			releaseModernVariant();
+	} else {
+		releaseModernVariant();
+	}
 
 	// this needs to be "dirtied" so that the new pausing of the animation will be triggered.
 	m_pauseAnimation = false;
@@ -3248,7 +3219,7 @@ void W3DModelDraw::setModelState(const ModelConditionInfo* newState)
 		)
 	{
 		Matrix3D transform;
-		nukeCurrentRender(&transform);
+		nukeCurrentRender(&transform, m_modernBinding.Has_Instance());
 		Drawable* draw = getDrawable();
 
 		// create a new render object and set into drawable
@@ -3406,7 +3377,7 @@ void W3DModelDraw::setModelState(const ModelConditionInfo* newState)
 	m_nextState = nextState;
 	m_nextStateAnimLoopDuration = NO_NEXT_DURATION;
 	adjustAnimation(prevState, prevAnimFraction);
-	syncModernModel();
+	syncModernVariant();
 }
 
 //-------------------------------------------------------------------------------------------------

@@ -510,18 +510,14 @@ private:
 	Bool													m_pauseAnimation;
 	Int														m_animationMode;
 
-	Graphics::MeshHandle						m_modernMesh;
-	Graphics::MaterialHandle					m_modernMaterial;
-	Graphics::InstanceHandle				m_modernInstance;
-	Graphics::RenderBounds					m_modernBounds;
-	Bool													m_modernActive;
+	Graphics::StaticMeshBinding				m_modernBinding;
 	Bool													m_modernHidden;
 
 	bool isModernStaticOpaqueState() const noexcept;
-	bool createModernMesh();
-	void syncModernModel();
+	bool submitModernVariant();
+	void syncModernVariant();
 	void updateModernInstance(const Matrix3D *transformMtx);
-	void releaseModernMesh() noexcept;
+	void releaseModernVariant() noexcept;
 
 	void adjustAnimation(const ModelConditionInfo* prevState, Real prevAnimFraction);
 	Real getCurrentAnimFraction() const;
@@ -529,7 +525,7 @@ private:
 	const ModelConditionInfo* findTransitionForSig(TransitionSig sig) const;
 	void rebuildWeaponRecoilInfo(const ModelConditionInfo* state);
 	void doHideShowProjectileObjects( UnsignedInt showCount, UnsignedInt maxCount, WeaponSlotType slot );///< Means effectively, show m of n.
-	void nukeCurrentRender(Matrix3D* xform);
+	void nukeCurrentRender(Matrix3D* xform, Bool preserveModernInstance = FALSE);
 	void doStartOrStopParticleSys();
 	void adjustAnimSpeedToMovementSpeed();
 	static void hideAllMuzzleFlashes(const ModelConditionInfo* state, RenderObjClass* renderObject);

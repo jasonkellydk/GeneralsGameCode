@@ -477,6 +477,143 @@ private:
 	bool m_graph_compiled = false;
 };
 
+export class StaticMeshBinding final
+{
+public:
+	bool Replace(StaticMeshRenderer &renderer, const StaticMeshSource &source, const RenderTransform &transform,
+		const RenderBounds &bounds, MaterialHandle material, RenderInstanceFlags flags)
+	{
+		if (!renderer.Is_Initialized() || !material.Is_Valid())
+			return false;
+
+		const MeshHandle new_mesh = renderer.Create_Mesh(source);
+		if (!new_mesh.Is_Valid())
+			return false;
+
+		const RenderInstance instance = Make_Instance(new_mesh, material, transform, bounds, flags);
+		if (m_instance.Is_Valid()) {
+			if (!renderer.Update_Instance(m_instance, instance)) {
+				renderer.Destroy_Mesh(new_mesh);
+				return false;
+			}
+			if (m_mesh.Is_Valid())
+				renderer.Destroy_Mesh(m_mesh);
+		} else {
+			const InstanceHandle new_instance = renderer.Create_Instance(instance);
+			if (!new_instance.Is_Valid()) {
+				renderer.Destroy_Mesh(new_mesh);
+				return false;
+			}
+			m_instance = new_instance;
+		}
+
+		m_mesh = new_mesh;
+		m_material = material;
+		m_bounds = bounds;
+		m_flags = flags;
+		m_active = true;
+		return true;
+	}
+
+	bool Update(StaticMeshRenderer &renderer, const RenderTransform &transform, RenderInstanceFlags flags) noexcept
+	{
+		if (!renderer.Is_Initialized() || !m_active || !m_instance.Is_Valid() || !m_mesh.Is_Valid() || !m_material.Is_Valid())
+			return false;
+
+		const RenderInstance instance = Make_Instance(m_mesh, m_material, transform, m_bounds, flags);
+		if (!renderer.Update_Instance(m_instance, instance))
+			return false;
+
+		m_flags = flags;
+		return true;
+	}
+
+	bool Suspend(StaticMeshRenderer &renderer, const RenderTransform &transform) noexcept
+	{
+		if (!renderer.Is_Initialized() || !m_instance.Is_Valid() || !m_mesh.Is_Valid() || !m_material.Is_Valid())
+			return false;
+
+		const RenderInstance instance = Make_Instance(m_mesh, m_material, transform,
+			m_bounds, m_flags | RenderInstanceFlags::Hidden);
+		if (!renderer.Update_Instance(m_instance, instance))
+			return false;
+
+		m_active = false;
+		return true;
+	}
+
+	void Destroy(StaticMeshRenderer &renderer) noexcept
+	{
+		if (renderer.Is_Initialized()) {
+			if (m_instance.Is_Valid())
+				renderer.Destroy_Instance(m_instance);
+			if (m_mesh.Is_Valid())
+				renderer.Destroy_Mesh(m_mesh);
+		}
+		Reset();
+	}
+
+	void Reset() noexcept
+	{
+		m_mesh = {};
+		m_material = {};
+		m_instance = {};
+		m_bounds = {};
+		m_flags = RenderInstanceFlags::None;
+		m_active = false;
+	}
+
+	bool Is_Active() const noexcept
+	{
+		return m_active;
+	}
+
+	bool Has_Instance() const noexcept
+	{
+		return m_instance.Is_Valid();
+	}
+
+	MeshHandle Mesh() const noexcept
+	{
+		return m_mesh;
+	}
+
+	MaterialHandle Material() const noexcept
+	{
+		return m_material;
+	}
+
+	InstanceHandle Instance() const noexcept
+	{
+		return m_instance;
+	}
+
+	const RenderBounds &Bounds() const noexcept
+	{
+		return m_bounds;
+	}
+
+private:
+	static RenderInstance Make_Instance(MeshHandle mesh, MaterialHandle material, const RenderTransform &transform,
+		const RenderBounds &bounds, RenderInstanceFlags flags) noexcept
+	{
+		RenderInstance instance;
+		instance.transform = transform;
+		instance.bounds = bounds;
+		instance.mesh = mesh;
+		instance.material = material;
+		instance.flags = flags;
+		return instance;
+	}
+
+	MeshHandle m_mesh{};
+	MaterialHandle m_material{};
+	InstanceHandle m_instance{};
+	RenderBounds m_bounds{};
+	RenderInstanceFlags m_flags = RenderInstanceFlags::None;
+	bool m_active = false;
+};
+
 export StaticMeshRenderer &GetStaticMeshRenderer() noexcept
 {
 	static StaticMeshRenderer renderer;
