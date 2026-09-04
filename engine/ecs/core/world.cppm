@@ -5,6 +5,7 @@ module;
 #include <cstddef>
 #include <cstdint>
 #include <limits>
+#include <span>
 #include <stdexcept>
 #include <vector>
 
@@ -16,6 +17,8 @@ export import engine.ecs.storage.archetype;
 
 export namespace ecs
 {
+
+class CommandBuffer;
 
 struct WorldConfig
 {
@@ -72,6 +75,9 @@ public:
 		return m_components.IsFrozen();
 	}
 
+	void Commit(CommandBuffer &commands);
+	void Commit(std::span<CommandBuffer *> commandBuffers);
+
 	bool IsAlive(Entity entity) const noexcept;
 	bool Destroy(Entity entity);
 
@@ -91,17 +97,7 @@ public:
 		RequireComponentsFinalized();
 		if (!IsAlive(entity))
 			return false;
-
-		const ComponentId component = GetRegisteredComponent<T>();
-		EntityRecord &record = m_records[entity.index];
-		if (record.location.archetype->Has(component))
-			return false;
-
-		Signature signature = record.location.archetype->GetSignature();
-		signature.push_back(component);
-		CanonicalizeSignature(signature);
-		MoveEntity(entity, signature);
-		return true;
+		return AddComponent(entity, GetRegisteredComponent<T>(), nullptr);
 	}
 
 	template<typename T>
@@ -110,17 +106,7 @@ public:
 		RequireComponentsFinalized();
 		if (!IsAlive(entity))
 			return false;
-
-		const ComponentId component = GetRegisteredComponent<T>();
-
-		EntityRecord &record = m_records[entity.index];
-		if (!record.location.archetype->Has(component))
-			return false;
-
-		Signature signature = record.location.archetype->GetSignature();
-		signature.erase(std::remove(signature.begin(), signature.end(), component), signature.end());
-		MoveEntity(entity, signature);
-		return true;
+		return RemoveComponent(entity, GetRegisteredComponent<T>());
 	}
 
 	template<typename T>
@@ -189,8 +175,16 @@ private:
 		return component;
 	}
 
+	bool AddComponent(Entity entity, ComponentId component, void *value);
+	bool RemoveComponent(Entity entity, ComponentId component);
+
 	Archetype &GetOrCreateArchetype(const Signature &signature);
-	void MoveEntity(Entity entity, const Signature &targetSignature);
+	void MoveEntity(Entity entity,
+		const Signature &targetSignature,
+		ComponentId initializedComponent = InvalidComponentId,
+		void *initializedValue = nullptr);
+
+	friend class CommandBuffer;
 
 	WorldConfig m_config;
 	ComponentRegistry m_components;
@@ -297,7 +291,50 @@ bool World::Destroy(Entity entity)
 	return true;
 }
 
-void World::MoveEntity(Entity entity, const Signature &targetSignature)
+bool World::AddComponent(Entity entity, const ComponentId component, void *value)
+{
+	RequireComponentsFinalized();
+	if (component == InvalidComponentId || m_components.TryGet(component) == nullptr)
+		throw std::logic_error("ECS component ID is not registered");
+	if (!IsAlive(entity))
+		return false;
+
+	EntityRecord &record = m_records[entity.index];
+	if (record.location.archetype->Has(component))
+		return false;
+
+	Signature signature = record.location.archetype->GetSignature();
+	signature.push_back(component);
+	CanonicalizeSignature(signature);
+	if (value == nullptr)
+		MoveEntity(entity, signature);
+	else
+		MoveEntity(entity, signature, component, value);
+	return true;
+}
+
+bool World::RemoveComponent(const Entity entity, const ComponentId component)
+{
+	RequireComponentsFinalized();
+	if (component == InvalidComponentId || m_components.TryGet(component) == nullptr)
+		throw std::logic_error("ECS component ID is not registered");
+	if (!IsAlive(entity))
+		return false;
+
+	EntityRecord &record = m_records[entity.index];
+	if (!record.location.archetype->Has(component))
+		return false;
+
+	Signature signature = record.location.archetype->GetSignature();
+	signature.erase(std::remove(signature.begin(), signature.end(), component), signature.end());
+	MoveEntity(entity, signature);
+	return true;
+}
+
+void World::MoveEntity(Entity entity,
+	const Signature &targetSignature,
+	const ComponentId initializedComponent,
+	void *initializedValue)
 {
 	assert(IsAlive(entity));
 	EntityRecord &record = m_records[entity.index];
@@ -324,6 +361,20 @@ void World::MoveEntity(Entity entity, const Signature &targetSignature)
 		void *sourceElement = static_cast<std::byte *>(sourceData) + sourceLocation.row * sourceLayout.size;
 		info.destroy(destinationElement);
 		info.constructMove(destinationElement, sourceElement);
+	}
+
+	if (initializedComponent != InvalidComponentId)
+	{
+		assert(initializedValue != nullptr);
+		const std::size_t destinationColumn = target.ColumnIndex(initializedComponent);
+		assert(destinationColumn != std::numeric_limits<std::size_t>::max());
+		const ComponentInfo &info = m_components.Get(initializedComponent);
+		void *destinationData = destination.chunk->ComponentData(destinationColumn);
+		const ChunkLayout::Column &destinationLayout = target.Layout().Columns()[destinationColumn];
+		void *destinationElement = static_cast<std::byte *>(destinationData) +
+			destination.row * destinationLayout.size;
+		info.destroy(destinationElement);
+		info.constructMove(destinationElement, initializedValue);
 	}
 
 	const Entity moved = source->RemoveEntity(sourceLocation.chunk, sourceLocation.row);

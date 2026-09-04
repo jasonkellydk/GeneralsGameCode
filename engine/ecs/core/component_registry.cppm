@@ -78,6 +78,7 @@ export namespace ecs
         ComponentId TryGet() const noexcept;
 
         [[nodiscard]] const ComponentInfo* TryGet(ComponentId id) const noexcept;
+        [[nodiscard]] ComponentId TryGet(ComponentKey key) const noexcept;
         [[nodiscard]] const ComponentInfo& Get(ComponentId id) const;
 
         // Finalization sorts all registered descriptors by stable key, assigns
@@ -113,6 +114,7 @@ export namespace ecs
         // RTTI is used only to deduplicate repeated registration of the same
         // C++ type. It is never used for stable identity, dense IDs, or schema.
         std::unordered_map<std::type_index, ComponentInfo*> m_typeToInfo;
+        std::unordered_map<ComponentKey, ComponentInfo*> m_keyToInfo;
         std::vector<ComponentInfo*> m_idToInfo;
         bool m_frozen{ false };
         ComponentSchemaHash m_schemaHash{ UnfinalizedSchemaHash };
@@ -213,9 +215,12 @@ export namespace ecs
         try
         {
             m_typeToInfo.emplace(type, &m_infos.back());
+            m_keyToInfo.emplace(stableKey, &m_infos.back());
         }
         catch (...)
         {
+            m_keyToInfo.erase(stableKey);
+            m_typeToInfo.erase(type);
             m_infos.pop_back();
             throw;
         }
@@ -264,6 +269,12 @@ namespace ecs
     const ComponentInfo* ComponentRegistry::TryGet(const ComponentId id) const noexcept
     {
         return static_cast<std::size_t>(id) < m_idToInfo.size() ? m_idToInfo[id] : nullptr;
+    }
+
+    ComponentId ComponentRegistry::TryGet(const ComponentKey key) const noexcept
+    {
+        const auto found = m_keyToInfo.find(key);
+        return found == m_keyToInfo.end() ? InvalidComponentId : found->second->id;
     }
 
     const ComponentInfo& ComponentRegistry::Get(const ComponentId id) const

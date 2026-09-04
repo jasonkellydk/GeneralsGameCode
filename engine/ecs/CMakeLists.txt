@@ -2,6 +2,7 @@ set(ENGINE_ECS_MODULES
 	core/component_registry.cppm
 	core/entity.cppm
 	core/world.cppm
+	commands/command_buffer.cppm
 	query/access.cppm
 	query/query.cppm
 	query/query_cache.cppm
@@ -16,6 +17,7 @@ set(ENGINE_ECS_TESTS
 	core/component_registry.test
 	core/entity.test
 	core/world.test
+	commands/command_buffer.test
 	query/access.test
 	query/query.test
 	query/query_cache.test
