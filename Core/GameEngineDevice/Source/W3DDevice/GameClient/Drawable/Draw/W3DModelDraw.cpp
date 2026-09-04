@@ -70,6 +70,7 @@
 #include "W3DDevice/GameClient/WorldHeightMap.h"
 #include "WW3D2/HAnim.h"
 #include "WW3D2/HLOD.h"
+#include "WW3D2/HTree.h"
 #include "WW3D2/RendObj.h"
 #include "WW3D2/Mesh.h"
 #include "WW3D2/MeshMdl.h"
@@ -99,6 +100,60 @@ void Set_Modern_Vertex_Color(Graphics::StaticMeshVertex &vertex, unsigned packed
 	vertex.color[1] = static_cast<float>((packed_color >> 8) & 0xffu) / 255.0f;
 	vertex.color[2] = static_cast<float>(packed_color & 0xffu) / 255.0f;
 	vertex.color[3] = static_cast<float>((packed_color >> 24) & 0xffu) / 255.0f;
+}
+
+Matrix3D Make_Legacy_Transform(const Graphics::RenderTransform &transform)
+{
+	float values[12]{};
+	for (std::size_t row = 0; row < 3; ++row) {
+		for (std::size_t column = 0; column < 4; ++column)
+			values[row * 4 + column] = transform.matrix[row * 4 + column];
+	}
+	return Matrix3D(values);
+}
+
+bool Build_Modern_Skeleton(RenderObjClass &render_object, Graphics::StaticMeshRenderer &renderer,
+	Graphics::SkeletonHandle &skeleton_handle)
+{
+	skeleton_handle = {};
+	const int bone_count = render_object.Get_Num_Bones();
+	if (bone_count <= 0)
+		return true;
+	if (static_cast<std::uint64_t>(bone_count) > std::numeric_limits<Graphics::BoneIndex>::max())
+		return false;
+
+	std::vector<Matrix3D> model_transforms(static_cast<std::size_t>(bone_count));
+	const Matrix3D object_transform = render_object.Get_Transform();
+	Matrix3D inverse_object_transform;
+	object_transform.Get_Orthogonal_Inverse(inverse_object_transform);
+	for (int index = 0; index < bone_count; ++index) {
+		model_transforms[static_cast<std::size_t>(index)] = render_object.Get_Bone_Transform(index);
+		model_transforms[static_cast<std::size_t>(index)].preMul(inverse_object_transform);
+	}
+
+	const HTreeClass *hierarchy = render_object.Get_HTree();
+	std::vector<Graphics::SkeletonBone> bones(static_cast<std::size_t>(bone_count));
+	for (int index = 0; index < bone_count; ++index) {
+		int parent = hierarchy != nullptr ? hierarchy->Get_Parent_Index(index) : -1;
+		if (index == 0 && parent == 0)
+			parent = -1;
+		if (parent < -1 || parent >= index)
+			return false;
+
+		Matrix3D local_transform = model_transforms[static_cast<std::size_t>(index)];
+		if (parent >= 0) {
+			Matrix3D inverse_parent;
+			model_transforms[static_cast<std::size_t>(parent)].Get_Orthogonal_Inverse(inverse_parent);
+			local_transform.preMul(inverse_parent);
+		}
+		bones[static_cast<std::size_t>(index)] = {
+			parent < 0 ? Graphics::Invalid_Bone_Index : static_cast<Graphics::BoneIndex>(parent),
+			Make_Modern_Transform(local_transform)
+		};
+	}
+
+	skeleton_handle = renderer.Create_Skeleton(bones);
+	return skeleton_handle.Is_Valid();
 }
 }
 
@@ -2019,8 +2074,15 @@ bool W3DModelDraw::submitModernVariant()
 	if (m_modernHidden || getDrawable()->isDrawableEffectivelyHidden())
 		flags = flags | Graphics::RenderInstanceFlags::Hidden;
 
-	if (!m_modernBinding.Replace(renderer, source, transform, bounds, renderer.Default_Material(), flags))
+	Graphics::SkeletonHandle skeleton;
+	if (!Build_Modern_Skeleton(*m_renderObject, renderer, skeleton))
 		return false;
+	if (!m_modernBinding.Replace(renderer, source, transform, bounds, renderer.Default_Material(), flags,
+		Graphics::All_Submeshes_Visible, skeleton)) {
+		if (skeleton.Is_Valid())
+			renderer.Destroy_Skeleton(skeleton);
+		return false;
+	}
 	if (!updateModernSubobjectVisibility())
 		return false;
 
@@ -3821,6 +3883,13 @@ Bool W3DModelDraw::clientOnly_getRenderObjBoneTransform(const AsciiString & bone
 	}
 
 	int idx = m_renderObject->Get_Bone_Index(boneName.str());
+	if (m_modernBinding.Is_Active() && idx > 0) {
+		Graphics::RenderTransform transform;
+		if (m_modernBinding.Get_Bone_Transform(Graphics::GetStaticMeshRenderer(), Graphics::BoneHandle(idx, 1), transform)) {
+			*set_tm = Make_Legacy_Transform(transform);
+			return true;
+		}
+	}
 	if (idx == 0) {
 		set_tm->Make_Identity();
 		return false;
@@ -3838,6 +3907,13 @@ Bool W3DModelDraw::getCurrentWorldspaceClientBonePositions(const char* boneName,
 		return false;
 
 	Int boneIndex = m_renderObject->Get_Bone_Index(boneName);
+	if (m_modernBinding.Is_Active() && boneIndex > 0) {
+		Graphics::RenderTransform modern_transform;
+		if (m_modernBinding.Get_Bone_Transform(Graphics::GetStaticMeshRenderer(), Graphics::BoneHandle(boneIndex, 1), modern_transform)) {
+			transform = Make_Legacy_Transform(modern_transform);
+			return true;
+		}
+	}
 	if (boneIndex == 0)
 		return false;
 

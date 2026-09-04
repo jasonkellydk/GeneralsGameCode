@@ -140,6 +140,18 @@ export struct BeamHandleTag
 {
 };
 
+export struct SkeletonHandleTag
+{
+};
+
+export struct BoneHandleTag
+{
+};
+
+export struct AttachmentHandleTag
+{
+};
+
 export struct ResourceIndexTag
 {
 };
@@ -155,6 +167,9 @@ export using LightHandle = ResourceHandle<LightHandleTag>;
 export using DecalHandle = ResourceHandle<DecalHandleTag>;
 export using ParticleEmitterHandle = ResourceHandle<ParticleEmitterHandleTag>;
 export using BeamHandle = ResourceHandle<BeamHandleTag>;
+export using SkeletonHandle = ResourceHandle<SkeletonHandleTag>;
+export using BoneHandle = ResourceHandle<BoneHandleTag>;
+export using AttachmentHandle = ResourceHandle<AttachmentHandleTag>;
 export using ResourceIndex = ResourceHandle<ResourceIndexTag>;
 
 }

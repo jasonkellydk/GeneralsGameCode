@@ -148,6 +148,66 @@ BOOST_AUTO_TEST_CASE(static_mesh_variant_switch_keeps_instance_handle)
 	renderer.Shutdown();
 }
 
+BOOST_AUTO_TEST_CASE(static_mesh_binding_queries_static_bone_and_attachment_transforms)
+{
+	DX11Device device({true});
+	BOOST_REQUIRE(device.Is_Valid());
+
+	StaticMeshRenderer renderer;
+	BOOST_REQUIRE(renderer.Initialize(device, std::filesystem::path(GRAPHICS_STATIC_MESH_SHADER_DIRECTORY), 1, 1));
+
+	const std::array<StaticMeshVertex, 3> vertices = {{
+		{{-0.5f, -0.5f, 0.0f}, {1.0f, 1.0f, 1.0f, 1.0f}, {0.0f, 1.0f}},
+		{{0.0f, 0.5f, 0.0f}, {1.0f, 1.0f, 1.0f, 1.0f}, {0.5f, 0.0f}},
+		{{0.5f, -0.5f, 0.0f}, {1.0f, 1.0f, 1.0f, 1.0f}, {1.0f, 1.0f}}
+	}};
+	const std::array<std::uint16_t, 3> indices = {0, 1, 2};
+	const StaticMeshSource source{
+		3,
+		3,
+		static_cast<std::uint32_t>(sizeof(StaticMeshVertex)),
+		MeshIndexFormat::UInt16,
+		std::as_bytes(std::span<const StaticMeshVertex>(vertices)),
+		std::as_bytes(std::span<const std::uint16_t>(indices)),
+		{0.0f, 0.0f, 0.0f},
+		1.0f
+	};
+
+	const std::array<SkeletonBone, 1> bones = {{
+		{Invalid_Bone_Index, RenderTransform{Matrix4x4::Identity().values}}
+	}};
+	const std::array<SkeletonAttachment, 1> attachments = {{
+		{BoneHandle(0, 1), RenderTransform{Matrix4x4::Identity().values}}
+	}};
+	const SkeletonHandle skeleton = renderer.Create_Skeleton(bones, attachments);
+	BOOST_REQUIRE(skeleton.Is_Valid());
+
+	RenderTransform model_transform;
+	model_transform.matrix = Matrix4x4::Identity().values;
+	model_transform.matrix[3] = 10.0f;
+	model_transform.matrix[7] = 20.0f;
+	model_transform.matrix[11] = 30.0f;
+	const RenderBounds bounds{{0.0f, 0.0f, 0.0f}, 1.0f};
+	StaticMeshBinding binding;
+	BOOST_REQUIRE(binding.Replace(renderer, source, model_transform, bounds, renderer.Default_Material(),
+		RenderInstanceFlags::None, All_Submeshes_Visible, skeleton));
+
+	RenderTransform result;
+	BOOST_REQUIRE(binding.Get_Bone_Transform(renderer, BoneHandle(0, 1), result));
+	BOOST_CHECK(result.matrix[3] == 10.0f);
+	BOOST_CHECK(result.matrix[7] == 20.0f);
+	BOOST_CHECK(result.matrix[11] == 30.0f);
+	BOOST_REQUIRE(binding.Get_Attachment_Transform(renderer, AttachmentHandle(0, 1), result));
+	BOOST_CHECK(result.matrix[3] == 10.0f);
+	BOOST_CHECK(result.matrix[7] == 20.0f);
+	BOOST_CHECK(result.matrix[11] == 30.0f);
+	BOOST_CHECK(!binding.Get_Bone_Transform(renderer, BoneHandle(0, 2), result));
+	BOOST_CHECK(!binding.Get_Attachment_Transform(renderer, AttachmentHandle(0, 2), result));
+
+	binding.Destroy(renderer);
+	renderer.Shutdown();
+}
+
 BOOST_AUTO_TEST_CASE(static_mesh_submesh_visibility_preserves_instance_state)
 {
 	DX11Device device({true});

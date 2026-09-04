@@ -56,6 +56,7 @@ public:
 #include "Common/STLTypedefs.h"
 
 import Graphics.Scene.StaticMeshes;
+import Graphics.Scene.Models.ModelInstance;
 
 // FORWARD REFERENCES /////////////////////////////////////////////////////////////////////////////
 class Thing;

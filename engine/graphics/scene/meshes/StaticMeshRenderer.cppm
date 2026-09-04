@@ -17,6 +17,7 @@ export import Graphics.Resources.Materials.Material;
 export import Graphics.Resources.Residency.GPUResourceResidency;
 export import Graphics.Scene.DrawGeneration;
 export import Graphics.Scene.GPUScene;
+export import Graphics.Scene.Models.ModelInstance;
 export import Graphics.Scene.Models.ModelVisibility;
 export import Graphics.Scene.Views.View;
 export import Graphics.Scene.Visibility;
@@ -84,6 +85,7 @@ public:
 		m_device = &device;
 		m_mesh_sources.reserve(max_meshes);
 		m_scene.Reserve(max_instances);
+		m_skeletons.Reserve(max_meshes);
 		m_meshes.Reserve(max_meshes);
 		m_materials.Reserve(1);
 		m_gpu_scene.Reserve(max_instances, max_meshes, 1);
@@ -209,6 +211,7 @@ public:
 		m_light_buffer = {};
 		m_view_buffer = {};
 		m_mesh_sources.clear();
+		m_skeletons = {};
 		m_visible_storage.clear();
 		m_lod_storage.clear();
 		m_draw_storage.clear();
@@ -268,6 +271,28 @@ public:
 
 		m_scene_dirty = true;
 		return handle;
+	}
+
+	SkeletonHandle Create_Skeleton(std::span<const SkeletonBone> bones, std::span<const SkeletonAttachment> attachments = {})
+	{
+		if (!Is_Initialized())
+			return {};
+		return Graphics::Create_Skeleton(m_skeletons, {bones, attachments});
+	}
+
+	bool Destroy_Skeleton(SkeletonHandle handle) noexcept
+	{
+		return Is_Initialized() && m_skeletons.Destroy(handle);
+	}
+
+	bool Is_Skeleton_Valid(SkeletonHandle handle) const noexcept
+	{
+		return Is_Initialized() && m_skeletons.Resolve(handle) != nullptr;
+	}
+
+	const SkeletonPool &Skeletons() const noexcept
+	{
+		return m_skeletons;
 	}
 
 	bool Destroy_Mesh(MeshHandle handle) noexcept
@@ -477,6 +502,7 @@ private:
 	Device *m_device = nullptr;
 	std::size_t m_instance_capacity = 0;
 	MeshPool m_meshes;
+	SkeletonPool m_skeletons;
 	TexturePool m_textures;
 	SamplerPool m_samplers;
 	MaterialPool m_materials;
@@ -519,9 +545,10 @@ export class StaticMeshBinding final
 public:
 	bool Replace(StaticMeshRenderer &renderer, const StaticMeshSource &source, const RenderTransform &transform,
 		const RenderBounds &bounds, MaterialHandle material, RenderInstanceFlags flags,
-		SubmeshVisibilityMask visibility_mask = All_Submeshes_Visible)
+		SubmeshVisibilityMask visibility_mask = All_Submeshes_Visible, SkeletonHandle skeleton = {})
 	{
-		if (!renderer.Is_Initialized() || !material.Is_Valid())
+		if (!renderer.Is_Initialized() || !material.Is_Valid()
+			|| (skeleton.Is_Valid() && !renderer.Is_Skeleton_Valid(skeleton)))
 			return false;
 
 		const MeshHandle new_mesh = renderer.Create_Mesh(source);
@@ -545,11 +572,16 @@ public:
 			m_instance = new_instance;
 		}
 
+		const SkeletonHandle old_skeleton = m_model_instance.skeleton;
 		m_mesh = new_mesh;
 		m_material = material;
 		m_bounds = bounds;
 		m_flags = flags;
 		m_visibility_mask = visibility_mask;
+		m_model_instance.skeleton = skeleton;
+		m_model_instance.transform = transform;
+		if (old_skeleton.Is_Valid() && old_skeleton != skeleton)
+			renderer.Destroy_Skeleton(old_skeleton);
 		m_active = true;
 		return true;
 	}
@@ -564,6 +596,7 @@ public:
 			return false;
 
 		m_flags = flags;
+		m_model_instance.transform = transform;
 		return true;
 	}
 
@@ -597,6 +630,7 @@ public:
 			return false;
 
 		m_active = false;
+		m_model_instance.transform = transform;
 		return true;
 	}
 
@@ -607,6 +641,8 @@ public:
 				renderer.Destroy_Instance(m_instance);
 			if (m_mesh.Is_Valid())
 				renderer.Destroy_Mesh(m_mesh);
+			if (m_model_instance.skeleton.Is_Valid())
+				renderer.Destroy_Skeleton(m_model_instance.skeleton);
 		}
 		Reset();
 	}
@@ -619,6 +655,7 @@ public:
 		m_bounds = {};
 		m_flags = RenderInstanceFlags::None;
 		m_visibility_mask = All_Submeshes_Visible;
+		m_model_instance = {};
 		m_active = false;
 	}
 
@@ -657,6 +694,21 @@ public:
 		return m_visibility_mask;
 	}
 
+	SkeletonHandle Skeleton() const noexcept
+	{
+		return m_model_instance.skeleton;
+	}
+
+	bool Get_Bone_Transform(const StaticMeshRenderer &renderer, BoneHandle bone, RenderTransform &result) const noexcept
+	{
+		return m_model_instance.Get_Bone_Transform(renderer.Skeletons(), bone, result);
+	}
+
+	bool Get_Attachment_Transform(const StaticMeshRenderer &renderer, AttachmentHandle attachment, RenderTransform &result) const noexcept
+	{
+		return m_model_instance.Get_Attachment_Transform(renderer.Skeletons(), attachment, result);
+	}
+
 private:
 	static RenderInstance Make_Instance(MeshHandle mesh, MaterialHandle material, const RenderTransform &transform,
 		const RenderBounds &bounds, RenderInstanceFlags flags, SubmeshVisibilityMask visibility_mask) noexcept
@@ -677,6 +729,7 @@ private:
 	RenderBounds m_bounds{};
 	RenderInstanceFlags m_flags = RenderInstanceFlags::None;
 	SubmeshVisibilityMask m_visibility_mask = All_Submeshes_Visible;
+	ModelInstance m_model_instance{};
 	bool m_active = false;
 };
 
