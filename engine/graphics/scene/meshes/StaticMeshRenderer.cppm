@@ -1,6 +1,7 @@
 module;
 
 #include <array>
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <filesystem>
@@ -86,6 +87,7 @@ public:
 		m_mesh_sources.reserve(max_meshes);
 		m_scene.Reserve(max_instances);
 		m_skeletons.Reserve(max_meshes);
+		m_animations.Reserve(max_meshes);
 		m_meshes.Reserve(max_meshes);
 		m_materials.Reserve(1);
 		m_gpu_scene.Reserve(max_instances, max_meshes, 1);
@@ -212,6 +214,7 @@ public:
 		m_view_buffer = {};
 		m_mesh_sources.clear();
 		m_skeletons = {};
+		m_animations = {};
 		m_visible_storage.clear();
 		m_lod_storage.clear();
 		m_draw_storage.clear();
@@ -293,6 +296,35 @@ public:
 	const SkeletonPool &Skeletons() const noexcept
 	{
 		return m_skeletons;
+	}
+
+	AnimationClipHandle Create_Animation_Clip(const AnimationClipDescription &description)
+	{
+		if (!Is_Initialized())
+			return {};
+		return Graphics::Create_Animation_Clip(m_animations, description);
+	}
+
+	bool Destroy_Animation_Clip(AnimationClipHandle handle) noexcept
+	{
+		return Is_Initialized() && m_animations.Destroy(handle);
+	}
+
+	bool Is_Animation_Valid(AnimationClipHandle handle) const noexcept
+	{
+		return Is_Initialized() && m_animations.Resolve(handle) != nullptr;
+	}
+
+	bool Is_Animation_Valid_For_Skeleton(AnimationClipHandle animation, SkeletonHandle skeleton) const noexcept
+	{
+		const AnimationClip *clip = m_animations.Resolve(animation);
+		const Skeleton *resource = m_skeletons.Resolve(skeleton);
+		return clip != nullptr && resource != nullptr && clip->Bone_Count() == resource->Bone_Count();
+	}
+
+	const AnimationClipPool &Animations() const noexcept
+	{
+		return m_animations;
 	}
 
 	bool Destroy_Mesh(MeshHandle handle) noexcept
@@ -503,6 +535,7 @@ private:
 	std::size_t m_instance_capacity = 0;
 	MeshPool m_meshes;
 	SkeletonPool m_skeletons;
+	AnimationClipPool m_animations;
 	TexturePool m_textures;
 	SamplerPool m_samplers;
 	MaterialPool m_materials;
@@ -545,10 +578,14 @@ export class StaticMeshBinding final
 public:
 	bool Replace(StaticMeshRenderer &renderer, const StaticMeshSource &source, const RenderTransform &transform,
 		const RenderBounds &bounds, MaterialHandle material, RenderInstanceFlags flags,
-		SubmeshVisibilityMask visibility_mask = All_Submeshes_Visible, SkeletonHandle skeleton = {})
+		SubmeshVisibilityMask visibility_mask = All_Submeshes_Visible, SkeletonHandle skeleton = {},
+		AnimationClipHandle animation = {}, AnimationPlaybackMode animation_mode = AnimationPlaybackMode::Loop,
+		float animation_time = 0.0f)
 	{
 		if (!renderer.Is_Initialized() || !material.Is_Valid()
-			|| (skeleton.Is_Valid() && !renderer.Is_Skeleton_Valid(skeleton)))
+			|| (skeleton.Is_Valid() && !renderer.Is_Skeleton_Valid(skeleton))
+			|| (animation.Is_Valid() && !std::isfinite(animation_time))
+			|| (animation.Is_Valid() && !renderer.Is_Animation_Valid_For_Skeleton(animation, skeleton)))
 			return false;
 
 		const MeshHandle new_mesh = renderer.Create_Mesh(source);
@@ -556,6 +593,17 @@ public:
 			return false;
 
 		const RenderInstance instance = Make_Instance(new_mesh, material, transform, bounds, flags, visibility_mask);
+		ModelInstance prepared_model_instance;
+		prepared_model_instance.skeleton = skeleton;
+		prepared_model_instance.transform = transform;
+		if (animation.Is_Valid()
+			&& !prepared_model_instance.Set_Animation(renderer.Skeletons(), renderer.Animations(), animation,
+				animation_mode, animation_time)) {
+			if (animation != m_animation)
+				renderer.Destroy_Animation_Clip(animation);
+			renderer.Destroy_Mesh(new_mesh);
+			return false;
+		}
 		if (m_instance.Is_Valid()) {
 			if (!renderer.Update_Instance(m_instance, instance)) {
 				renderer.Destroy_Mesh(new_mesh);
@@ -578,10 +626,13 @@ public:
 		m_bounds = bounds;
 		m_flags = flags;
 		m_visibility_mask = visibility_mask;
-		m_model_instance.skeleton = skeleton;
-		m_model_instance.transform = transform;
+		m_model_instance = std::move(prepared_model_instance);
+		const AnimationClipHandle old_animation = m_animation;
+		m_animation = animation;
 		if (old_skeleton.Is_Valid() && old_skeleton != skeleton)
 			renderer.Destroy_Skeleton(old_skeleton);
+		if (old_animation.Is_Valid() && old_animation != animation)
+			renderer.Destroy_Animation_Clip(old_animation);
 		m_active = true;
 		return true;
 	}
@@ -598,6 +649,51 @@ public:
 		m_flags = flags;
 		m_model_instance.transform = transform;
 		return true;
+	}
+
+	bool Set_Animation(StaticMeshRenderer &renderer, AnimationClipHandle animation,
+		AnimationPlaybackMode mode, float time_seconds = 0.0f)
+	{
+		if (!renderer.Is_Initialized() || !m_active || !m_model_instance.skeleton.Is_Valid()
+			|| !renderer.Is_Animation_Valid_For_Skeleton(animation, m_model_instance.skeleton))
+			return false;
+		if (!m_model_instance.Set_Animation(renderer.Skeletons(), renderer.Animations(), animation, mode, time_seconds))
+			return false;
+		const AnimationClipHandle old_animation = m_animation;
+		m_animation = animation;
+		if (old_animation.Is_Valid() && old_animation != animation)
+			renderer.Destroy_Animation_Clip(old_animation);
+		return true;
+	}
+
+	bool Clear_Animation(StaticMeshRenderer &renderer) noexcept
+	{
+		if (!renderer.Is_Initialized())
+			return false;
+		const AnimationClipHandle old_animation = m_animation;
+		m_animation = {};
+		m_model_instance.Clear_Animation();
+		if (old_animation.Is_Valid())
+			renderer.Destroy_Animation_Clip(old_animation);
+		return true;
+	}
+
+	bool Update_Animation(StaticMeshRenderer &renderer, float delta_seconds) noexcept
+	{
+		return renderer.Is_Initialized() && m_active && m_animation.Is_Valid()
+			&& m_model_instance.Advance_Animation(renderer.Skeletons(), renderer.Animations(), delta_seconds);
+	}
+
+	bool Set_Animation_Time(StaticMeshRenderer &renderer, float time_seconds) noexcept
+	{
+		return renderer.Is_Initialized() && m_active && m_animation.Is_Valid()
+			&& m_model_instance.Set_Animation_Time(renderer.Skeletons(), renderer.Animations(), time_seconds);
+	}
+
+	bool Set_Animation_Mode(StaticMeshRenderer &renderer, AnimationPlaybackMode mode) noexcept
+	{
+		return renderer.Is_Initialized() && m_active && m_animation.Is_Valid()
+			&& m_model_instance.Set_Animation_Mode(renderer.Skeletons(), renderer.Animations(), mode);
 	}
 
 	bool Set_Submesh_Visibility(StaticMeshRenderer &renderer, SubmeshVisibilityMask visibility_mask) noexcept
@@ -643,6 +739,8 @@ public:
 				renderer.Destroy_Mesh(m_mesh);
 			if (m_model_instance.skeleton.Is_Valid())
 				renderer.Destroy_Skeleton(m_model_instance.skeleton);
+			if (m_animation.Is_Valid())
+				renderer.Destroy_Animation_Clip(m_animation);
 		}
 		Reset();
 	}
@@ -656,6 +754,7 @@ public:
 		m_flags = RenderInstanceFlags::None;
 		m_visibility_mask = All_Submeshes_Visible;
 		m_model_instance = {};
+		m_animation = {};
 		m_active = false;
 	}
 
@@ -699,6 +798,11 @@ public:
 		return m_model_instance.skeleton;
 	}
 
+	AnimationClipHandle Animation() const noexcept
+	{
+		return m_animation;
+	}
+
 	bool Get_Bone_Transform(const StaticMeshRenderer &renderer, BoneHandle bone, RenderTransform &result) const noexcept
 	{
 		return m_model_instance.Get_Bone_Transform(renderer.Skeletons(), bone, result);
@@ -730,6 +834,7 @@ private:
 	RenderInstanceFlags m_flags = RenderInstanceFlags::None;
 	SubmeshVisibilityMask m_visibility_mask = All_Submeshes_Visible;
 	ModelInstance m_model_instance{};
+	AnimationClipHandle m_animation{};
 	bool m_active = false;
 };
 

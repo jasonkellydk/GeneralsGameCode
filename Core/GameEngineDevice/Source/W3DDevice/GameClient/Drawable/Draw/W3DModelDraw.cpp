@@ -37,6 +37,7 @@
 #include <SDL3/SDL.h>
 
 #include <array>
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <limits>
@@ -112,6 +113,67 @@ Matrix3D Make_Legacy_Transform(const Graphics::RenderTransform &transform)
 	return Matrix3D(values);
 }
 
+class Scoped_Render_Object_Reference final
+{
+public:
+	Scoped_Render_Object_Reference() noexcept = default;
+
+	explicit Scoped_Render_Object_Reference(RenderObjClass *object) noexcept : m_object(object)
+	{
+	}
+
+	~Scoped_Render_Object_Reference()
+	{
+		if (m_object != nullptr)
+			m_object->Release_Ref();
+	}
+
+	RenderObjClass *Get() const noexcept
+	{
+		return m_object;
+	}
+
+	void Reset(RenderObjClass *object) noexcept
+	{
+		if (m_object != nullptr)
+			m_object->Release_Ref();
+		m_object = object;
+	}
+
+private:
+	RenderObjClass *m_object = nullptr;
+};
+
+MeshClass *Find_Modern_Mesh(RenderObjClass &render_object, Scoped_Render_Object_Reference &reference) noexcept
+{
+	if (render_object.Class_ID() == RenderObjClass::CLASSID_MESH)
+		return static_cast<MeshClass *>(&render_object);
+
+	if (render_object.Class_ID() != RenderObjClass::CLASSID_HLOD)
+		return nullptr;
+
+	HLodClass *hlod = static_cast<HLodClass *>(&render_object);
+	RenderObjClass *lod = hlod->Get_Current_LOD();
+	reference.Reset(lod);
+	if (lod == nullptr || lod->Class_ID() != RenderObjClass::CLASSID_MESH)
+		return nullptr;
+	return static_cast<MeshClass *>(lod);
+}
+
+Graphics::AnimationPlaybackMode Make_Modern_Animation_Mode(RenderObjClass::AnimMode mode) noexcept
+{
+	switch (mode) {
+		case RenderObjClass::ANIM_MODE_ONCE:
+			return Graphics::AnimationPlaybackMode::Once;
+		case RenderObjClass::ANIM_MODE_ONCE_BACKWARDS:
+			return Graphics::AnimationPlaybackMode::Once_Backwards;
+		case RenderObjClass::ANIM_MODE_LOOP_BACKWARDS:
+			return Graphics::AnimationPlaybackMode::Loop_Backwards;
+		default:
+			return Graphics::AnimationPlaybackMode::Loop;
+	}
+}
+
 bool Build_Modern_Skeleton(RenderObjClass &render_object, Graphics::StaticMeshRenderer &renderer,
 	Graphics::SkeletonHandle &skeleton_handle)
 {
@@ -122,16 +184,12 @@ bool Build_Modern_Skeleton(RenderObjClass &render_object, Graphics::StaticMeshRe
 	if (static_cast<std::uint64_t>(bone_count) > std::numeric_limits<Graphics::BoneIndex>::max())
 		return false;
 
-	std::vector<Matrix3D> model_transforms(static_cast<std::size_t>(bone_count));
 	const Matrix3D object_transform = render_object.Get_Transform();
 	Matrix3D inverse_object_transform;
 	object_transform.Get_Orthogonal_Inverse(inverse_object_transform);
-	for (int index = 0; index < bone_count; ++index) {
-		model_transforms[static_cast<std::size_t>(index)] = render_object.Get_Bone_Transform(index);
-		model_transforms[static_cast<std::size_t>(index)].preMul(inverse_object_transform);
-	}
 
 	const HTreeClass *hierarchy = render_object.Get_HTree();
+	std::vector<Matrix3D> model_transforms(static_cast<std::size_t>(bone_count));
 	std::vector<Graphics::SkeletonBone> bones(static_cast<std::size_t>(bone_count));
 	for (int index = 0; index < bone_count; ++index) {
 		int parent = hierarchy != nullptr ? hierarchy->Get_Parent_Index(index) : -1;
@@ -139,6 +197,15 @@ bool Build_Modern_Skeleton(RenderObjClass &render_object, Graphics::StaticMeshRe
 			parent = -1;
 		if (parent < -1 || parent >= index)
 			return false;
+
+		if (hierarchy != nullptr) {
+			if (!hierarchy->Simple_Evaluate_Pivot(index, object_transform,
+				&model_transforms[static_cast<std::size_t>(index)]))
+				return false;
+		} else {
+			model_transforms[static_cast<std::size_t>(index)] = render_object.Get_Bone_Transform(index);
+		}
+		model_transforms[static_cast<std::size_t>(index)].preMul(inverse_object_transform);
 
 		Matrix3D local_transform = model_transforms[static_cast<std::size_t>(index)];
 		if (parent >= 0) {
@@ -154,6 +221,74 @@ bool Build_Modern_Skeleton(RenderObjClass &render_object, Graphics::StaticMeshRe
 
 	skeleton_handle = renderer.Create_Skeleton(bones);
 	return skeleton_handle.Is_Valid();
+}
+
+bool Build_Modern_Animation(RenderObjClass &render_object, Graphics::StaticMeshRenderer &renderer,
+	Graphics::SkeletonHandle skeleton_handle, HAnimClass *animation,
+	Graphics::AnimationClipHandle &animation_handle,
+	Graphics::AnimationPlaybackMode &animation_mode, float &animation_time)
+{
+	animation_handle = {};
+	animation_time = 0.0f;
+	animation_mode = Graphics::AnimationPlaybackMode::Loop;
+	if (animation == nullptr)
+		return true;
+
+	const Graphics::Skeleton *skeleton = renderer.Skeletons().Resolve(skeleton_handle);
+	const int frame_count = animation->Get_Num_Frames();
+	const int pivot_count = animation->Get_Num_Pivots();
+	const float frame_rate = animation->Get_Frame_Rate();
+	if (skeleton == nullptr || !skeleton->Is_Valid() || frame_count <= 0 || pivot_count < 0
+		|| !std::isfinite(frame_rate) || frame_rate <= 0.0f
+		|| static_cast<std::uint64_t>(frame_count) > std::numeric_limits<std::size_t>::max() / skeleton->Bone_Count())
+		return false;
+
+	const std::span<const Graphics::SkeletonBone> skeleton_bones = skeleton->Bones();
+	std::vector<Graphics::RenderTransform> samples(
+		static_cast<std::size_t>(frame_count) * skeleton_bones.size());
+	for (int frame = 0; frame < frame_count; ++frame) {
+		for (Graphics::BoneIndex bone = 0; bone < skeleton_bones.size(); ++bone) {
+			Graphics::RenderTransform &sample = samples[static_cast<std::size_t>(frame) * skeleton_bones.size() + bone];
+			sample = skeleton_bones[bone].rest_transform;
+			if (bone == 0 || bone >= static_cast<Graphics::BoneIndex>(pivot_count)
+				|| !animation->Is_Node_Motion_Present(static_cast<int>(bone)))
+				continue;
+
+			Matrix3D animation_transform;
+			animation->Get_Transform(animation_transform, static_cast<int>(bone), static_cast<float>(frame));
+			const Matrix3D base_transform = Make_Legacy_Transform(skeleton_bones[bone].rest_transform);
+			Matrix3D local_transform;
+			Matrix3D::Multiply(base_transform, animation_transform, &local_transform);
+			sample = Make_Modern_Transform(local_transform);
+		}
+	}
+
+	const Graphics::AnimationClipDescription description{
+		static_cast<std::uint32_t>(skeleton_bones.size()),
+		static_cast<std::uint32_t>(frame_count),
+		frame_rate,
+		std::span<const Graphics::RenderTransform>(samples)
+	};
+	animation_handle = renderer.Create_Animation_Clip(description);
+	if (!animation_handle.Is_Valid())
+		return false;
+
+	animation_mode = Graphics::AnimationPlaybackMode::Loop;
+	if (render_object.Class_ID() == RenderObjClass::CLASSID_HLOD) {
+		float frame = 0.0f;
+		int current_frame_count = 0;
+		int mode = RenderObjClass::ANIM_MODE_LOOP;
+		float multiplier = 1.0f;
+		HLodClass *hlod = static_cast<HLodClass *>(&render_object);
+		HAnimClass *current = hlod->Peek_Animation_And_Info(frame, current_frame_count, mode, multiplier);
+		if (current == animation && current_frame_count > 0)
+			animation_time = frame / frame_rate;
+		animation_mode = Make_Modern_Animation_Mode(static_cast<RenderObjClass::AnimMode>(mode));
+		if (animation_mode == Graphics::AnimationPlaybackMode::Once_Backwards
+			|| animation_mode == Graphics::AnimationPlaybackMode::Loop_Backwards)
+			animation_time = static_cast<float>(frame_count - 1) / frame_rate - animation_time;
+	}
+	return true;
 }
 }
 
@@ -1836,6 +1971,9 @@ W3DModelDraw::W3DModelDraw(Thing *thing, const ModuleData* moduleData) : DrawMod
 	m_nextState = nullptr;
 	m_nextStateAnimLoopDuration = NO_NEXT_DURATION;
 	m_modernBinding.Reset();
+	m_modernAnimationState = nullptr;
+	m_modernAnimationIndex = -1;
+	m_modernAnimationMode = Graphics::AnimationPlaybackMode::Loop;
 	m_modernHidden = FALSE;
 	for (i = 0; i < WEAPONSLOT_COUNT; ++i)
 	{
@@ -1905,8 +2043,7 @@ W3DModelDraw::~W3DModelDraw()
 
 bool W3DModelDraw::isModernStaticOpaqueState() const noexcept
 {
-	if (m_curState == nullptr || m_nextState != nullptr || m_renderObject == nullptr
-		|| m_renderObject->Class_ID() != RenderObjClass::CLASSID_MESH)
+	if (m_curState == nullptr || m_nextState != nullptr || m_renderObject == nullptr)
 		return false;
 
 	const W3DModelDrawModuleData *module_data = getW3DModelDrawModuleData();
@@ -1915,14 +2052,23 @@ bool W3DModelDraw::isModernStaticOpaqueState() const noexcept
 		return false;
 
 	const ModelConditionInfo &state = *m_curState;
-	if (!state.m_animations.empty() || !state.m_particleSysBones.empty()
+	if (state.m_animations.size() > 1 || !state.m_particleSysBones.empty()
 		|| state.m_transitionSig != NO_TRANSITION
 		|| (state.m_validStuff & (ModelConditionInfo::TURRETS_VALID
 			| ModelConditionInfo::HAS_PROJECTILE_BONES
 			| ModelConditionInfo::BARRELS_VALID)) != 0)
 		return false;
 
-	MeshClass *mesh = static_cast<MeshClass *>(m_renderObject);
+	if (!state.m_animations.empty() && m_renderObject->Class_ID() != RenderObjClass::CLASSID_HLOD)
+		return false;
+	if (m_renderObject->Class_ID() == RenderObjClass::CLASSID_HLOD
+		&& (!state.m_hideShowVec.empty() || !m_subObjectVec.empty()))
+		return false;
+
+	Scoped_Render_Object_Reference mesh_reference;
+	MeshClass *mesh = Find_Modern_Mesh(*m_renderObject, mesh_reference);
+	if (mesh == nullptr)
+		return false;
 	MeshModelClass *model = mesh->Peek_Model();
 	if (!canUseModernSubobjectVisibility())
 		return false;
@@ -2006,8 +2152,13 @@ bool W3DModelDraw::submitModernVariant()
 	if (!renderer.Is_Initialized() || !isModernStaticOpaqueState())
 		return false;
 
-	MeshClass *mesh = static_cast<MeshClass *>(m_renderObject);
+	Scoped_Render_Object_Reference mesh_reference;
+	MeshClass *mesh = Find_Modern_Mesh(*m_renderObject, mesh_reference);
+	if (mesh == nullptr)
+		return false;
 	MeshModelClass *model = mesh->Peek_Model();
+	if (model == nullptr)
+		return false;
 	const int vertex_count = model->Get_Vertex_Count();
 	const int polygon_count = model->Get_Polygon_Count();
 	if (vertex_count <= 0 || vertex_count > 65535 || polygon_count <= 0
@@ -2077,12 +2228,34 @@ bool W3DModelDraw::submitModernVariant()
 	Graphics::SkeletonHandle skeleton;
 	if (!Build_Modern_Skeleton(*m_renderObject, renderer, skeleton))
 		return false;
-	if (!m_modernBinding.Replace(renderer, source, transform, bounds, renderer.Default_Material(), flags,
-		Graphics::All_Submeshes_Visible, skeleton)) {
+
+	HAnimClass *legacy_animation = nullptr;
+	if (m_curState != nullptr && m_whichAnimInCurState >= 0
+		&& m_whichAnimInCurState < static_cast<Int>(m_curState->m_animations.size()))
+		legacy_animation = m_curState->m_animations[m_whichAnimInCurState].getAnimHandle();
+	Graphics::AnimationClipHandle animation;
+	Graphics::AnimationPlaybackMode animation_mode = Graphics::AnimationPlaybackMode::Loop;
+	float animation_time = 0.0f;
+	const bool animation_built = Build_Modern_Animation(*m_renderObject, renderer, skeleton,
+		legacy_animation, animation, animation_mode, animation_time);
+	if (legacy_animation != nullptr)
+		REF_PTR_RELEASE(legacy_animation);
+	if (!animation_built) {
 		if (skeleton.Is_Valid())
 			renderer.Destroy_Skeleton(skeleton);
 		return false;
 	}
+	if (!m_modernBinding.Replace(renderer, source, transform, bounds, renderer.Default_Material(), flags,
+		Graphics::All_Submeshes_Visible, skeleton, animation, animation_mode, animation_time)) {
+		if (skeleton.Is_Valid())
+			renderer.Destroy_Skeleton(skeleton);
+		if (animation.Is_Valid())
+			renderer.Destroy_Animation_Clip(animation);
+		return false;
+	}
+	m_modernAnimationState = legacy_animation != nullptr ? m_curState : nullptr;
+	m_modernAnimationIndex = legacy_animation != nullptr ? m_whichAnimInCurState : -1;
+	m_modernAnimationMode = animation_mode;
 	if (!updateModernSubobjectVisibility())
 		return false;
 
@@ -2098,6 +2271,15 @@ void W3DModelDraw::syncModernVariant()
 	}
 
 	if (!m_modernBinding.Is_Active()) {
+		if (!submitModernVariant())
+			releaseModernVariant();
+		return;
+	}
+
+	const bool animation_changed = m_curState != m_modernAnimationState
+		|| m_whichAnimInCurState != m_modernAnimationIndex;
+	if (animation_changed) {
+		releaseModernVariant();
 		if (!submitModernVariant())
 			releaseModernVariant();
 		return;
@@ -2121,10 +2303,45 @@ void W3DModelDraw::updateModernInstance(const Matrix3D *transformMtx)
 	}
 }
 
+void W3DModelDraw::updateModernAnimation()
+{
+	if (!m_modernBinding.Is_Active() || !m_modernBinding.Animation().Is_Valid()
+		|| m_renderObject == nullptr || m_renderObject->Class_ID() != RenderObjClass::CLASSID_HLOD)
+		return;
+
+	float frame = 0.0f;
+	int frame_count = 0;
+	int mode = RenderObjClass::ANIM_MODE_LOOP;
+	float multiplier = 1.0f;
+	HLodClass *hlod = static_cast<HLodClass *>(m_renderObject);
+	HAnimClass *animation = hlod->Peek_Animation_And_Info(frame, frame_count, mode, multiplier);
+	if (animation == nullptr || frame_count <= 0)
+		return;
+
+	const Graphics::AnimationPlaybackMode modern_mode =
+		Make_Modern_Animation_Mode(static_cast<RenderObjClass::AnimMode>(mode));
+	float time = frame / animation->Get_Frame_Rate();
+	if (modern_mode == Graphics::AnimationPlaybackMode::Once_Backwards
+		|| modern_mode == Graphics::AnimationPlaybackMode::Loop_Backwards)
+		time = static_cast<float>(frame_count - 1) / animation->Get_Frame_Rate() - time;
+	Graphics::StaticMeshRenderer &renderer = Graphics::GetStaticMeshRenderer();
+	if (modern_mode != m_modernAnimationMode
+		&& !m_modernBinding.Set_Animation_Mode(renderer, modern_mode)) {
+		releaseModernVariant();
+		return;
+	}
+	m_modernAnimationMode = modern_mode;
+	if (!m_modernBinding.Set_Animation_Time(renderer, time))
+		releaseModernVariant();
+}
+
 void W3DModelDraw::releaseModernVariant() noexcept
 {
 	Graphics::StaticMeshRenderer &renderer = Graphics::GetStaticMeshRenderer();
 	m_modernBinding.Destroy(renderer);
+	m_modernAnimationState = nullptr;
+	m_modernAnimationIndex = -1;
+	m_modernAnimationMode = Graphics::AnimationPlaybackMode::Loop;
 	if (m_renderObject != nullptr) {
 		const Bool drawable_hidden = getDrawable() != nullptr && getDrawable()->isDrawableEffectivelyHidden();
 		m_renderObject->Set_Hidden(m_modernHidden || drawable_hidden);
@@ -2439,6 +2656,7 @@ void W3DModelDraw::doDrawModule(const Matrix3D* transformMtx)
 		if (!m_modernBinding.Is_Active())
 			syncModernVariant();
 		updateModernInstance(&mtx);
+		updateModernAnimation();
 	}
 
 	handleClientTurretPositioning();

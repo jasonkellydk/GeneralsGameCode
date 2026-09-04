@@ -59,3 +59,42 @@ BOOST_AUTO_TEST_CASE(model_instance_rejects_invalid_resources_and_attachment_han
 	BOOST_CHECK(!instance.Get_Attachment_Transform(skeletons, AttachmentHandle(0, 1), result));
 	BOOST_CHECK(!instance.Get_Bone_Transform(skeletons, BoneHandle(0, 2), result));
 }
+
+BOOST_AUTO_TEST_CASE(model_instance_updates_bones_and_attachments_from_animation)
+{
+	std::array<SkeletonBone, 2> bones{
+		SkeletonBone{Invalid_Bone_Index, Translation(0.0f, 0.0f, 0.0f)},
+		SkeletonBone{0, Translation(0.0f, 0.0f, 0.0f)}
+	};
+	std::array<SkeletonAttachment, 1> attachments{
+		SkeletonAttachment{BoneHandle(1, 1), Translation(1.0f, 0.0f, 0.0f)}
+	};
+	SkeletonPool skeletons;
+	const SkeletonHandle skeleton = Create_Skeleton(skeletons, {bones, attachments});
+	BOOST_REQUIRE(skeleton.Is_Valid());
+
+	std::array<RenderTransform, 4> frames{
+		Translation(0.0f, 0.0f, 0.0f), Translation(0.0f, 0.0f, 0.0f),
+		Translation(0.0f, 0.0f, 0.0f), Translation(4.0f, 0.0f, 0.0f)
+	};
+	AnimationClipPool animations;
+	const AnimationClipHandle animation = Create_Animation_Clip(animations, {2, 2, 1.0f, frames});
+	BOOST_REQUIRE(animation.Is_Valid());
+
+	ModelInstance instance;
+	instance.skeleton = skeleton;
+	instance.transform = Translation(10.0f, 0.0f, 0.0f);
+	BOOST_REQUIRE(instance.Set_Animation(skeletons, animations, animation, AnimationPlaybackMode::Once, 0.5f));
+
+	RenderTransform bone_transform;
+	BOOST_REQUIRE(instance.Get_Bone_Transform(skeletons, BoneHandle(1, 1), bone_transform));
+	BOOST_CHECK_CLOSE(bone_transform.matrix[3], 12.0f, 0.001);
+
+	RenderTransform attachment_transform;
+	BOOST_REQUIRE(instance.Get_Attachment_Transform(skeletons, AttachmentHandle(0, 1), attachment_transform));
+	BOOST_CHECK_CLOSE(attachment_transform.matrix[3], 13.0f, 0.001);
+
+	BOOST_REQUIRE(instance.Advance_Animation(skeletons, animations, 1.0f));
+	BOOST_REQUIRE(instance.Get_Bone_Transform(skeletons, BoneHandle(1, 1), bone_transform));
+	BOOST_CHECK_CLOSE(bone_transform.matrix[3], 14.0f, 0.001);
+}

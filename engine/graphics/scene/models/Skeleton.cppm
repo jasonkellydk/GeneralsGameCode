@@ -2,6 +2,7 @@ module;
 
 #include <cstddef>
 #include <cstdint>
+#include <algorithm>
 #include <limits>
 #include <span>
 #include <type_traits>
@@ -163,6 +164,22 @@ public:
 		if (!Is_Valid_Bone(bone))
 			return false;
 		transform = m_world_rest_transforms[bone.Get_Index()];
+		return true;
+	}
+
+	bool Evaluate_Pose(std::span<const RenderTransform> local_transforms,
+		std::span<RenderTransform> world_transforms) const noexcept
+	{
+		if (!Is_Valid() || local_transforms.size() != m_bones.size()
+			|| world_transforms.size() != m_bones.size())
+			return false;
+
+		for (BoneIndex index = 0; index < m_bones.size(); ++index) {
+			const BoneIndex parent = m_bones[index].parent;
+			world_transforms[index] = parent == Invalid_Bone_Index
+				? local_transforms[index]
+				: Multiply_Transform(world_transforms[parent], local_transforms[index]);
+		}
 		return true;
 	}
 

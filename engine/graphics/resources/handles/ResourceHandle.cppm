@@ -152,6 +152,10 @@ export struct AttachmentHandleTag
 {
 };
 
+export struct AnimationClipHandleTag
+{
+};
+
 export struct ResourceIndexTag
 {
 };
@@ -170,6 +174,7 @@ export using BeamHandle = ResourceHandle<BeamHandleTag>;
 export using SkeletonHandle = ResourceHandle<SkeletonHandleTag>;
 export using BoneHandle = ResourceHandle<BoneHandleTag>;
 export using AttachmentHandle = ResourceHandle<AttachmentHandleTag>;
+export using AnimationClipHandle = ResourceHandle<AnimationClipHandleTag>;
 export using ResourceIndex = ResourceHandle<ResourceIndexTag>;
 
 }

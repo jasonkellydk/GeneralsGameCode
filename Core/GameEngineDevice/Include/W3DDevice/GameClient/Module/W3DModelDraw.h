@@ -512,6 +512,9 @@ private:
 	Int														m_animationMode;
 
 	Graphics::StaticMeshBinding				m_modernBinding;
+	const ModelConditionInfo*						m_modernAnimationState;
+	Int													m_modernAnimationIndex;
+	Graphics::AnimationPlaybackMode			m_modernAnimationMode;
 	Bool													m_modernHidden;
 
 	bool isModernStaticOpaqueState() const noexcept;
@@ -521,6 +524,7 @@ private:
 	bool submitModernVariant();
 	void syncModernVariant();
 	void updateModernInstance(const Matrix3D *transformMtx);
+	void updateModernAnimation();
 	void releaseModernVariant() noexcept;
 
 	void adjustAnimation(const ModelConditionInfo* prevState, Real prevAnimFraction);

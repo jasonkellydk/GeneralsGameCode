@@ -41,6 +41,7 @@ target_sources(generals_graphics
             scene/models/ModelVisibility.cppm
             scene/models/Skeleton.cppm
             scene/models/ModelInstance.cppm
+            scene/models/Animation.cppm
             scene/transparency/Transparency.cppm
             scene/views/View.cppm
             scene/visibility/Visibility.cppm
@@ -330,6 +331,11 @@ if(RTS_BUILD_GRAPHICS_TESTS)
     add_graphics_test(
         generals_graphics_model_instance_test
         scene/models/ModelInstance.test.cppm
+    )
+
+    add_graphics_test(
+        generals_graphics_animation_test
+        scene/models/Animation.test.cppm
     )
 
     add_graphics_test(
