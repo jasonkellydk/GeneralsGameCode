@@ -1,10 +1,12 @@
 #include <boost/test/unit_test.hpp>
 
 #include <cstdint>
+#include <stdexcept>
+#include <string_view>
 
 import engine.ecs.core.world;
 
-namespace
+namespace world_test
 {
 
 struct Position
@@ -24,21 +26,66 @@ struct Marker
 	std::uint64_t value{0};
 };
 
-} // namespace
+} // namespace world_test
+
+namespace ecs
+{
+
+template<>
+struct ComponentTraits<world_test::Position>
+{
+	static constexpr std::string_view StableName = "tests.world.position";
+	static constexpr std::uint32_t Version = 1;
+	static constexpr PersistencePolicy Persistence = PersistencePolicy::Serializable;
+};
+
+template<>
+struct ComponentTraits<world_test::Velocity>
+{
+	static constexpr std::string_view StableName = "tests.world.velocity";
+	static constexpr std::uint32_t Version = 1;
+	static constexpr PersistencePolicy Persistence = PersistencePolicy::Serializable;
+};
+
+template<>
+struct ComponentTraits<world_test::Marker>
+{
+	static constexpr std::string_view StableName = "tests.world.marker";
+	static constexpr std::uint32_t Version = 1;
+	static constexpr PersistencePolicy Persistence = PersistencePolicy::Transient;
+};
+
+} // namespace ecs
 
 BOOST_AUTO_TEST_SUITE(ecs_world)
+
+BOOST_AUTO_TEST_CASE(component_entity_creation_requires_explicit_finalization)
+{
+	ecs::World world;
+	world.RegisterComponent<world_test::Position>();
+
+	BOOST_CHECK_THROW(world.Create<world_test::Position>(), std::logic_error);
+	BOOST_TEST(!world.ComponentsFinalized());
+	BOOST_TEST(world.ArchetypeCount() == 0);
+
+	world.FinalizeComponents();
+	const ecs::Entity entity = world.Create<world_test::Position>();
+	BOOST_TEST(world.IsAlive(entity));
+}
 
 BOOST_AUTO_TEST_CASE(stale_handles_and_reuse)
 {
 	ecs::World world;
-	const ecs::Entity first = world.Create<Position>();
+	world.RegisterComponent<world_test::Position>();
+	world.FinalizeComponents();
+	const ecs::Entity first = world.Create<world_test::Position>();
 
 	BOOST_TEST(world.IsAlive(first));
 	BOOST_TEST(world.Destroy(first));
 	BOOST_TEST(!world.IsAlive(first));
 	BOOST_TEST(!world.Destroy(first));
 
-	const ecs::Entity replacement = world.Create<Position>();
+	const ecs::Entity replacement = world.Create<world_test::Position>();
 	BOOST_TEST(replacement.index == first.index);
 	BOOST_TEST(replacement.generation != first.generation);
 	BOOST_TEST(world.IsAlive(replacement));
@@ -48,30 +95,34 @@ BOOST_AUTO_TEST_CASE(stale_handles_and_reuse)
 BOOST_AUTO_TEST_CASE(archetype_transitions_preserve_components)
 {
 	ecs::World world;
-	const ecs::Entity first = world.Create<Position, Velocity>();
-	const ecs::Entity second = world.Create<Position, Velocity>();
-	world.Get<Position>(first)->x = 10;
-	world.Get<Position>(first)->y = 11;
-	world.Get<Velocity>(first)->x = 12;
-	world.Get<Position>(second)->x = 20;
-	world.Get<Position>(second)->y = 21;
+	world.RegisterComponent<world_test::Position>();
+	world.RegisterComponent<world_test::Velocity>();
+	world.RegisterComponent<world_test::Marker>();
+	world.FinalizeComponents();
+	const ecs::Entity first = world.Create<world_test::Position, world_test::Velocity>();
+	const ecs::Entity second = world.Create<world_test::Position, world_test::Velocity>();
+	world.Get<world_test::Position>(first)->x = 10;
+	world.Get<world_test::Position>(first)->y = 11;
+	world.Get<world_test::Velocity>(first)->x = 12;
+	world.Get<world_test::Position>(second)->x = 20;
+	world.Get<world_test::Position>(second)->y = 21;
 
-	BOOST_TEST(world.Add<Marker>(first));
-	BOOST_TEST(world.Has<Marker>(first));
-	BOOST_TEST(world.Get<Position>(first)->x == 10);
-	BOOST_TEST(world.Get<Position>(first)->y == 11);
-	BOOST_TEST(world.Get<Velocity>(first)->x == 12);
-	BOOST_TEST(world.Get<Position>(second)->x == 20);
-	BOOST_TEST(world.Get<Position>(second)->y == 21);
-	BOOST_TEST(!world.Add<Marker>(first));
+	BOOST_TEST(world.Add<world_test::Marker>(first));
+	BOOST_TEST(world.Has<world_test::Marker>(first));
+	BOOST_TEST(world.Get<world_test::Position>(first)->x == 10);
+	BOOST_TEST(world.Get<world_test::Position>(first)->y == 11);
+	BOOST_TEST(world.Get<world_test::Velocity>(first)->x == 12);
+	BOOST_TEST(world.Get<world_test::Position>(second)->x == 20);
+	BOOST_TEST(world.Get<world_test::Position>(second)->y == 21);
+	BOOST_TEST(!world.Add<world_test::Marker>(first));
 
-	BOOST_TEST(world.Remove<Velocity>(first));
-	BOOST_TEST(!world.Has<Velocity>(first));
-	BOOST_TEST(world.Get<Position>(first)->x == 10);
-	BOOST_TEST(world.Get<Marker>(first) != nullptr);
-	BOOST_TEST(!world.Remove<Velocity>(first));
+	BOOST_TEST(world.Remove<world_test::Velocity>(first));
+	BOOST_TEST(!world.Has<world_test::Velocity>(first));
+	BOOST_TEST(world.Get<world_test::Position>(first)->x == 10);
+	BOOST_TEST(world.Get<world_test::Marker>(first) != nullptr);
+	BOOST_TEST(!world.Remove<world_test::Velocity>(first));
 	const ecs::Entity invalid{999, 1};
-	BOOST_TEST(!world.Add<Marker>(invalid));
+	BOOST_TEST(!world.Add<world_test::Marker>(invalid));
 }
 
 BOOST_AUTO_TEST_SUITE_END()

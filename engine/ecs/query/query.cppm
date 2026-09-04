@@ -7,6 +7,7 @@ module;
 #include <limits>
 #include <memory>
 #include <span>
+#include <stdexcept>
 #include <tuple>
 #include <type_traits>
 #include <utility>
@@ -169,8 +170,9 @@ public:
 
 	explicit Query(World &world) :
 		m_world(&world),
-		m_components{world.RegisterComponent<typename Terms::ComponentType>()...}
+		m_components{}
 	{
+		ResolveComponents();
 	}
 
 	Query(const Query &) = delete;
@@ -179,6 +181,7 @@ public:
 	template<typename Function>
 	void ForEachChunk(Function &&function)
 	{
+		ResolveComponents();
 		if (m_cache.Refresh(*m_world, [this](const Archetype &archetype) {
 			return Matches(archetype);
 		}))
@@ -210,6 +213,19 @@ public:
 	std::uint64_t CachedRevision() const noexcept { return m_cache.Revision(); }
 
 private:
+	void ResolveComponents()
+	{
+		if (!m_world->ComponentsFinalized())
+			throw std::logic_error("ECS component registry must be finalized before constructing or executing a query");
+
+		m_components = {m_world->Components().TryGet<typename Terms::ComponentType>()...};
+		for (const ComponentId component : m_components)
+		{
+			if (component == InvalidComponentId)
+				throw std::logic_error("ECS query component was not registered before finalization");
+		}
+	}
+
 	template<typename Term>
 	bool MatchesTerm(const Archetype &archetype, ComponentId component) const noexcept
 	{

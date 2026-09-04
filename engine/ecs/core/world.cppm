@@ -34,9 +34,11 @@ public:
 	template<typename... Components>
 	Entity Create()
 	{
+		RequireComponentsFinalized();
+
 		Signature signature;
 		signature.reserve(sizeof...(Components));
-		(signature.push_back(m_components.Register<Components>()), ...);
+		(signature.push_back(GetRegisteredComponent<Components>()), ...);
 		CanonicalizeSignature(signature);
 
 		const Entity entity = AllocateEntity();
@@ -60,25 +62,37 @@ public:
 		return m_components.Register<T>();
 	}
 
+	void FinalizeComponents()
+	{
+		m_components.Finalize();
+	}
+
+	bool ComponentsFinalized() const noexcept
+	{
+		return m_components.IsFrozen();
+	}
+
 	bool IsAlive(Entity entity) const noexcept;
 	bool Destroy(Entity entity);
 
 	template<typename T>
-	bool Has(Entity entity) const noexcept
+	bool Has(Entity entity) const
 	{
+		RequireComponentsFinalized();
 		if (!IsAlive(entity))
 			return false;
-		const ComponentId component = m_components.TryGet<T>();
-		return component != InvalidComponentId && m_records[entity.index].location.archetype->Has(component);
+		const ComponentId component = GetRegisteredComponent<T>();
+		return m_records[entity.index].location.archetype->Has(component);
 	}
 
 	template<typename T>
 	bool Add(Entity entity)
 	{
+		RequireComponentsFinalized();
 		if (!IsAlive(entity))
 			return false;
 
-		const ComponentId component = m_components.Register<T>();
+		const ComponentId component = GetRegisteredComponent<T>();
 		EntityRecord &record = m_records[entity.index];
 		if (record.location.archetype->Has(component))
 			return false;
@@ -93,12 +107,11 @@ public:
 	template<typename T>
 	bool Remove(Entity entity)
 	{
+		RequireComponentsFinalized();
 		if (!IsAlive(entity))
 			return false;
 
-		const ComponentId component = m_components.TryGet<T>();
-		if (component == InvalidComponentId)
-			return false;
+		const ComponentId component = GetRegisteredComponent<T>();
 
 		EntityRecord &record = m_records[entity.index];
 		if (!record.location.archetype->Has(component))
@@ -111,10 +124,11 @@ public:
 	}
 
 	template<typename T>
-	T *Get(Entity entity) noexcept
+	T *Get(Entity entity)
 	{
-		const ComponentId component = m_components.TryGet<T>();
-		if (component == InvalidComponentId || !IsAlive(entity))
+		RequireComponentsFinalized();
+		const ComponentId component = GetRegisteredComponent<T>();
+		if (!IsAlive(entity))
 			return nullptr;
 
 		EntityRecord &record = m_records[entity.index];
@@ -125,10 +139,11 @@ public:
 	}
 
 	template<typename T>
-	const T *Get(Entity entity) const noexcept
+	const T *Get(Entity entity) const
 	{
-		const ComponentId component = m_components.TryGet<T>();
-		if (component == InvalidComponentId || !IsAlive(entity))
+		RequireComponentsFinalized();
+		const ComponentId component = GetRegisteredComponent<T>();
+		if (!IsAlive(entity))
 			return nullptr;
 
 		const EntityRecord &record = m_records[entity.index];
@@ -163,6 +178,17 @@ private:
 	Entity AllocateEntity();
 	void ReleaseUnconstructedEntity(Entity entity) noexcept;
 	void SetLocation(Entity entity, EntityLocation location) noexcept;
+	void RequireComponentsFinalized() const;
+
+	template<typename T>
+	ComponentId GetRegisteredComponent() const
+	{
+		const ComponentId component = m_components.TryGet<T>();
+		if (component == InvalidComponentId)
+			throw std::logic_error("ECS component was not registered before finalization");
+		return component;
+	}
+
 	Archetype &GetOrCreateArchetype(const Signature &signature);
 	void MoveEntity(Entity entity, const Signature &targetSignature);
 
@@ -182,7 +208,6 @@ namespace ecs
 World::World(WorldConfig config) :
 	m_config(config)
 {
-	GetOrCreateArchetype(Signature{});
 }
 
 Entity World::AllocateEntity()
@@ -228,8 +253,15 @@ void World::SetLocation(Entity entity, EntityLocation location) noexcept
 	record.location = location;
 }
 
+void World::RequireComponentsFinalized() const
+{
+	if (!m_components.IsFrozen())
+		throw std::logic_error("ECS component registry must be finalized before ECS state operations");
+}
+
 Archetype &World::GetOrCreateArchetype(const Signature &signature)
 {
+	RequireComponentsFinalized();
 	return m_archetypes.GetOrCreate(signature, m_components, m_config.chunkTargetBytes);
 }
 

@@ -7,6 +7,7 @@ module;
 #include <limits>
 #include <map>
 #include <memory>
+#include <stdexcept>
 #include <utility>
 #include <vector>
 
@@ -138,6 +139,9 @@ Archetype &ArchetypeRegistry::GetOrCreate(const Signature &signature,
 	std::size_t chunkTargetBytes,
 	bool *created)
 {
+	if (!components.IsFrozen())
+		throw std::logic_error("ECS component registry must be finalized before creating archetypes");
+
 	Signature canonicalSignature = signature;
 	CanonicalizeSignature(canonicalSignature);
 

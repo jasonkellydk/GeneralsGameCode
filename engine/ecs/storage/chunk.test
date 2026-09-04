@@ -1,11 +1,12 @@
 #include <boost/test/unit_test.hpp>
 
 #include <cstdint>
+#include <string_view>
 #include <vector>
 
 import engine.ecs.storage.chunk;
 
-namespace
+namespace chunk_test
 {
 
 struct ChunkPosition
@@ -13,14 +14,29 @@ struct ChunkPosition
 	std::int32_t value{0};
 };
 
-} // namespace
+} // namespace chunk_test
+
+namespace ecs
+{
+
+template<>
+struct ComponentTraits<chunk_test::ChunkPosition>
+{
+	static constexpr std::string_view StableName = "tests.chunk.position";
+	static constexpr std::uint32_t Version = 1;
+	static constexpr PersistencePolicy Persistence = PersistencePolicy::Transient;
+};
+
+} // namespace ecs
 
 BOOST_AUTO_TEST_SUITE(ecs_chunk)
 
 BOOST_AUTO_TEST_CASE(components_are_contiguous_and_swap_remove_is_dense)
 {
 	ecs::ComponentRegistry registry;
-	const ecs::ComponentId positionId = registry.Register<ChunkPosition>();
+	registry.Register<chunk_test::ChunkPosition>();
+	registry.Finalize();
+	const ecs::ComponentId positionId = registry.TryGet<chunk_test::ChunkPosition>();
 	const ecs::ComponentInfo &positionInfo = registry.Get(positionId);
 	const std::vector<const ecs::ComponentInfo *> components{&positionInfo};
 	const ecs::ChunkLayout layout = ecs::ChunkLayout::Build(components, 256);
@@ -30,20 +46,20 @@ BOOST_AUTO_TEST_CASE(components_are_contiguous_and_swap_remove_is_dense)
 	const ecs::Entity second{2, 1};
 	chunk.AddEntity(first);
 	chunk.AddEntity(second);
-	static_cast<ChunkPosition *>(chunk.ComponentData(0))[0].value = 42;
-	static_cast<ChunkPosition *>(chunk.ComponentData(0))[1].value = 84;
+	static_cast<chunk_test::ChunkPosition *>(chunk.ComponentData(0))[0].value = 42;
+	static_cast<chunk_test::ChunkPosition *>(chunk.ComponentData(0))[1].value = 84;
 
 	BOOST_TEST(chunk.Size() == 2);
-	BOOST_TEST(reinterpret_cast<std::uintptr_t>(chunk.ComponentData(0)) % alignof(ChunkPosition) == 0);
+	BOOST_TEST(reinterpret_cast<std::uintptr_t>(chunk.ComponentData(0)) % alignof(chunk_test::ChunkPosition) == 0);
 	BOOST_CHECK(chunk.Entities()[0] == first);
 	BOOST_CHECK(chunk.Entities()[1] == second);
-	BOOST_TEST(static_cast<ChunkPosition *>(chunk.ComponentData(0))[1].value == 84);
+	BOOST_TEST(static_cast<chunk_test::ChunkPosition *>(chunk.ComponentData(0))[1].value == 84);
 
 	const ecs::Entity moved = chunk.RemoveSwap(0);
 	BOOST_CHECK(moved == second);
 	BOOST_TEST(chunk.Size() == 1);
 	BOOST_CHECK(chunk.Entities()[0] == second);
-	BOOST_TEST(static_cast<ChunkPosition *>(chunk.ComponentData(0))[0].value == 84);
+	BOOST_TEST(static_cast<chunk_test::ChunkPosition *>(chunk.ComponentData(0))[0].value == 84);
 }
 
 BOOST_AUTO_TEST_SUITE_END()

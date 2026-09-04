@@ -1,10 +1,13 @@
 #include <boost/test/unit_test.hpp>
 
 #include <cstddef>
+#include <cstdint>
+#include <stdexcept>
+#include <string_view>
 
 import engine.ecs.query.query;
 
-namespace
+namespace query_test
 {
 
 struct QueryPosition
@@ -25,27 +28,88 @@ struct QueryExcludedTag
 {
 };
 
-} // namespace
+} // namespace query_test
+
+namespace ecs
+{
+
+template<>
+struct ComponentTraits<query_test::QueryPosition>
+{
+	static constexpr std::string_view StableName = "tests.query.position";
+	static constexpr std::uint32_t Version = 1;
+	static constexpr PersistencePolicy Persistence = PersistencePolicy::Serializable;
+};
+
+template<>
+struct ComponentTraits<query_test::QueryVelocity>
+{
+	static constexpr std::string_view StableName = "tests.query.velocity";
+	static constexpr std::uint32_t Version = 1;
+	static constexpr PersistencePolicy Persistence = PersistencePolicy::Serializable;
+};
+
+template<>
+struct ComponentTraits<query_test::QueryTag>
+{
+	static constexpr std::string_view StableName = "tests.query.tag";
+	static constexpr std::uint32_t Version = 1;
+	static constexpr PersistencePolicy Persistence = PersistencePolicy::Transient;
+};
+
+template<>
+struct ComponentTraits<query_test::QueryExcludedTag>
+{
+	static constexpr std::string_view StableName = "tests.query.excluded_tag";
+	static constexpr std::uint32_t Version = 1;
+	static constexpr PersistencePolicy Persistence = PersistencePolicy::Transient;
+};
+
+} // namespace ecs
 
 BOOST_AUTO_TEST_SUITE(ecs_query)
+
+BOOST_AUTO_TEST_CASE(query_requires_explicit_finalization)
+{
+	ecs::World world;
+	world.RegisterComponent<query_test::QueryPosition>();
+
+	BOOST_CHECK_THROW((ecs::Query<ecs::Read<query_test::QueryPosition>>(world)), std::logic_error);
+	BOOST_TEST(!world.ComponentsFinalized());
+
+	world.FinalizeComponents();
+	const ecs::Entity entity = world.Create<query_test::QueryPosition>();
+	ecs::Query<ecs::Read<query_test::QueryPosition>> query(world);
+	std::size_t visited = 0;
+	query.ForEachChunk([&](auto chunk) { visited += chunk.Count(); });
+	BOOST_TEST(visited == 1);
+	BOOST_TEST(world.IsAlive(entity));
+}
 
 BOOST_AUTO_TEST_CASE(typed_chunk_iteration_and_filters)
 {
 	ecs::World world{ecs::WorldConfig{256}};
-	const ecs::Entity first = world.Create<QueryPosition, QueryVelocity>();
-	const ecs::Entity second = world.Create<QueryPosition>();
-	world.Get<QueryPosition>(first)->value = 10;
-	world.Get<QueryVelocity>(first)->value = 20;
-	world.Get<QueryPosition>(second)->value = 30;
+	world.RegisterComponent<query_test::QueryPosition>();
+	world.RegisterComponent<query_test::QueryVelocity>();
+	world.RegisterComponent<query_test::QueryTag>();
+	world.RegisterComponent<query_test::QueryExcludedTag>();
+	world.FinalizeComponents();
+	const ecs::Entity first = world.Create<query_test::QueryPosition, query_test::QueryVelocity>();
+	const ecs::Entity second = world.Create<query_test::QueryPosition>();
+	world.Get<query_test::QueryPosition>(first)->value = 10;
+	world.Get<query_test::QueryVelocity>(first)->value = 20;
+	world.Get<query_test::QueryPosition>(second)->value = 30;
 
-	ecs::Query<ecs::Write<QueryPosition>, ecs::Read<QueryVelocity>, ecs::Optional<QueryTag>, ecs::Exclude<QueryExcludedTag>> query(world);
+	ecs::Query<ecs::Write<query_test::QueryPosition>, ecs::Read<query_test::QueryVelocity>,
+		ecs::Optional<query_test::QueryTag>, ecs::Exclude<query_test::QueryExcludedTag>> query(world);
 	std::size_t entities = 0;
 	std::size_t chunks = 0;
-	query.ForEachChunk([&](ecs::Query<ecs::Write<QueryPosition>, ecs::Read<QueryVelocity>, ecs::Optional<QueryTag>, ecs::Exclude<QueryExcludedTag>>::Chunk chunk) {
+	query.ForEachChunk([&](ecs::Query<ecs::Write<query_test::QueryPosition>, ecs::Read<query_test::QueryVelocity>,
+		ecs::Optional<query_test::QueryTag>, ecs::Exclude<query_test::QueryExcludedTag>>::Chunk chunk) {
 		++chunks;
-		auto positions = chunk.Get<QueryPosition>();
-		auto velocities = chunk.Get<QueryVelocity>();
-		auto optionalTags = chunk.Get<QueryTag>();
+		auto positions = chunk.Get<query_test::QueryPosition>();
+		auto velocities = chunk.Get<query_test::QueryVelocity>();
+		auto optionalTags = chunk.Get<query_test::QueryTag>();
 		BOOST_TEST(positions.size() == chunk.Count());
 		BOOST_TEST(velocities.size() == chunk.Count());
 		BOOST_TEST(optionalTags.empty());
@@ -58,8 +122,8 @@ BOOST_AUTO_TEST_CASE(typed_chunk_iteration_and_filters)
 
 	BOOST_TEST(chunks == 1);
 	BOOST_TEST(entities == 1);
-	BOOST_TEST(world.Get<QueryPosition>(first)->value == 11);
-	BOOST_TEST(world.Get<QueryPosition>(second)->value == 30);
+	BOOST_TEST(world.Get<query_test::QueryPosition>(first)->value == 11);
+	BOOST_TEST(world.Get<query_test::QueryPosition>(second)->value == 30);
 
 	const auto accesses = query.Accesses();
 	BOOST_TEST(static_cast<int>(accesses[0].mode) == static_cast<int>(ecs::AccessMode::Write));
@@ -71,11 +135,13 @@ BOOST_AUTO_TEST_CASE(typed_chunk_iteration_and_filters)
 BOOST_AUTO_TEST_CASE(queries_scale_across_many_entities)
 {
 	ecs::World world{ecs::WorldConfig{512}};
+	world.RegisterComponent<query_test::QueryPosition>();
+	world.FinalizeComponents();
 	constexpr std::size_t entityCount = 4096;
 	for (std::size_t i = 0; i < entityCount; ++i)
-		world.Create<QueryPosition>();
+		world.Create<query_test::QueryPosition>();
 
-	ecs::Query<ecs::Read<QueryPosition>> query(world);
+	ecs::Query<ecs::Read<query_test::QueryPosition>> query(world);
 	std::size_t visited = 0;
 	query.ForEachChunk([&](auto chunk) { visited += chunk.Count(); });
 

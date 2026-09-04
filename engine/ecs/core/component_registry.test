@@ -1,8 +1,12 @@
 #include <boost/test/unit_test.hpp>
 
+#include <cstdint>
+#include <stdexcept>
+#include <string_view>
+
 import engine.ecs.core.component_registry;
 
-namespace
+namespace component_registry_test
 {
 
 struct Position
@@ -15,23 +19,211 @@ struct Velocity
 	int value{0};
 };
 
-} // namespace
+struct OrderA
+{
+};
+
+struct OrderB
+{
+};
+
+struct OrderC
+{
+};
+
+struct VersionOne
+{
+};
+
+struct VersionTwo
+{
+};
+
+struct DuplicateA
+{
+};
+
+struct DuplicateB
+{
+};
+
+struct LateComponent
+{
+};
+
+} // namespace component_registry_test
+
+namespace ecs
+{
+
+template<>
+struct ComponentTraits<component_registry_test::Position>
+{
+	static constexpr std::string_view StableName = "tests.component.position";
+	static constexpr std::uint32_t Version = 1;
+	static constexpr PersistencePolicy Persistence = PersistencePolicy::Serializable;
+};
+
+template<>
+struct ComponentTraits<component_registry_test::Velocity>
+{
+	static constexpr std::string_view StableName = "tests.component.velocity";
+	static constexpr std::uint32_t Version = 1;
+	static constexpr PersistencePolicy Persistence = PersistencePolicy::Transient;
+};
+
+template<>
+struct ComponentTraits<component_registry_test::OrderA>
+{
+	static constexpr std::string_view StableName = "tests.order.a";
+	static constexpr std::uint32_t Version = 1;
+	static constexpr PersistencePolicy Persistence = PersistencePolicy::Transient;
+};
+
+template<>
+struct ComponentTraits<component_registry_test::OrderB>
+{
+	static constexpr std::string_view StableName = "tests.order.b";
+	static constexpr std::uint32_t Version = 1;
+	static constexpr PersistencePolicy Persistence = PersistencePolicy::Transient;
+};
+
+template<>
+struct ComponentTraits<component_registry_test::OrderC>
+{
+	static constexpr std::string_view StableName = "tests.order.c";
+	static constexpr std::uint32_t Version = 1;
+	static constexpr PersistencePolicy Persistence = PersistencePolicy::Serializable;
+};
+
+template<>
+struct ComponentTraits<component_registry_test::VersionOne>
+{
+	static constexpr std::string_view StableName = "tests.versioned";
+	static constexpr std::uint32_t Version = 1;
+	static constexpr PersistencePolicy Persistence = PersistencePolicy::Serializable;
+};
+
+template<>
+struct ComponentTraits<component_registry_test::VersionTwo>
+{
+	static constexpr std::string_view StableName = "tests.versioned";
+	static constexpr std::uint32_t Version = 2;
+	static constexpr PersistencePolicy Persistence = PersistencePolicy::Serializable;
+};
+
+template<>
+struct ComponentTraits<component_registry_test::DuplicateA>
+{
+	static constexpr std::string_view StableName = "tests.duplicate";
+	static constexpr std::uint32_t Version = 1;
+	static constexpr PersistencePolicy Persistence = PersistencePolicy::Transient;
+};
+
+template<>
+struct ComponentTraits<component_registry_test::DuplicateB>
+{
+	static constexpr std::string_view StableName = "tests.duplicate";
+	static constexpr std::uint32_t Version = 1;
+	static constexpr PersistencePolicy Persistence = PersistencePolicy::Transient;
+};
+
+template<>
+struct ComponentTraits<component_registry_test::LateComponent>
+{
+	static constexpr std::string_view StableName = "tests.late";
+	static constexpr std::uint32_t Version = 1;
+	static constexpr PersistencePolicy Persistence = PersistencePolicy::Transient;
+};
+
+} // namespace ecs
 
 BOOST_AUTO_TEST_SUITE(ecs_component_registry)
 
 BOOST_AUTO_TEST_CASE(registers_types_once_with_structural_metadata)
 {
 	ecs::ComponentRegistry registry;
-	const ecs::ComponentId position = registry.Register<Position>();
-	const ecs::ComponentId positionAgain = registry.Register<Position>();
-	const ecs::ComponentId velocity = registry.Register<Velocity>();
+	const ecs::ComponentId positionBeforeFinalize = registry.Register<component_registry_test::Position>();
+	const ecs::ComponentId positionAgainBeforeFinalize = registry.Register<component_registry_test::Position>();
+	const ecs::ComponentId velocityBeforeFinalize = registry.Register<component_registry_test::Velocity>();
 
-	BOOST_TEST(position == positionAgain);
-	BOOST_TEST(position != velocity);
+	BOOST_TEST(positionBeforeFinalize == ecs::InvalidComponentId);
+	BOOST_TEST(positionAgainBeforeFinalize == ecs::InvalidComponentId);
+	BOOST_TEST(velocityBeforeFinalize == ecs::InvalidComponentId);
 	BOOST_TEST(registry.Count() == 2);
-	BOOST_TEST(registry.Get(position).size == sizeof(Position));
-	BOOST_TEST(registry.Get(position).alignment == alignof(Position));
-	BOOST_TEST(registry.TryGet<Velocity>() == velocity);
+	registry.Finalize();
+
+	const ecs::ComponentId position = registry.TryGet<component_registry_test::Position>();
+	const ecs::ComponentId velocity = registry.TryGet<component_registry_test::Velocity>();
+	BOOST_TEST(position != velocity);
+	BOOST_TEST(registry.IsFrozen());
+	BOOST_TEST(registry.SchemaHash() != ecs::UnfinalizedSchemaHash);
+	BOOST_TEST(registry.Get(position).size == sizeof(component_registry_test::Position));
+	BOOST_TEST(registry.Get(position).alignment == alignof(component_registry_test::Position));
+	BOOST_TEST(registry.Get(position).stableKey == ecs::HashComponentKey("tests.component.position"));
+	BOOST_TEST(registry.Get(position).stableName == "tests.component.position");
+	BOOST_TEST(registry.Get(position).version == 1);
+	BOOST_TEST(static_cast<int>(registry.Get(position).persistence) ==
+		static_cast<int>(ecs::PersistencePolicy::Serializable));
+	BOOST_TEST(registry.TryGet<component_registry_test::Velocity>() == velocity);
+}
+
+BOOST_AUTO_TEST_CASE(finalization_assigns_ids_independent_of_registration_order)
+{
+	ecs::ComponentRegistry first;
+	first.Register<component_registry_test::OrderC>();
+	first.Register<component_registry_test::OrderA>();
+	first.Register<component_registry_test::OrderB>();
+	first.Finalize();
+
+	ecs::ComponentRegistry second;
+	second.Register<component_registry_test::OrderB>();
+	second.Register<component_registry_test::OrderC>();
+	second.Register<component_registry_test::OrderA>();
+	second.Finalize();
+
+	BOOST_TEST(first.TryGet<component_registry_test::OrderA>() == second.TryGet<component_registry_test::OrderA>());
+	BOOST_TEST(first.TryGet<component_registry_test::OrderB>() == second.TryGet<component_registry_test::OrderB>());
+	BOOST_TEST(first.TryGet<component_registry_test::OrderC>() == second.TryGet<component_registry_test::OrderC>());
+	BOOST_TEST(first.SchemaHash() == second.SchemaHash());
+	BOOST_TEST(first.Get(0).stableKey < first.Get(1).stableKey);
+	BOOST_TEST(first.Get(1).stableKey < first.Get(2).stableKey);
+	BOOST_TEST(first.Get(first.TryGet<component_registry_test::OrderA>()).stableName == "tests.order.a");
+}
+
+BOOST_AUTO_TEST_CASE(schema_hash_includes_component_version)
+{
+	ecs::ComponentRegistry versionOne;
+	versionOne.Register<component_registry_test::VersionOne>();
+	versionOne.Finalize();
+
+	ecs::ComponentRegistry versionTwo;
+	versionTwo.Register<component_registry_test::VersionTwo>();
+	versionTwo.Finalize();
+
+	BOOST_TEST(versionOne.SchemaHash() != versionTwo.SchemaHash());
+}
+
+BOOST_AUTO_TEST_CASE(duplicate_stable_keys_are_rejected)
+{
+	ecs::ComponentRegistry registry;
+	registry.Register<component_registry_test::DuplicateA>();
+	BOOST_CHECK_THROW(registry.Register<component_registry_test::DuplicateB>(), std::logic_error);
+}
+
+BOOST_AUTO_TEST_CASE(registration_is_frozen_after_finalization)
+{
+	ecs::ComponentRegistry registry;
+	registry.Register<component_registry_test::Position>();
+	registry.Finalize();
+	const ecs::ComponentId position = registry.TryGet<component_registry_test::Position>();
+	const ecs::ComponentSchemaHash schemaHash = registry.SchemaHash();
+	registry.Finalize();
+
+	BOOST_CHECK_THROW(registry.Register<component_registry_test::LateComponent>(), std::logic_error);
+	BOOST_TEST(registry.Register<component_registry_test::Position>() == position);
+	BOOST_TEST(registry.TryGet<component_registry_test::Position>() == position);
+	BOOST_TEST(registry.SchemaHash() == schemaHash);
 }
 
 BOOST_AUTO_TEST_SUITE_END()
