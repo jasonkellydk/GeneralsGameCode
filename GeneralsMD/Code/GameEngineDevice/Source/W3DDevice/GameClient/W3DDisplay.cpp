@@ -46,6 +46,7 @@ static void drawFramerateBar();
 import Graphics.Backends.DX11.Coexistence;
 import Graphics.Scene.Beams;
 import Graphics.Scene.Lighting.Renderer;
+import Graphics.Scene.StaticMeshes;
 import Graphics.Scene.Particles.Renderer;
 import Graphics.Scene.Screen.Distortion;
 
@@ -161,6 +162,7 @@ extern "C" void Graphics_DX11_Shutdown_Shared_Frame() noexcept;
 static bool modernRendererAvailable = false;
 static Graphics::BeamView modernBeamView;
 static Graphics::View modernParticleView;
+static Graphics::View modernMeshView;
 #ifdef SAMPLE_DYNAMIC_LIGHT
 static W3DDynamicLight * theDynamicLight = nullptr;
 static Real theLightXOffset = 0.1f;
@@ -170,6 +172,11 @@ static Int theFlashCount = 0;
 
 static bool initializeModernBeamRenderer(Graphics::Device &device)
 {
+	Graphics::StaticMeshRenderer &mesh_renderer = Graphics::GetStaticMeshRenderer();
+	if (!mesh_renderer.Is_Initialized()
+		&& !mesh_renderer.Initialize(device, std::filesystem::path("GraphicsShaders"), 4096, 16384))
+		return false;
+
 	Graphics::BeamRenderer &beam_renderer = Graphics::GetBeamRenderer();
 	if (!beam_renderer.Is_Initialized()
 		&& !beam_renderer.Initialize(device, std::filesystem::path("GraphicsShaders"), 4096))
@@ -190,6 +197,9 @@ static bool initializeModernBeamRenderer(Graphics::Device &device)
 static bool executeModernBeamRenderer(Graphics::Device &, Graphics::CommandList &commands, const Graphics::FrameTargets &targets) noexcept
 {
 	if (!Graphics::GetLightRenderer().Sync())
+		return false;
+
+	if (!Graphics::GetStaticMeshRenderer().Render(commands, targets, false))
 		return false;
 
 	if (!Graphics::SetBeamView(modernBeamView))
@@ -244,6 +254,7 @@ static bool initializeModernRenderer()
 
 static void shutdownModernRenderer() noexcept
 {
+	Graphics::GetStaticMeshRenderer().Shutdown();
 	Graphics::GetLightRenderer().Shutdown();
 	Graphics::GetScreenDistortionRenderer().Shutdown();
 	Graphics::GetParticleRenderer().Shutdown();
@@ -312,6 +323,8 @@ static void updateModernView(CameraClass *camera)
 		{camera->Get_Position().X, camera->Get_Position().Y, camera->Get_Position().Z},
 		{0.0f, 0.0f, static_cast<float>(TheDisplay->getWidth()), static_cast<float>(TheDisplay->getHeight()), 0.0f, 1.0f});
 	Graphics::GetParticleRenderer().Set_View(modernParticleView);
+	modernMeshView = modernParticleView;
+	Graphics::GetStaticMeshRenderer().Set_View(modernMeshView);
 	Graphics::GetScreenDistortionRenderer().Set_View(modernParticleView);
 	if (TheParticleSystemManager != nullptr)
 		static_cast<W3DParticleSystemManager *>(TheParticleSystemManager)->Set_Modern_Particle_View(modernParticleView);

@@ -37,6 +37,13 @@ struct GPULightData
 
 StructuredBuffer<GPULightData> Lights : register(t126);
 
+struct GPUViewData
+{
+    row_major float4x4 view_projection;
+};
+
+StructuredBuffer<GPUViewData> Views : register(t125);
+
 cbuffer MaterialParameters : register(b0)
 {
     float4 Values[4];
@@ -46,7 +53,7 @@ BasicOpaqueVertexOutput basic_opaque_vertex(BasicOpaqueVertexInput input, uint i
 {
     BasicOpaqueVertexOutput output;
     const float4 world_position = mul(float4(input.position, 1.0), Instances[instance_id].transform);
-    output.position = world_position;
+    output.position = mul(world_position, Views[0].view_projection);
     output.color = input.color;
     output.world_position = world_position.xyz;
     return output;

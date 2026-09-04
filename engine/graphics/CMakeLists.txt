@@ -24,6 +24,7 @@ target_sources(generals_graphics
             shaders/Pipeline.cppm
             shaders/ShaderLibrary.cppm
             scene/RenderScene.cppm
+            scene/meshes/StaticMeshRenderer.cppm
             scene/lighting/Lighting.cppm
             scene/lighting/LightRenderer.cppm
             scene/environment/Environment.cppm
@@ -312,6 +313,28 @@ if(RTS_BUILD_GRAPHICS_TESTS)
         generals_graphics_render_scene_test
         scene/RenderScene.test.cppm
     )
+
+    add_graphics_test(
+        generals_graphics_static_mesh_renderer_test
+        scene/meshes/StaticMeshRenderer.test.cppm
+    )
+    if(WIN32)
+        target_sources(generals_graphics_static_mesh_renderer_test
+            PRIVATE
+                FILE_SET CXX_MODULES
+                BASE_DIRS "${CMAKE_CURRENT_SOURCE_DIR}"
+                FILES
+                    tests/visual_regression/VisualRegression.cppm
+        )
+        target_compile_definitions(generals_graphics_static_mesh_renderer_test PRIVATE
+            GRAPHICS_STATIC_MESH_REFERENCE_DIRECTORY="${CMAKE_CURRENT_SOURCE_DIR}/scene/meshes/__snapshots__"
+            GRAPHICS_STATIC_MESH_FAILURE_DIRECTORY="${CMAKE_CURRENT_BINARY_DIR}/static_mesh_renderer_failures"
+            GRAPHICS_STATIC_MESH_SHADER_DIRECTORY="${GRAPHICS_SHADER_ASSET_DIRECTORY}"
+        )
+        if(TARGET generals_graphics_shaders)
+            add_dependencies(generals_graphics_static_mesh_renderer_test generals_graphics_shaders)
+        endif()
+    endif()
 
     add_graphics_test(
         generals_graphics_view_test

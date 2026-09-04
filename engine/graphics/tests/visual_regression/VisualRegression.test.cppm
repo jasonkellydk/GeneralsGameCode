@@ -113,6 +113,8 @@ struct VisualScene final
 	BindlessResourceTable bindless;
 	BeamRenderer beam_renderer;
 	LightRenderer light_renderer;
+	RHIBufferHandle auxiliary_light_buffer{};
+	RHIBufferHandle view_buffer{};
 
 	void Release(Device &device) noexcept
 	{
@@ -122,6 +124,12 @@ struct VisualScene final
 		if (instance_buffer.Is_Valid())
 			device.Destroy_Buffer(instance_buffer);
 		instance_buffer = {};
+		if (auxiliary_light_buffer.Is_Valid())
+			device.Destroy_Buffer(auxiliary_light_buffer);
+		auxiliary_light_buffer = {};
+		if (view_buffer.Is_Valid())
+			device.Destroy_Buffer(view_buffer);
+		view_buffer = {};
 		residency.reset();
 		if (shadow_texture.Is_Valid())
 			device.Destroy_Texture(shadow_texture);
@@ -379,6 +387,18 @@ struct VisualScene final
 		if (!instance_buffer.Is_Valid() || !bindless.Register_Buffer(instance_buffer).Is_Valid())
 			return false;
 
+		const std::array<float, 16> view_data = Matrix4x4::Identity().values;
+		const GPULightData empty_light{};
+		auxiliary_light_buffer = device.Create_Buffer_Initialized(
+			{static_cast<std::uint32_t>(sizeof(empty_light)), RHIBufferUsage::Storage, sizeof(empty_light)},
+			std::as_bytes(std::span<const GPULightData>(&empty_light, 1)));
+		view_buffer = device.Create_Buffer_Initialized(
+			{static_cast<std::uint32_t>(sizeof(view_data)), RHIBufferUsage::Storage, sizeof(float) * 16},
+			std::as_bytes(std::span<const float>(view_data)));
+		if (!auxiliary_light_buffer.Is_Valid() || !bindless.Register_Buffer(auxiliary_light_buffer).Is_Valid()
+			|| !view_buffer.Is_Valid() || !bindless.Register_Buffer(view_buffer).Is_Valid())
+			return false;
+
 		const GPUResidentMaterial resident_material = residency->Material_Info(scene_material);
 		if (!resident_material.constants.Is_Valid() || !bindless.Register_Material(scene_material, resident_material.constants).Is_Valid())
 			return false;
@@ -427,6 +447,12 @@ struct VisualScene final
 		if (!instance_buffer.Is_Valid()
 			|| !bindless.Register_Buffer(instance_buffer).Is_Valid()
 			|| !bindless.Register_Buffer(light_renderer.Light_Buffer()).Is_Valid())
+			return false;
+		const std::array<float, 16> view_data = Matrix4x4::Identity().values;
+		view_buffer = device.Create_Buffer_Initialized(
+			{static_cast<std::uint32_t>(sizeof(view_data)), RHIBufferUsage::Storage, sizeof(float) * 16},
+			std::as_bytes(std::span<const float>(view_data)));
+		if (!view_buffer.Is_Valid() || !bindless.Register_Buffer(view_buffer).Is_Valid())
 			return false;
 
 		MaterialParameterBlock material_data;

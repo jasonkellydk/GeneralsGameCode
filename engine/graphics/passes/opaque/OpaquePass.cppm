@@ -36,6 +36,7 @@ export struct OpaquePassInput final
 	std::array<float, 4> clear_color{0.0f, 0.0f, 0.0f, 1.0f};
 	float clear_depth = 1.0f;
 	bool clear_color_target = true;
+	bool clear_depth_target = true;
 };
 
 export class OpaquePass final
@@ -64,7 +65,7 @@ public:
 		if (!command_list.Set_Render_Targets(color_target, depth_target)
 			|| (input.clear_color_target
 				? !command_list.Clear(input.clear_color, input.clear_depth)
-				: !command_list.Clear_Depth(input.clear_depth))
+				: input.clear_depth_target && !command_list.Clear_Depth(input.clear_depth))
 			|| !command_list.Set_Viewport(input.viewport)
 			|| !command_list.Set_Bindless_Resources(input.bindless_resources))
 			return false;
