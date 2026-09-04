@@ -29,6 +29,11 @@
 #include "WW3D2/Statistics.h"
 #include "WW3D2/StringUtilities.h"
 
+#include <cmath>
+#include <cstddef>
+#include <algorithm>
+#include <span>
+
 
 
 #define SNOW_BUFFER_SIZE 4096	//size of vertex buffer holding particles.
@@ -158,6 +163,59 @@ void W3DSnowManager::update()
 #define MAXIMUM_CAMERA_DISTANCE 100000	//maximum distance of camera position from world origin.
 #define ISPOW2(x)  (x && (x & (x-1)) == 0)	//is a number a power of 2?
 #define MODPOW2(x,y) ((x) & (y-1))		//mod '%' operator for powers of 2.
+
+std::size_t W3DSnowManager::Build_Modern_Particles(float camera_x, float camera_y, float camera_z,
+	std::span<float> position_x, std::span<float> position_y, std::span<float> position_z,
+	std::span<float> sizes) const noexcept
+{
+	if (TheWeatherSetting == nullptr || !TheWeatherSetting->m_snowEnabled || !m_isVisible || m_startingHeights == nullptr
+		|| position_x.size() != position_y.size() || position_x.size() != position_z.size()
+		|| position_x.size() != sizes.size() || position_x.empty() || m_boxDimensions <= 0.0f || m_emitterSpacing <= 0.0f)
+		return 0;
+
+	const Int emitters_in_half = static_cast<Int>(std::floor(m_boxDimensions / m_emitterSpacing * 0.5f));
+	const Int center_x = static_cast<Int>(std::floor(camera_x / m_emitterSpacing));
+	const Int center_y = static_cast<Int>(std::floor(camera_y / m_emitterSpacing));
+	const Int origin_x = center_x - emitters_in_half;
+	const Int origin_y = center_y - emitters_in_half;
+	const Int end_x = center_x + emitters_in_half;
+	const Int end_y = center_y + emitters_in_half;
+	const float snow_ceiling = camera_z + m_boxDimensions * 0.5f;
+	const float height_traveled = m_time * m_velocity + std::fmod(camera_z, m_boxDimensions);
+	const std::size_t capacity = position_x.size();
+	std::size_t count = 0;
+
+	for (Int y = origin_y; y < end_y && count < capacity; ++y) {
+		for (Int x = origin_x; x < end_x && count < capacity; ++x) {
+			const Int noise_x = (x + MAXIMUM_CAMERA_DISTANCE) & (SnowManager::SNOW_NOISE_X - 1);
+			const Int noise_y = (y + MAXIMUM_CAMERA_DISTANCE) & (SnowManager::SNOW_NOISE_Y - 1);
+			const Int noise_offset = noise_x + noise_y * SnowManager::SNOW_NOISE_X;
+			const float height = snow_ceiling - std::fmod(height_traveled + m_startingHeights[noise_offset], m_boxDimensions);
+			position_x[count] = x * m_emitterSpacing + m_amplitude * std::sin(height * m_frequencyScaleX + static_cast<float>(x));
+			position_y[count] = y * m_emitterSpacing + m_amplitude * std::sin(height * m_frequencyScaleY + static_cast<float>(y));
+			position_z[count] = height;
+			sizes[count] = m_quadSize;
+			++count;
+		}
+	}
+
+	return count;
+}
+
+float W3DSnowManager::Modern_Cull_Radius() const noexcept
+{
+	return std::max(0.0f, m_amplitude) + std::max(0.0f, m_quadSize);
+}
+
+bool W3DSnowManager::Modern_Uses_Point_Sprites() const noexcept
+{
+	return TheWeatherSetting != nullptr && TheWeatherSetting->m_usePointSprites != FALSE;
+}
+
+float W3DSnowManager::Modern_Point_Sprite_Size() const noexcept
+{
+	return std::clamp(m_pointSize, m_minPointSize, m_maxPointSize);
+}
 
 /*Recursively subdivide the large snow box enclosing the camera until we reach some predefined leaf size.  This
 method is used so that very few off-screen particles end up getting rendered.  Culling them individually would

@@ -9,6 +9,13 @@ module;
 #include <utility>
 #include <vector>
 
+#if defined(RTS_PROFILE_TRACY)
+#include <tracy/Tracy.hpp>
+#define GRAPHICS_PROFILE_SCOPE(name) ZoneScopedN(name)
+#else
+#define GRAPHICS_PROFILE_SCOPE(name) ((void)0)
+#endif
+
 export module Graphics.Scene.GPUScene;
 
 export import Graphics.Resources.Materials.Material;
@@ -19,6 +26,8 @@ export import Graphics.Scene.RenderScene;
 export import Graphics.Scene.Lighting;
 export import Graphics.Scene.Shadows;
 export import Graphics.Scene.Decals;
+
+import Graphics.Memory.AlignedAllocator;
 
 namespace Graphics
 {
@@ -201,7 +210,7 @@ private:
 		Generation generation = 0;
 	};
 
-	std::vector<Data> m_values;
+	AlignedVector<Data> m_values;
 	std::vector<Index> m_dense_to_slot;
 	std::vector<Slot> m_slots;
 };
@@ -358,6 +367,7 @@ public:
 
 	bool Build(const RenderScene &scene, const MeshPool &meshes, const TexturePool &textures, const SamplerPool &samplers, const MaterialPool &materials)
 	{
+		GRAPHICS_PROFILE_SCOPE("Graphics::GPUScene::Build");
 		m_instances.Clear();
 		m_meshes.Clear();
 		m_materials.Clear();

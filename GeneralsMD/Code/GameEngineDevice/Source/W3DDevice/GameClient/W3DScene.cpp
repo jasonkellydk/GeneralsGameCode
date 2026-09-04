@@ -1238,7 +1238,7 @@ void RTS3DScene::Customized_Render( RenderInfoClass &rinfo )
 	}
 
 	// only render particles once per frame
-	if (terrainObject != nullptr && TheParticleSystemManager != nullptr &&
+	if (TheParticleSystemManager != nullptr &&
 		Get_Extra_Pass_Polygon_Mode() == EXTRA_PASS_DISABLE)
 	{
 		TheParticleSystemManager->queueParticleRender();

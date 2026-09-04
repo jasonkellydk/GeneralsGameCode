@@ -97,3 +97,43 @@ BOOST_AUTO_TEST_CASE(emitter_updates_propagate_render_state_to_live_particles)
 	BOOST_CHECK(data.emitter_flags[0] == ParticleEmitterFlags::None);
 	BOOST_CHECK(!particles.Update(-1.0f));
 }
+
+BOOST_AUTO_TEST_CASE(external_soa_particle_updates_preserve_render_attributes)
+{
+	ParticleSystem particles;
+	particles.Reserve(1, 2);
+	ParticleEmitter emitter;
+	emitter.max_particles = 2;
+	const ParticleEmitterHandle handle = particles.Create_Emitter(emitter);
+
+	const std::array<float, 1> position_x{1.0f};
+	const std::array<float, 1> position_y{2.0f};
+	const std::array<float, 1> position_z{3.0f};
+	const std::array<float, 1> velocity_x{4.0f};
+	const std::array<float, 1> velocity_y{5.0f};
+	const std::array<float, 1> velocity_z{6.0f};
+	const std::array<float, 1> lifetimes{7.0f};
+	const std::array<float, 1> sizes{8.0f};
+	const std::array<float, 1> color_r{0.1f};
+	const std::array<float, 1> color_g{0.2f};
+	const std::array<float, 1> color_b{0.3f};
+	const std::array<float, 1> color_a{0.4f};
+	const std::array<float, 1> angles{0.5f};
+	const std::array<MaterialHandle, 1> materials{MaterialHandle(2, 1)};
+	const std::array<ParticleEmitterFlags, 1> flags{ParticleEmitterFlags::Enabled};
+	const ParticleData source{
+		position_x, position_y, position_z,
+		velocity_x, velocity_y, velocity_z,
+		lifetimes, sizes,
+		color_r, color_g, color_b, color_a, angles,
+		materials, flags, {}
+	};
+
+	BOOST_REQUIRE(particles.Append_Particles(handle, source));
+	const ParticleData data = particles.Particles();
+	BOOST_CHECK(data.position_z[0] == 3.0f);
+	BOOST_CHECK(data.velocity_x[0] == 4.0f);
+	BOOST_CHECK(data.angles[0] == 0.5f);
+	BOOST_CHECK(data.materials[0] == materials[0]);
+	BOOST_CHECK(data.emitters[0] == handle);
+}

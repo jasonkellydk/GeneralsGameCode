@@ -1150,6 +1150,9 @@ endif()
 
 
 add_library(z_gameengine STATIC)
+set_property(TARGET z_gameengine PROPERTY CXX_SCAN_FOR_MODULES ON)
+
+add_dependencies(z_gameengine generals_graphics)
 
 target_sources(z_gameengine PRIVATE
     ${GAMEENGINE_SRC}
@@ -1177,6 +1180,7 @@ target_link_libraries(z_gameengine PRIVATE
 target_link_libraries(z_gameengine PUBLIC
     corei_gameengine_public
     z_wwvegas
+    generals_graphics
 )
 
 target_precompile_headers(z_gameengine PRIVATE

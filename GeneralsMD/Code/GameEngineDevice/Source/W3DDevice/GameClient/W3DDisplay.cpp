@@ -43,9 +43,11 @@ static void drawFramerateBar();
 #include <string>
 #include <time.h>
 
-import Graphics.RHI.DX11.Coexistence;
+import Graphics.Backends.DX11.Coexistence;
 import Graphics.Scene.Beams;
 import Graphics.Scene.Lighting.Renderer;
+import Graphics.Scene.Particles.Renderer;
+import Graphics.Scene.Screen.Distortion;
 
 // USER INCLUDES //////////////////////////////////////////////////////////////
 #include "Common/FramePacer.h"
@@ -68,6 +70,7 @@ import Graphics.Scene.Lighting.Renderer;
 #include "GameClient/Line2D.h"
 #include "GameClient/Mouse.h"
 #include "GameClient/GlobalLanguage.h"
+#include "GameClient/VideoPlayer.h"
 #include "GameClient/Water.h"
 
 #include "GameNetwork/NetworkInterface.h"
@@ -78,6 +81,7 @@ import Graphics.Scene.Lighting.Renderer;
 #include "W3DDevice/GameClient/W3DGameClient.h"
 #include "W3DDevice/GameClient/W3DFileSystem.h"
 #include "W3DDevice/GameClient/W3DDynamicLight.h"
+#include "W3DDevice/GameClient/W3DParticleSys.h"
 #include "W3DDevice/GameClient/W3DProfilerFrameCapture.h"
 #include "W3DDevice/GameClient/HeightMap.h"
 #include "W3DDevice/GameClient/WorldHeightMap.h"
@@ -138,6 +142,13 @@ extern "C" void Graphics_DX11_Shutdown_Shared_Frame() noexcept;
 
 #include "GameLogic/ScriptEngine.h"		// For TheScriptEngine - jkmcd
 #include "GameLogic/GameLogic.h"
+
+#if defined(RTS_PROFILE_TRACY)
+#include <tracy/Tracy.hpp>
+#define GENERALS_GRAPHICS_PROFILE_SCOPE(name) ZoneScopedN(name)
+#else
+#define GENERALS_GRAPHICS_PROFILE_SCOPE(name) ((void)0)
+#endif
 #ifdef DUMP_PERF_STATS
 #include "GameLogic/PartitionManager.h"
 #endif
@@ -149,6 +160,7 @@ extern "C" void Graphics_DX11_Shutdown_Shared_Frame() noexcept;
 #define no_SAMPLE_DYNAMIC_LIGHT	1
 static bool modernRendererAvailable = false;
 static Graphics::BeamView modernBeamView;
+static Graphics::View modernParticleView;
 #ifdef SAMPLE_DYNAMIC_LIGHT
 static W3DDynamicLight * theDynamicLight = nullptr;
 static Real theLightXOffset = 0.1f;
@@ -164,7 +176,15 @@ static bool initializeModernBeamRenderer(Graphics::Device &device)
 		return false;
 
 	Graphics::LightRenderer &light_renderer = Graphics::GetLightRenderer();
-	return light_renderer.Is_Initialized() || light_renderer.Initialize(device, 4096);
+	if (!light_renderer.Is_Initialized() && !light_renderer.Initialize(device, 4096))
+		return false;
+
+	Graphics::ParticleRenderer &particle_renderer = Graphics::GetParticleRenderer();
+	if (!particle_renderer.Is_Initialized() && !particle_renderer.Initialize(device, std::filesystem::path("GraphicsShaders"), 1024, 65536))
+		return false;
+
+	Graphics::ScreenDistortionRenderer &screen_renderer = Graphics::GetScreenDistortionRenderer();
+	return screen_renderer.Is_Initialized() || screen_renderer.Initialize(device, std::filesystem::path("GraphicsShaders"), 512);
 }
 
 static bool executeModernBeamRenderer(Graphics::Device &, Graphics::CommandList &commands, const Graphics::FrameTargets &targets) noexcept
@@ -175,11 +195,19 @@ static bool executeModernBeamRenderer(Graphics::Device &, Graphics::CommandList 
 	if (!Graphics::SetBeamView(modernBeamView))
 		return false;
 
-	return Graphics::GetBeamRenderer().Render(
+	if (!Graphics::GetBeamRenderer().Render(
 		commands,
 		targets.backbuffer.texture,
 		targets.depth.texture,
-		{0, 0, targets.backbuffer.width, targets.backbuffer.height, 0.0f, 1.0f});
+		{0, 0, targets.backbuffer.width, targets.backbuffer.height, 0.0f, 1.0f}))
+		return false;
+
+	if (TheParticleSystemManager != nullptr) {
+		W3DParticleSystemManager *particle_manager = static_cast<W3DParticleSystemManager *>(TheParticleSystemManager);
+		if (!particle_manager->Render_Modern_Particles(commands, targets))
+			return false;
+	}
+	return true;
 }
 
 static bool initializeModernRenderer()
@@ -207,6 +235,8 @@ static bool initializeModernRenderer()
 		return true;
 
 	Graphics::GetLightRenderer().Shutdown();
+	Graphics::GetScreenDistortionRenderer().Shutdown();
+	Graphics::GetParticleRenderer().Shutdown();
 	Graphics::GetBeamRenderer().Shutdown();
 	Graphics_DX11_Shutdown_Shared_Frame();
 	return false;
@@ -215,6 +245,8 @@ static bool initializeModernRenderer()
 static void shutdownModernRenderer() noexcept
 {
 	Graphics::GetLightRenderer().Shutdown();
+	Graphics::GetScreenDistortionRenderer().Shutdown();
+	Graphics::GetParticleRenderer().Shutdown();
 	Graphics::GetBeamRenderer().Shutdown();
 	Graphics_DX11_Shutdown_Shared_Frame();
 }
@@ -241,15 +273,16 @@ static bool beginSharedFrame()
 	return true;
 }
 
-static void updateModernView(const CameraClass *camera)
+static void updateModernView(CameraClass *camera)
 {
 	if (camera == nullptr || WW3D::Get_Render_Backend() == nullptr)
 		return;
 
-	Matrix4x4 view;
+	Matrix3D camera_view;
 	Matrix4x4 projection;
-	WW3D::Get_Render_Backend()->Get_Transform(RenderBackendTransform::View, view);
-	WW3D::Get_Render_Backend()->Get_Transform(RenderBackendTransform::Projection, projection);
+	camera->Get_View_Matrix(&camera_view);
+	camera->Get_Backend_Projection_Matrix(&projection);
+	const Matrix4x4 view(camera_view);
 	const Matrix4x4 viewProjection = projection * view;
 	float viewProjectionElements[16] = {};
 	for (int row = 0; row < 4; ++row) {
@@ -265,10 +298,28 @@ static void updateModernView(const CameraClass *camera)
 	modernBeamView.camera_right = {right.X, right.Y, right.Z};
 	modernBeamView.camera_up = {up.X, up.Y, up.Z};
 	modernBeamView.camera_forward = {forward.X, forward.Y, forward.Z};
+	Graphics::Matrix4x4 modern_view_matrix;
+	Graphics::Matrix4x4 modern_projection_matrix;
+	for (std::size_t row = 0; row < 4; ++row) {
+		for (std::size_t column = 0; column < 4; ++column) {
+			modern_view_matrix.values[row * 4 + column] = view[row][column];
+			modern_projection_matrix.values[row * 4 + column] = projection[row][column];
+		}
+	}
+	modernParticleView = Graphics::View(
+		modern_view_matrix,
+		modern_projection_matrix,
+		{camera->Get_Position().X, camera->Get_Position().Y, camera->Get_Position().Z},
+		{0.0f, 0.0f, static_cast<float>(TheDisplay->getWidth()), static_cast<float>(TheDisplay->getHeight()), 0.0f, 1.0f});
+	Graphics::GetParticleRenderer().Set_View(modernParticleView);
+	Graphics::GetScreenDistortionRenderer().Set_View(modernParticleView);
+	if (TheParticleSystemManager != nullptr)
+		static_cast<W3DParticleSystemManager *>(TheParticleSystemManager)->Set_Modern_Particle_View(modernParticleView);
 }
 
-static bool renderModernAfterLegacy(const CameraClass *camera)
+static bool renderModernAfterLegacy(CameraClass *camera)
 {
+	GENERALS_GRAPHICS_PROFILE_SCOPE("W3DDisplay::renderModernAfterLegacy");
 	updateModernView(camera);
 	if (!Graphics_DX11_Begin_Modern_Phase()) {
 		if (Graphics_DX11_End_Frame() && Graphics_DX11_Present())
@@ -2189,7 +2240,8 @@ AGAIN:
 			//USE_PERF_TIMER(BigAssRenderLoop)
 			static Bool couldRender = true;
 			bool modernFrame = false;
-			if (modernRendererAvailable) {
+			const bool videoOwnsPresentation = TheVideoPlayer != nullptr && TheVideoPlayer->firstStream() != nullptr;
+			if (modernRendererAvailable && !videoOwnsPresentation) {
 				modernFrame = beginSharedFrame();
 				if (!modernFrame)
 					Graphics_DX11_Abort_Frame();

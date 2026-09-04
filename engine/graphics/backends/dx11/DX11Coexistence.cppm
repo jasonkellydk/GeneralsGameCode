@@ -1,8 +1,8 @@
 module;
 
-export module Graphics.RHI.DX11.Coexistence;
+export module Graphics.Backends.DX11.Coexistence;
 
-export import Graphics.RHI.DX11;
+export import Graphics.Backends.DX11;
 export import Graphics.RHI.Frame;
 
 namespace Graphics

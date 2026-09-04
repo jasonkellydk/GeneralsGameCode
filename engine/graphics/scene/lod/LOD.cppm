@@ -6,6 +6,13 @@ module;
 #include <limits>
 #include <span>
 
+#if defined(RTS_PROFILE_TRACY)
+#include <tracy/Tracy.hpp>
+#define GRAPHICS_PROFILE_SCOPE(name) ZoneScopedN(name)
+#else
+#define GRAPHICS_PROFILE_SCOPE(name) ((void)0)
+#endif
+
 export module Graphics.Scene.LOD;
 
 export import Graphics.Resources.Meshes.Mesh;
@@ -134,6 +141,7 @@ LODSelection Select_LOD(InstanceHandle instance_handle, MeshHandle instance_mesh
 
 export bool Build_LOD_Set(const RenderScene &scene, const MeshPool &meshes, const VisibleSet &visible_set, const View &view, LODSet &lod_set) noexcept
 {
+	GRAPHICS_PROFILE_SCOPE("Graphics::Build_LOD_Set");
 	lod_set.Clear();
 	const RenderSceneData scene_data = scene.Data();
 

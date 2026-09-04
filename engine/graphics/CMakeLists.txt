@@ -34,6 +34,8 @@ target_sources(generals_graphics
             scene/particles/Particles.cppm
             scene/particles/ParticleVisibility.cppm
             scene/particles/ParticleDraw.cppm
+            scene/particles/ParticleRenderer.cppm
+            scene/screen/ScreenDistortion.cppm
             scene/beams/Beam.cppm
             scene/transparency/Transparency.cppm
             scene/views/View.cppm
@@ -56,16 +58,8 @@ target_sources(generals_graphics
 
 target_compile_features(generals_graphics PUBLIC cxx_std_20)
 
-if(MSVC)
-    target_compile_options(generals_graphics INTERFACE
-        "SHELL:/reference Graphics.Scene.Beams=${CMAKE_CURRENT_BINARY_DIR}/CMakeFiles/generals_graphics.dir/$<CONFIG>/Graphics.Scene.Beams.ifc"
-        "SHELL:/reference Graphics.RHI.Frame=${CMAKE_CURRENT_BINARY_DIR}/CMakeFiles/generals_graphics.dir/$<CONFIG>/Graphics.RHI.Frame.ifc"
-        "SHELL:/reference Graphics.RHI.DX11=${CMAKE_CURRENT_BINARY_DIR}/CMakeFiles/generals_graphics.dir/$<CONFIG>/Graphics.RHI.DX11.ifc"
-        "SHELL:/reference Graphics.RHI.DX11.Coexistence=${CMAKE_CURRENT_BINARY_DIR}/CMakeFiles/generals_graphics.dir/$<CONFIG>/Graphics.RHI.DX11.Coexistence.ifc"
-        "SHELL:/reference Graphics.Scene.Lighting.Renderer=${CMAKE_CURRENT_BINARY_DIR}/CMakeFiles/generals_graphics.dir/$<CONFIG>/Graphics.Scene.Lighting.Renderer.ifc"
-        "/ifcSearchDir"
-        "${CMAKE_CURRENT_BINARY_DIR}/CMakeFiles/generals_graphics.dir/$<CONFIG>"
-    )
+if(TARGET core_profile_tracy)
+    target_link_libraries(generals_graphics PUBLIC core_profile_tracy)
 endif()
 
 if(WIN32)
@@ -74,10 +68,22 @@ if(WIN32)
 		set(GRAPHICS_SHADER_ASSET_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/shaders/$<CONFIG>")
 		set(GRAPHICS_BASIC_OPAQUE_VERTEX_SHADER "${GRAPHICS_SHADER_ASSET_DIRECTORY}/basic_opaque.vso")
 		set(GRAPHICS_BASIC_OPAQUE_FRAGMENT_SHADER "${GRAPHICS_SHADER_ASSET_DIRECTORY}/basic_opaque.pso")
+		set(GRAPHICS_PARTICLE_VERTEX_SHADER "${GRAPHICS_SHADER_ASSET_DIRECTORY}/particle_billboard.vso")
+		set(GRAPHICS_PARTICLE_FRAGMENT_SHADER "${GRAPHICS_SHADER_ASSET_DIRECTORY}/particle_billboard.pso")
+		set(GRAPHICS_SCREEN_DISTORTION_VERTEX_SHADER "${GRAPHICS_SHADER_ASSET_DIRECTORY}/screen_distortion.vso")
+		set(GRAPHICS_SCREEN_DISTORTION_FRAGMENT_SHADER "${GRAPHICS_SHADER_ASSET_DIRECTORY}/screen_distortion.pso")
+		set(GRAPHICS_BEAM_VERTEX_SHADER "${GRAPHICS_SHADER_ASSET_DIRECTORY}/beam.vso")
+		set(GRAPHICS_BEAM_FRAGMENT_SHADER "${GRAPHICS_SHADER_ASSET_DIRECTORY}/beam.pso")
 		add_custom_command(
 			OUTPUT
 				"${GRAPHICS_BASIC_OPAQUE_VERTEX_SHADER}"
 				"${GRAPHICS_BASIC_OPAQUE_FRAGMENT_SHADER}"
+				"${GRAPHICS_PARTICLE_VERTEX_SHADER}"
+				"${GRAPHICS_PARTICLE_FRAGMENT_SHADER}"
+				"${GRAPHICS_SCREEN_DISTORTION_VERTEX_SHADER}"
+				"${GRAPHICS_SCREEN_DISTORTION_FRAGMENT_SHADER}"
+				"${GRAPHICS_BEAM_VERTEX_SHADER}"
+				"${GRAPHICS_BEAM_FRAGMENT_SHADER}"
 			COMMAND ${CMAKE_COMMAND} -E make_directory "${GRAPHICS_SHADER_ASSET_DIRECTORY}"
 			COMMAND $<TARGET_FILE:slang-bootstrap>
 				-target dxbc
@@ -95,8 +101,59 @@ if(WIN32)
 				-matrix-layout-row-major
 				-o "${GRAPHICS_BASIC_OPAQUE_FRAGMENT_SHADER}"
 				"${CMAKE_CURRENT_SOURCE_DIR}/shaders/source/basic_opaque.slang"
+			COMMAND $<TARGET_FILE:slang-bootstrap>
+				-target dxbc
+				-profile sm_5_0
+				-entry particle_billboard_vertex
+				-stage vertex
+				-matrix-layout-row-major
+				-o "${GRAPHICS_PARTICLE_VERTEX_SHADER}"
+				"${CMAKE_CURRENT_SOURCE_DIR}/shaders/source/particle_billboard.slang"
+			COMMAND $<TARGET_FILE:slang-bootstrap>
+				-target dxbc
+				-profile sm_5_0
+				-entry particle_billboard_pixel
+				-stage pixel
+				-matrix-layout-row-major
+				-o "${GRAPHICS_PARTICLE_FRAGMENT_SHADER}"
+				"${CMAKE_CURRENT_SOURCE_DIR}/shaders/source/particle_billboard.slang"
+			COMMAND $<TARGET_FILE:slang-bootstrap>
+				-target dxbc
+				-profile sm_5_0
+				-entry screen_distortion_vertex
+				-stage vertex
+				-matrix-layout-row-major
+				-o "${GRAPHICS_SCREEN_DISTORTION_VERTEX_SHADER}"
+				"${CMAKE_CURRENT_SOURCE_DIR}/shaders/source/screen_distortion.slang"
+			COMMAND $<TARGET_FILE:slang-bootstrap>
+				-target dxbc
+				-profile sm_5_0
+				-entry screen_distortion_pixel
+				-stage pixel
+				-matrix-layout-row-major
+				-o "${GRAPHICS_SCREEN_DISTORTION_FRAGMENT_SHADER}"
+				"${CMAKE_CURRENT_SOURCE_DIR}/shaders/source/screen_distortion.slang"
+			COMMAND $<TARGET_FILE:slang-bootstrap>
+				-target dxbc
+				-profile sm_5_0
+				-entry beam_vertex
+				-stage vertex
+				-matrix-layout-row-major
+				-o "${GRAPHICS_BEAM_VERTEX_SHADER}"
+				"${CMAKE_CURRENT_SOURCE_DIR}/shaders/source/beam.slang"
+			COMMAND $<TARGET_FILE:slang-bootstrap>
+				-target dxbc
+				-profile sm_5_0
+				-entry beam_pixel
+				-stage pixel
+				-matrix-layout-row-major
+				-o "${GRAPHICS_BEAM_FRAGMENT_SHADER}"
+				"${CMAKE_CURRENT_SOURCE_DIR}/shaders/source/beam.slang"
 			DEPENDS
 				"${CMAKE_CURRENT_SOURCE_DIR}/shaders/source/basic_opaque.slang"
+				"${CMAKE_CURRENT_SOURCE_DIR}/shaders/source/particle_billboard.slang"
+				"${CMAKE_CURRENT_SOURCE_DIR}/shaders/source/screen_distortion.slang"
+				"${CMAKE_CURRENT_SOURCE_DIR}/shaders/source/beam.slang"
 				slang-bootstrap
 			VERBATIM
 		)
@@ -104,6 +161,12 @@ if(WIN32)
 			DEPENDS
 				"${GRAPHICS_BASIC_OPAQUE_VERTEX_SHADER}"
 				"${GRAPHICS_BASIC_OPAQUE_FRAGMENT_SHADER}"
+				"${GRAPHICS_PARTICLE_VERTEX_SHADER}"
+				"${GRAPHICS_PARTICLE_FRAGMENT_SHADER}"
+				"${GRAPHICS_SCREEN_DISTORTION_VERTEX_SHADER}"
+				"${GRAPHICS_SCREEN_DISTORTION_FRAGMENT_SHADER}"
+				"${GRAPHICS_BEAM_VERTEX_SHADER}"
+				"${GRAPHICS_BEAM_FRAGMENT_SHADER}"
 		)
 		add_dependencies(generals_graphics generals_graphics_shaders)
 	endif()
@@ -113,8 +176,8 @@ if(WIN32)
             FILE_SET CXX_MODULES
             BASE_DIRS "${CMAKE_CURRENT_SOURCE_DIR}"
             FILES
-                rhi/backends/dx11/DX11RHI.cppm
-                rhi/backends/dx11/DX11Coexistence.cppm
+                backends/dx11/DX11RHI.cppm
+                backends/dx11/DX11Coexistence.cppm
     )
 
     target_link_libraries(generals_graphics PRIVATE d3d11)
@@ -330,6 +393,29 @@ if(RTS_BUILD_GRAPHICS_TESTS)
         passes/particles/ParticlePass.test.cppm
     )
 
+    if(WIN32)
+        add_graphics_test(
+            generals_graphics_particle_renderer_test
+            scene/particles/ParticleRenderer.test.cppm
+        )
+        target_sources(generals_graphics_particle_renderer_test
+            PRIVATE
+                FILE_SET CXX_MODULES
+                BASE_DIRS "${CMAKE_CURRENT_SOURCE_DIR}"
+                FILES
+                    tests/visual_regression/VisualRegression.cppm
+        )
+        target_compile_definitions(generals_graphics_particle_renderer_test PRIVATE
+            GRAPHICS_PARTICLE_REFERENCE_DIRECTORY="${CMAKE_CURRENT_SOURCE_DIR}/scene/particles/__snapshots__"
+            GRAPHICS_PARTICLE_FAILURE_DIRECTORY="${CMAKE_CURRENT_BINARY_DIR}/particle_renderer_failures"
+            GRAPHICS_PARTICLE_SHADER_DIRECTORY="${GRAPHICS_SHADER_ASSET_DIRECTORY}"
+        )
+        if(TARGET generals_graphics_shaders)
+            add_dependencies(generals_graphics_particle_renderer_test generals_graphics_shaders)
+        endif()
+    endif()
+
+
     add_graphics_test(
         generals_graphics_beam_test
         scene/beams/Beam.test.cppm
@@ -381,7 +467,7 @@ if(RTS_BUILD_GRAPHICS_TESTS)
     if(WIN32)
         add_graphics_test(
             generals_graphics_dx11_rhi_test
-            rhi/backends/dx11/DX11RHI.test.cppm
+            backends/dx11/DX11RHI.test.cppm
         )
         target_compile_definitions(generals_graphics_dx11_rhi_test PRIVATE
             GRAPHICS_DX11_TEST_SHADER_DIRECTORY="${CMAKE_CURRENT_SOURCE_DIR}/tests/visual_regression/shaders/precompiled/dx11"

@@ -83,3 +83,24 @@ BOOST_AUTO_TEST_CASE(destroyed_indices_are_invalid_and_reuse_changes_generation)
 	BOOST_CHECK(table.Texture_Index(old_handle) == ResourceIndex{});
 	BOOST_CHECK(table.Resolve(new_index).texture == RHITextureHandle(9, 1));
 }
+
+BOOST_AUTO_TEST_CASE(texture_indices_use_the_reserved_texture_range)
+{
+	BindlessResourceTable table;
+	table.Reserve(2, 1, 8, 0, 8);
+
+	const ResourceIndex buffer_index = table.Register_Buffer(RHIBufferHandle(1, 1));
+	BOOST_REQUIRE(buffer_index.Is_Valid());
+
+	for (std::uint32_t index = 0; index < 8; ++index) {
+		const TextureHandle texture_handle(index, 1);
+		const MaterialHandle material_handle(index, 1);
+		const ResourceIndex texture_index = table.Register_Texture(texture_handle, RHITextureHandle(index + 2, 1));
+		const ResourceIndex material_index = table.Register_Material(material_handle, RHIBufferHandle(index + 2, 1));
+		BOOST_REQUIRE(texture_index.Is_Valid());
+		BOOST_REQUIRE(material_index.Is_Valid());
+		BOOST_CHECK(texture_index.Get_Index() < 8);
+		BOOST_CHECK(table.Is_Valid(texture_index));
+		BOOST_CHECK(table.Is_Valid(material_index));
+	}
+}

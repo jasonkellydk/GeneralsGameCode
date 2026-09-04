@@ -86,18 +86,28 @@ export struct RHITextureUpload final
 
 export enum class RHIPrimitiveTopology : std::uint8_t
 {
-	TriangleList
+	TriangleList,
+	PointList
 };
 
 export enum class RHIVertexFormat : std::uint8_t
 {
-	Position3Color4UV2
+	Position3Color4UV2,
+	Position3Color4UV2ResourceIndex
 };
 
 export enum class RHIBlendMode : std::uint8_t
 {
 	Disabled,
-	Alpha
+	Alpha,
+	Additive,
+	Multiply
+};
+
+export enum class RHICullMode : std::uint8_t
+{
+	Back,
+	None
 };
 
 export struct RHIPipeline final
@@ -108,6 +118,7 @@ export struct RHIPipeline final
 	RHIPrimitiveTopology topology = RHIPrimitiveTopology::TriangleList;
 	RHIVertexFormat vertex_format = RHIVertexFormat::Position3Color4UV2;
 	RHIBlendMode blend_mode = RHIBlendMode::Disabled;
+	RHICullMode cull_mode = RHICullMode::Back;
 };
 
 export struct RHIShaderBytecode final
@@ -194,6 +205,12 @@ public:
 	virtual bool Set_Depth_Target(RHITextureHandle depth_target) noexcept = 0;
 	virtual bool Clear(const std::array<float, 4> &color, float depth) noexcept = 0;
 	virtual bool Clear_Depth(float depth) noexcept = 0;
+	virtual bool Copy_Texture(RHITextureHandle source, RHITextureHandle destination) noexcept
+	{
+		(void)source;
+		(void)destination;
+		return false;
+	}
 	virtual bool Set_Viewport(RHIViewport viewport) noexcept = 0;
 	virtual bool Set_Vertex_Buffer(std::uint32_t slot, RHIBufferHandle buffer, std::uint32_t stride, std::uint32_t offset) noexcept = 0;
 	virtual bool Set_Index_Buffer(RHIBufferHandle buffer, RHIIndexFormat format, std::uint32_t offset) noexcept = 0;

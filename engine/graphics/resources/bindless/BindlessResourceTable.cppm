@@ -31,12 +31,17 @@ public:
 		std::size_t sampler_capacity = 0,
 		std::size_t material_capacity = 0)
 	{
-		m_resources.reserve(resource_capacity);
+		m_texture_capacity = texture_capacity;
+		m_resources.reserve(resource_capacity + texture_capacity);
 		m_free_next.reserve(resource_capacity);
 		m_buffers.reserve(buffer_capacity);
 		m_textures.reserve(texture_capacity);
 		m_samplers.reserve(sampler_capacity);
 		m_materials.reserve(material_capacity);
+		if (m_resources.empty() && m_texture_capacity != 0) {
+			m_resources.resize(m_texture_capacity);
+			m_free_next.resize(m_texture_capacity, Invalid_Index);
+		}
 	}
 
 	ResourceIndex Register_Buffer(RHIBufferHandle handle)
@@ -196,7 +201,16 @@ public:
 			m_free_next[index] = index + 1 < m_resources.size() ? static_cast<std::uint32_t>(index + 1) : Invalid_Index;
 		}
 
-		m_free_head = m_resources.empty() ? Invalid_Index : 0;
+		m_free_head = Invalid_Index;
+		m_texture_free_head = Invalid_Index;
+		m_texture_next_index = 0;
+		for (std::size_t index = m_resources.size(); index > m_texture_capacity; --index) {
+			const std::size_t slot = index - 1;
+			m_free_next[slot] = m_free_head;
+			m_free_head = static_cast<std::uint32_t>(slot);
+		}
+		for (std::size_t index = 0; index < m_texture_capacity; ++index)
+			m_free_next[index] = Invalid_Index;
 		Clear_Mappings(m_buffers);
 		Clear_Mappings(m_textures);
 		Clear_Mappings(m_samplers);
@@ -219,8 +233,11 @@ private:
 		return next == 0 ? 1 : next;
 	}
 
-	ResourceIndex Allocate_Index()
+	ResourceIndex Allocate_Index(RHIResourceType type)
 	{
+		if (type == RHIResourceType::Texture && m_texture_capacity != 0)
+			return Allocate_Texture_Index();
+
 		if (m_free_head != Invalid_Index) {
 			const std::uint32_t slot = m_free_head;
 			m_free_head = m_free_next[slot];
@@ -234,6 +251,26 @@ private:
 		const ResourceIndex index(slot, 1);
 		m_resources.push_back({index, RHIResourceType::Invalid, {}, {}});
 		m_free_next.push_back(Invalid_Index);
+		return index;
+	}
+
+	ResourceIndex Allocate_Texture_Index()
+	{
+		if (m_texture_free_head != Invalid_Index) {
+			const std::uint32_t slot = m_texture_free_head;
+			m_texture_free_head = m_free_next[slot];
+			const ResourceIndex index = ResourceIndex(slot, Next_Generation(m_resources[slot].index.Get_Generation()));
+			m_resources[slot] = {index, RHIResourceType::Invalid, {}, {}};
+			m_free_next[slot] = Invalid_Index;
+			return index;
+		}
+
+		if (m_texture_next_index >= m_texture_capacity || m_texture_next_index >= std::numeric_limits<std::uint32_t>::max())
+			return {};
+
+		const std::uint32_t slot = static_cast<std::uint32_t>(m_texture_next_index++);
+		const ResourceIndex index = ResourceIndex(slot, Next_Generation(m_resources[slot].index.Get_Generation()));
+		m_resources[slot].index = index;
 		return index;
 	}
 
@@ -265,7 +302,7 @@ private:
 		if (mapping.last_generation == handle.Get_Generation())
 			return {};
 
-		const ResourceIndex index = Allocate_Index();
+		const ResourceIndex index = Allocate_Index(resource.type);
 		if (!Set_Resource(index, resource))
 			return {};
 
@@ -329,8 +366,13 @@ private:
 		resource.type = RHIResourceType::Invalid;
 		resource.buffer = {};
 		resource.texture = {};
-		m_free_next[index.Get_Index()] = m_free_head;
-		m_free_head = index.Get_Index();
+		if (index.Get_Index() < m_texture_capacity) {
+			m_free_next[index.Get_Index()] = m_texture_free_head;
+			m_texture_free_head = index.Get_Index();
+		} else {
+			m_free_next[index.Get_Index()] = m_free_head;
+			m_free_head = index.Get_Index();
+		}
 	}
 
 	static void Clear_Mappings(std::vector<MappingSlot> &mappings) noexcept
@@ -346,6 +388,9 @@ private:
 	std::vector<MappingSlot> m_samplers;
 	std::vector<MappingSlot> m_materials;
 	std::uint32_t m_free_head = Invalid_Index;
+	std::uint32_t m_texture_free_head = Invalid_Index;
+	std::size_t m_texture_capacity = 0;
+	std::size_t m_texture_next_index = 0;
 };
 
 }

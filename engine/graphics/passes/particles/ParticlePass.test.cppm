@@ -71,6 +71,7 @@ public:
 	bool Draw(std::uint32_t vertex_count, std::uint32_t, std::uint32_t instance_count, std::uint32_t first_instance) noexcept override
 	{
 		++draw_count;
+		last_vertex_count = vertex_count;
 		last_first_instance = first_instance;
 		return vertex_count != 0 && instance_count == 1;
 	}
@@ -86,6 +87,7 @@ public:
 	std::uint32_t pipeline_bind_count = 0;
 	std::uint32_t vertex_buffer_set_count = 0;
 	std::uint32_t draw_count = 0;
+	std::uint32_t last_vertex_count = 0;
 	std::uint32_t last_first_instance = 0;
 };
 
@@ -142,7 +144,45 @@ BOOST_AUTO_TEST_CASE(particle_pass_reads_opaque_depth_and_draws_billboards_after
 	BOOST_CHECK(command_list.pipeline_bind_count == 1);
 	BOOST_CHECK(command_list.vertex_buffer_set_count == 1);
 	BOOST_CHECK(command_list.draw_count == 1);
+	BOOST_CHECK(command_list.last_vertex_count == 6);
 	BOOST_CHECK(command_list.last_first_instance == 4);
+}
+
+BOOST_AUTO_TEST_CASE(particle_pass_uses_point_topology_for_point_sprites)
+{
+	RenderGraph graph;
+	const GraphResourceHandle color_target = graph.Create_Resource({GraphResourceKind::Texture});
+	const GraphResourceHandle depth_target = graph.Create_Resource({GraphResourceKind::Texture});
+	const GraphPassHandle particle_pass = ParticlePass::Add_To_Graph(graph, color_target, depth_target, 20);
+	BOOST_REQUIRE(particle_pass.Is_Valid());
+
+	ExecutionPlan plan;
+	const std::array<GraphResourceBinding, 2> bindings = {
+		GraphResourceBinding::Texture(color_target, RHITextureHandle(1, 1)),
+		GraphResourceBinding::Texture(depth_target, RHITextureHandle(2, 1))
+	};
+	BOOST_REQUIRE(plan.Compile(graph, bindings));
+
+	const std::array<ParticleDrawData, 1> draws = {
+		ParticleDrawData{4, 6, PipelineHandle(7, 1), 0, true}
+	};
+	const std::array<RHIBindlessResource, 1> bindless_resources = {
+		RHIBindlessResource{ResourceIndex(3, 1), RHIResourceType::Material, RHIBufferHandle(8, 1), {}}
+	};
+	const ParticlePassInput input{
+		draws,
+		ParticleBillboardBinding{RHIBufferHandle(9, 1), 32, 6},
+		bindless_resources,
+		color_target,
+		depth_target,
+		{0, 0, 1280, 720, 0.0f, 1.0f}
+	};
+
+	RecordingParticleCommandList command_list;
+	BOOST_REQUIRE(plan.Execute(graph, command_list, [&](GraphPassHandle current_pass, CommandList &commands, const PassResources &resources) noexcept {
+		return current_pass == particle_pass && ParticlePass::Execute(commands, resources, input);
+	}));
+	BOOST_CHECK(command_list.last_vertex_count == 1);
 }
 
 BOOST_AUTO_TEST_CASE(particle_pass_rejects_invalid_graph_resources)

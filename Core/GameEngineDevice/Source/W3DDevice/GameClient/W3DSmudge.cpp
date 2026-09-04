@@ -46,6 +46,9 @@
 #include "WW3D2/Camera.h"
 #include "WW3D2/SortingRenderer.h"
 
+#include <cstddef>
+#include <span>
+
 
 SmudgeManager *TheSmudgeManager=nullptr;
 
@@ -132,6 +135,35 @@ void W3DSmudgeManager::ReAcquireResources()
 			ib+=12;
 		}
 	}
+}
+
+std::size_t W3DSmudgeManager::Collect_Modern_Smudges(std::span<float> position_x, std::span<float> position_y,
+	std::span<float> position_z, std::span<float> offset_x, std::span<float> offset_y,
+	std::span<float> sizes, std::span<float> opacities) const noexcept
+{
+	const std::size_t capacity = position_x.size();
+	if (position_y.size() != capacity || position_z.size() != capacity || offset_x.size() != capacity
+		|| offset_y.size() != capacity || sizes.size() != capacity || opacities.size() != capacity)
+		return 0;
+
+	std::size_t count = 0;
+	for (SmudgeSet *set : m_usedSmudgeSetList) {
+		if (set == nullptr)
+			continue;
+		for (Smudge *smudge : set->getUsedSmudgeList()) {
+			if (smudge == nullptr || !smudge->m_draw || count >= capacity)
+				continue;
+			position_x[count] = smudge->m_pos.X;
+			position_y[count] = smudge->m_pos.Y;
+			position_z[count] = smudge->m_pos.Z;
+			offset_x[count] = smudge->m_offset.X;
+			offset_y[count] = smudge->m_offset.Y;
+			sizes[count] = smudge->m_size;
+			opacities[count] = smudge->m_opacity;
+			++count;
+		}
+	}
+	return count;
 }
 
 /*Copies a portion of the current render target into a specified buffer*/

@@ -42,6 +42,7 @@ export struct PipelineDesc final
 	bool depth_test = true;
 	bool depth_write = true;
 	RHIBlendMode blend_mode = RHIBlendMode::Disabled;
+	RHICullMode cull_mode = RHICullMode::Back;
 	ShaderLayoutKey parameter_layout_key = 0;
 
 	void Set_Parameter_Layout(const ShaderInterfaceLayout &layout) noexcept
@@ -71,6 +72,8 @@ constexpr PipelineKey PipelineKey::From(const PipelineDesc &description) noexcep
 	key ^= description.depth_write ? 1u : 0u;
 	key *= 1099511628211ull;
 	key ^= static_cast<std::uint8_t>(description.blend_mode);
+	key *= 1099511628211ull;
+	key ^= static_cast<std::uint8_t>(description.cull_mode);
 	key *= 1099511628211ull;
 	key ^= description.parameter_layout_key;
 	key *= 1099511628211ull;
@@ -164,9 +167,10 @@ private:
 			key.value,
 			description.depth_test,
 			description.depth_write,
-			description.topology,
-			description.vertex_format,
-			description.blend_mode
+				description.topology,
+				description.vertex_format,
+				description.blend_mode,
+				description.cull_mode
 		};
 		return device.Create_Pipeline(rhi_description);
 	}

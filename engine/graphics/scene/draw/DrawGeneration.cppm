@@ -5,6 +5,13 @@ module;
 #include <cstdint>
 #include <span>
 
+#if defined(RTS_PROFILE_TRACY)
+#include <tracy/Tracy.hpp>
+#define GRAPHICS_PROFILE_SCOPE(name) ZoneScopedN(name)
+#else
+#define GRAPHICS_PROFILE_SCOPE(name) ((void)0)
+#endif
+
 export module Graphics.Scene.DrawGeneration;
 
 export import Graphics.Scene.GPUScene;
@@ -97,6 +104,7 @@ private:
 
 export bool Build_Draw_Data(const LODSet &lod_set, const GPUScene &gpu_scene, DrawPass pass, DrawSet &draw_set) noexcept
 {
+	GRAPHICS_PROFILE_SCOPE("Graphics::Build_Draw_Data");
 	draw_set.Clear();
 	if (!pass.pipeline.Is_Valid())
 		return false;

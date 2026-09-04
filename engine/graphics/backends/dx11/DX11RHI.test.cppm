@@ -8,13 +8,13 @@ module;
 #include <cstdint>
 #include <windows.h>
 
-export module Graphics.RHI.DX11.Tests;
+export module Graphics.Backends.DX11.Tests;
 
 #ifndef GRAPHICS_DX11_TEST_SHADER_DIRECTORY
 #define GRAPHICS_DX11_TEST_SHADER_DIRECTORY "."
 #endif
 
-import Graphics.RHI.DX11;
+import Graphics.Backends.DX11;
 import Graphics.RHI.Frame;
 import Graphics.Passes.Opaque;
 import Graphics.Resources.Bindless.BindlessResourceTable;

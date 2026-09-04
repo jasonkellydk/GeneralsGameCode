@@ -23,6 +23,7 @@ export struct alignas(16) ParticleDrawData final
 	std::uint32_t material_index = Invalid_Particle_Material_Index;
 	PipelineHandle pipeline{};
 	std::uint64_t sort_key = 0;
+	bool point_sprite = false;
 };
 
 static_assert(sizeof(ParticleDrawData) == 32);
@@ -128,6 +129,11 @@ export bool Build_Particle_Draw_Data(
 	for (const std::uint32_t particle_index : visible_particles.Indices()) {
 		if (particle_index >= data.Size() || !Has_Particle_Emitter_Flag(data.emitter_flags[particle_index], ParticleEmitterFlags::Enabled))
 			continue;
+		const PipelineHandle particle_pipeline = data.pipelines.empty() || !data.pipelines[particle_index].Is_Valid()
+			? pass.pipeline
+			: data.pipelines[particle_index];
+		if (!particle_pipeline.Is_Valid())
+			continue;
 
 		const std::uint32_t material_index = gpu_scene.Material_Index(data.materials[particle_index]);
 		if (material_index == Invalid_GPU_Index || material_index >= materials.size())
@@ -136,8 +142,9 @@ export bool Build_Particle_Draw_Data(
 		if (!draw_set.Try_Append({
 			particle_index,
 			material_index,
-			pass.pipeline,
-			Make_Sort_Key(view, data, particle_index, pass.sort_key)
+			particle_pipeline,
+			Make_Sort_Key(view, data, particle_index, pass.sort_key),
+			Has_Particle_Emitter_Flag(data.emitter_flags[particle_index], ParticleEmitterFlags::PointSprite)
 		})) {
 			draw_set.Clear();
 			return false;

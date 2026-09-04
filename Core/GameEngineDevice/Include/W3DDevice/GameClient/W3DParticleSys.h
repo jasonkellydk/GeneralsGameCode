@@ -1,62 +1,124 @@
-/*
-**	Command & Conquer Generals Zero Hour(tm)
-**	Copyright 2025 Electronic Arts Inc.
-**
-**	This program is free software: you can redistribute it and/or modify
-**	it under the terms of the GNU General Public License as published by
-**	the Free Software Foundation, either version 3 of the License, or
-**	(at your option) any later version.
-**
-**	This program is distributed in the hope that it will be useful,
-**	but WITHOUT ANY WARRANTY; without even the implied warranty of
-**	MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-**	GNU General Public License for more details.
-**
-**	You should have received a copy of the GNU General Public License
-**	along with this program.  If not, see <http://www.gnu.org/licenses/>.
-*/
-
-////////////////////////////////////////////////////////////////////////////////
-//																																						//
-//  (c) 2001-2003 Electronic Arts Inc.																				//
-//																																						//
-////////////////////////////////////////////////////////////////////////////////
-
-// FILE: W3DParticleSys.h /////////////////////////////////////////////////////////
-///////////////////////////////////////////////////////////////////////////////
-
 #pragma once
 
-#include "GameClient/ParticleSys.h"
-#include "WW3D2/PointGr.h"
-#include "WW3D2/Streak.h"
-#include "WW3D2/RInfo.h"
-#include "WWLib/bittype.h"
+#include <array>
+#include <cstdint>
+#include <span>
+#include <string>
+#include <vector>
 
-//=============================================================================
-/** W3D implementation of the game display which is responsible for creating
-  * all interaction with the screen and updating the display
-	*/
+#include "GameClient/ParticleSys.h"
+#include "WW3D2/RInfo.h"
+
+import Graphics.Scene.Particles.Renderer;
+import Graphics.Scene.Beams;
+import Graphics.RHI.Frame;
+
 class W3DParticleSystemManager : public ParticleSystemManager
 {
-
 public:
 	W3DParticleSystemManager();
 	virtual ~W3DParticleSystemManager() override;
 
 	virtual void doParticles(RenderInfoClass &rinfo) override;
 	virtual void queueParticleRender() override;
-	///< returns the number of particles shown on screen per frame
 	virtual Int getOnScreenParticleCount() override { return m_onScreenParticleCount; }
 
-private:
-	enum { MAX_POINTS_PER_GROUP = 512 };
+	void Reset_Modern_Particle_Bindings() noexcept;
+	bool Set_Modern_Particle_View(const Graphics::View &view) noexcept;
+	bool Render_Modern_Particles(Graphics::CommandList &commands, const Graphics::FrameTargets &targets) noexcept;
 
-	PointGroupClass *m_pointGroup;							///< the point group that contains all of the particles
-	StreakLineClass *m_streakLine;							///< the streak class that contains all of the streaks
-	ShareBufferClass<Vector3> *m_posBuffer;			///< array of particle positions
-	ShareBufferClass<Vector4> *m_RGBABuffer;		///< array of particle color and alpha
-	ShareBufferClass<float> *m_sizeBuffer;			///< array of particle sizes
-	ShareBufferClass<uint8> *m_angleBuffer;			///< array of particle orientations
-	Bool m_readyToRender;											///< if true, it is OK to render
+private:
+	static constexpr std::size_t MAX_PARTICLES_PER_SYSTEM = 512;
+	static constexpr std::size_t MAX_VOLUME_PARTICLES_PER_SYSTEM = MAX_PARTICLES_PER_SYSTEM * 16;
+	static constexpr std::size_t MAX_MODERN_SNOW_PARTICLES = 65536;
+	static constexpr std::size_t MAX_MODERN_SMUDGES = 512;
+
+	struct ModernEmitterBinding final
+	{
+		ParticleSystem *legacy_system = nullptr;
+		Graphics::ParticleEmitterHandle modern_emitter{};
+		std::uint32_t sync_stamp = 0;
+	};
+
+	struct ModernStreakBinding final
+	{
+		ParticleSystem *legacy_system = nullptr;
+		std::string texture_name;
+		Graphics::TextureHandle texture{};
+		Graphics::MaterialHandle material{};
+		std::vector<Graphics::BeamHandle> beams;
+		std::uint32_t sync_stamp = 0;
+	};
+
+	struct ModernMaterialBinding final
+	{
+		std::string texture_name;
+		Graphics::TextureHandle texture{};
+		Graphics::MaterialHandle material{};
+	};
+
+	void Prepare_Modern_Particles();
+	bool Is_Modern_Particle_System(const ParticleSystem &system) const noexcept;
+	Graphics::ParticleEmitterHandle Find_Modern_Emitter(ParticleSystem *system) const noexcept;
+	Graphics::ParticleEmitterHandle Ensure_Modern_Emitter(ParticleSystem &system);
+	ModernStreakBinding *Find_Modern_Streak(ParticleSystem *system) noexcept;
+	ModernStreakBinding *Ensure_Modern_Streak(ParticleSystem &system);
+	Graphics::BeamFlags Modern_Streak_Flags(const ParticleSystem &system) const noexcept;
+	void Update_Modern_Streak(ParticleSystem &system, ModernStreakBinding &binding) noexcept;
+	Graphics::MaterialHandle Ensure_Modern_Material(const char *texture_name);
+	Graphics::ParticleEmitterFlags Modern_Particle_Flags(const ParticleSystem &system) const noexcept;
+	bool Passes_Terrain_Bounds(float x, float y, float z, float radius) const noexcept;
+	void Prepare_Modern_Snow();
+	void Prepare_Modern_Smudges();
+
+	std::vector<ModernEmitterBinding> m_modernEmitters;
+	std::vector<ModernStreakBinding> m_modernStreaks;
+	std::vector<ModernMaterialBinding> m_modernMaterials;
+	Graphics::ParticleEmitterHandle m_modernSnowEmitter{};
+	std::uint32_t m_modernSyncStamp = 0;
+	std::array<float, MAX_VOLUME_PARTICLES_PER_SYSTEM> m_modernPositionX{};
+	std::array<float, MAX_VOLUME_PARTICLES_PER_SYSTEM> m_modernPositionY{};
+	std::array<float, MAX_VOLUME_PARTICLES_PER_SYSTEM> m_modernPositionZ{};
+	std::array<float, MAX_VOLUME_PARTICLES_PER_SYSTEM> m_modernVelocityX{};
+	std::array<float, MAX_VOLUME_PARTICLES_PER_SYSTEM> m_modernVelocityY{};
+	std::array<float, MAX_VOLUME_PARTICLES_PER_SYSTEM> m_modernVelocityZ{};
+	std::array<float, MAX_VOLUME_PARTICLES_PER_SYSTEM> m_modernLifetimes{};
+	std::array<float, MAX_VOLUME_PARTICLES_PER_SYSTEM> m_modernSizes{};
+	std::array<float, MAX_VOLUME_PARTICLES_PER_SYSTEM> m_modernColorR{};
+	std::array<float, MAX_VOLUME_PARTICLES_PER_SYSTEM> m_modernColorG{};
+	std::array<float, MAX_VOLUME_PARTICLES_PER_SYSTEM> m_modernColorB{};
+	std::array<float, MAX_VOLUME_PARTICLES_PER_SYSTEM> m_modernColorA{};
+	std::array<float, MAX_VOLUME_PARTICLES_PER_SYSTEM> m_modernAngles{};
+	std::array<Graphics::MaterialHandle, MAX_VOLUME_PARTICLES_PER_SYSTEM> m_modernParticleMaterials{};
+	std::array<Graphics::ParticleEmitterFlags, MAX_VOLUME_PARTICLES_PER_SYSTEM> m_modernEmitterFlags{};
+	std::array<Graphics::PipelineHandle, MAX_VOLUME_PARTICLES_PER_SYSTEM> m_modernPipelines{};
+	std::array<float, MAX_MODERN_SNOW_PARTICLES> m_modernSnowPositionX{};
+	std::array<float, MAX_MODERN_SNOW_PARTICLES> m_modernSnowPositionY{};
+	std::array<float, MAX_MODERN_SNOW_PARTICLES> m_modernSnowPositionZ{};
+	std::array<float, MAX_MODERN_SNOW_PARTICLES> m_modernSnowSizes{};
+	std::array<float, MAX_MODERN_SNOW_PARTICLES> m_modernSnowZeros{};
+	std::array<float, MAX_MODERN_SNOW_PARTICLES> m_modernSnowOnes{};
+	std::array<Graphics::MaterialHandle, MAX_MODERN_SNOW_PARTICLES> m_modernSnowMaterials{};
+	std::array<Graphics::ParticleEmitterFlags, MAX_MODERN_SNOW_PARTICLES> m_modernSnowFlags{};
+	std::array<float, MAX_MODERN_SMUDGES> m_modernSmudgePositionX{};
+	std::array<float, MAX_MODERN_SMUDGES> m_modernSmudgePositionY{};
+	std::array<float, MAX_MODERN_SMUDGES> m_modernSmudgePositionZ{};
+	std::array<float, MAX_MODERN_SMUDGES> m_modernSmudgeOffsetX{};
+	std::array<float, MAX_MODERN_SMUDGES> m_modernSmudgeOffsetY{};
+	std::array<float, MAX_MODERN_SMUDGES> m_modernSmudgeSizes{};
+	std::array<float, MAX_MODERN_SMUDGES> m_modernSmudgeOpacities{};
+	std::size_t m_modernSnowCount = 0;
+	std::size_t m_modernSmudgeCount = 0;
+	Graphics::View m_modernView{};
+	bool m_modernViewValid = false;
+	float m_terrainCenterX = 0.0f;
+	float m_terrainCenterY = 0.0f;
+	float m_terrainCenterZ = 0.0f;
+	float m_terrainExtentX = 0.0f;
+	float m_terrainExtentY = 0.0f;
+	float m_terrainExtentZ = 0.0f;
+	bool m_terrainBoundsValid = false;
+	Int m_onScreenParticleCount = 0;
+	Bool m_readyToRender = false;
+	Bool m_modernParticlesPrepared = false;
 };

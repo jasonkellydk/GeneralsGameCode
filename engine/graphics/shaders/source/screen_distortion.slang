@@ -1,0 +1,30 @@
+struct ScreenDistortionVertexInput
+{
+    float3 position : POSITION;
+    float4 color : COLOR0;
+    float2 uv : TEXCOORD0;
+};
+
+struct ScreenDistortionVertexOutput
+{
+    float4 position : SV_POSITION;
+    float4 color : COLOR0;
+    float2 uv : TEXCOORD0;
+};
+
+Texture2D<float4> Background : register(t0);
+SamplerState LinearSampler : register(s0);
+
+ScreenDistortionVertexOutput screen_distortion_vertex(ScreenDistortionVertexInput input)
+{
+    ScreenDistortionVertexOutput output;
+    output.position = float4(input.position, 1.0);
+    output.color = input.color;
+    output.uv = input.uv;
+    return output;
+}
+
+float4 screen_distortion_pixel(ScreenDistortionVertexOutput input) : SV_TARGET
+{
+    return Background.Sample(LinearSampler, input.uv) * input.color;
+}

@@ -1,5 +1,6 @@
 module;
 
+#include <algorithm>
 #include <array>
 #include <cmath>
 #include <cstddef>
@@ -8,6 +9,13 @@ module;
 #include <span>
 #include <utility>
 #include <vector>
+
+#if defined(RTS_PROFILE_TRACY)
+#include <tracy/Tracy.hpp>
+#define GRAPHICS_PROFILE_SCOPE(name) ZoneScopedN(name)
+#else
+#define GRAPHICS_PROFILE_SCOPE(name) ((void)0)
+#endif
 
 export module Graphics.Scene.Particles;
 
@@ -26,7 +34,12 @@ export inline constexpr std::uint32_t Invalid_Particle_Material_Index = std::num
 export enum class ParticleEmitterFlags : std::uint32_t
 {
 	None = 0,
-	Enabled = 1u << 0
+	Enabled = 1u << 0,
+	Billboard = 1u << 1,
+	AlphaTest = 1u << 2,
+	Additive = 1u << 3,
+	Multiply = 1u << 4,
+	PointSprite = 1u << 5
 };
 
 export constexpr ParticleEmitterFlags operator|(ParticleEmitterFlags left, ParticleEmitterFlags right) noexcept
@@ -54,6 +67,7 @@ export struct ParticleEmitter final
 	MaterialHandle material{};
 	ParticleEmitterFlags flags = ParticleEmitterFlags::Enabled;
 	std::uint32_t max_particles = 1024;
+	PipelineHandle pipeline{};
 };
 
 export struct ParticleData final
@@ -70,9 +84,11 @@ export struct ParticleData final
 	std::span<const float> color_g{};
 	std::span<const float> color_b{};
 	std::span<const float> color_a{};
+	std::span<const float> angles{};
 	std::span<const MaterialHandle> materials{};
 	std::span<const ParticleEmitterFlags> emitter_flags{};
 	std::span<const ParticleEmitterHandle> emitters{};
+	std::span<const PipelineHandle> pipelines{};
 
 	std::size_t Size() const noexcept
 	{
@@ -87,11 +103,20 @@ export struct alignas(16) GPUParticleData final
 	std::array<float, 4> color{};
 	std::uint32_t material_index = Invalid_Particle_Material_Index;
 	std::uint32_t emitter_flags = 0;
-	std::uint32_t reserved0 = 0;
-	std::uint32_t reserved1 = 0;
+	float angle = 0.0f;
+	std::uint32_t texture_index = Invalid_Particle_Material_Index;
 };
 
 static_assert(sizeof(GPUParticleData) == 64);
+
+export struct ParticleVertex final
+{
+	float position[3]{};
+	float color[4]{};
+	float uv[2]{};
+};
+
+static_assert(sizeof(ParticleVertex) == 36);
 
 export GPUParticleData Pack_GPU_Particle(const ParticleData &particles, std::size_t particle_index, std::uint32_t material_index) noexcept
 {
@@ -114,6 +139,7 @@ export GPUParticleData Pack_GPU_Particle(const ParticleData &particles, std::siz
 		particles.color_b[particle_index],
 		particles.color_a[particle_index]
 	};
+	data.angle = particles.angles.empty() ? 0.0f : particles.angles[particle_index];
 	data.material_index = material_index;
 	data.emitter_flags = static_cast<std::uint32_t>(particles.emitter_flags[particle_index]);
 	return data;
@@ -148,9 +174,11 @@ public:
 		m_color_g.reserve(particle_capacity);
 		m_color_b.reserve(particle_capacity);
 		m_color_a.reserve(particle_capacity);
+		m_angles.reserve(particle_capacity);
 		m_materials.reserve(particle_capacity);
 		m_particle_emitter_flags.reserve(particle_capacity);
 		m_particle_emitters.reserve(particle_capacity);
+		m_particle_pipelines.reserve(particle_capacity);
 	}
 
 	ParticleEmitterHandle Create_Emitter(const ParticleEmitter &emitter = {})
@@ -223,7 +251,85 @@ public:
 				continue;
 			m_materials[particle_index] = emitter.material;
 			m_particle_emitter_flags[particle_index] = emitter.flags;
+			m_particle_pipelines[particle_index] = emitter.pipeline;
 		}
+		return true;
+	}
+
+	void Clear_Particles() noexcept
+	{
+		m_position_x.clear();
+		m_position_y.clear();
+		m_position_z.clear();
+		m_velocity_x.clear();
+		m_velocity_y.clear();
+		m_velocity_z.clear();
+		m_lifetimes.clear();
+		m_sizes.clear();
+		m_color_r.clear();
+		m_color_g.clear();
+		m_color_b.clear();
+		m_color_a.clear();
+		m_angles.clear();
+		m_materials.clear();
+		m_particle_emitter_flags.clear();
+		m_particle_emitters.clear();
+		m_particle_pipelines.clear();
+		for (std::uint32_t &count : m_emitter_particle_counts)
+			count = 0;
+	}
+
+	bool Append_Particles(ParticleEmitterHandle handle, const ParticleData &source) noexcept
+	{
+		if (!Is_Valid_Emitter_Handle(handle) || !Has_Consistent_Source_Size(source))
+			return false;
+
+		const std::size_t count = source.Size();
+		if (!Can_Append(count))
+			return false;
+
+		const std::uint32_t dense_emitter_index = m_emitter_slots[handle.Get_Index()].dense_index;
+		const std::size_t first_particle = m_position_x.size();
+		const std::size_t new_size = first_particle + count;
+		m_position_x.resize(new_size);
+		m_position_y.resize(new_size);
+		m_position_z.resize(new_size);
+		m_velocity_x.resize(new_size);
+		m_velocity_y.resize(new_size);
+		m_velocity_z.resize(new_size);
+		m_lifetimes.resize(new_size);
+		m_sizes.resize(new_size);
+		m_color_r.resize(new_size);
+		m_color_g.resize(new_size);
+		m_color_b.resize(new_size);
+		m_color_a.resize(new_size);
+		m_angles.resize(new_size);
+		m_materials.resize(new_size);
+		m_particle_emitter_flags.resize(new_size);
+		m_particle_emitters.resize(new_size);
+		m_particle_pipelines.resize(new_size);
+
+		for (std::size_t index = 0; index < count; ++index) {
+			const std::size_t particle_index = first_particle + index;
+			m_position_x[particle_index] = source.position_x[index];
+			m_position_y[particle_index] = source.position_y[index];
+			m_position_z[particle_index] = source.position_z[index];
+			m_velocity_x[particle_index] = source.velocity_x[index];
+			m_velocity_y[particle_index] = source.velocity_y[index];
+			m_velocity_z[particle_index] = source.velocity_z[index];
+			m_lifetimes[particle_index] = source.lifetimes[index];
+			m_sizes[particle_index] = source.sizes[index];
+			m_color_r[particle_index] = source.color_r[index];
+			m_color_g[particle_index] = source.color_g[index];
+			m_color_b[particle_index] = source.color_b[index];
+			m_color_a[particle_index] = source.color_a[index];
+			m_angles[particle_index] = source.angles.empty() ? 0.0f : source.angles[index];
+			m_materials[particle_index] = source.materials[index];
+			m_particle_emitter_flags[particle_index] = source.emitter_flags[index];
+			m_particle_emitters[particle_index] = handle;
+			m_particle_pipelines[particle_index] = source.pipelines.empty() ? m_emitters[dense_emitter_index].pipeline : source.pipelines[index];
+		}
+		m_emitter_particle_counts[dense_emitter_index] += static_cast<std::uint32_t>(count);
 		return true;
 	}
 
@@ -258,7 +364,8 @@ public:
 			|| count > m_color_a.capacity() - m_color_a.size()
 			|| count > m_materials.capacity() - m_materials.size()
 			|| count > m_particle_emitter_flags.capacity() - m_particle_emitter_flags.size()
-			|| count > m_particle_emitters.capacity() - m_particle_emitters.size())
+			|| count > m_particle_emitters.capacity() - m_particle_emitters.size()
+			|| count > m_particle_pipelines.capacity() - m_particle_pipelines.size())
 			return false;
 
 		const std::size_t first_particle = m_position_x.size();
@@ -275,9 +382,11 @@ public:
 		m_color_g.resize(new_size);
 		m_color_b.resize(new_size);
 		m_color_a.resize(new_size);
+		m_angles.resize(new_size);
 		m_materials.resize(new_size);
 		m_particle_emitter_flags.resize(new_size);
 		m_particle_emitters.resize(new_size);
+		m_particle_pipelines.resize(new_size);
 
 		for (std::uint32_t index = 0; index < count; ++index) {
 			const std::size_t particle_index = first_particle + index;
@@ -293,9 +402,11 @@ public:
 			m_color_g[particle_index] = emitter.color[1];
 			m_color_b[particle_index] = emitter.color[2];
 			m_color_a[particle_index] = emitter.color[3];
+			m_angles[particle_index] = 0.0f;
 			m_materials[particle_index] = emitter.material;
 			m_particle_emitter_flags[particle_index] = emitter.flags;
 			m_particle_emitters[particle_index] = handle;
+			m_particle_pipelines[particle_index] = emitter.pipeline;
 		}
 		m_emitter_particle_counts[dense_emitter_index] += count;
 		return true;
@@ -303,6 +414,7 @@ public:
 
 	bool Update(float delta_seconds) noexcept
 	{
+		GRAPHICS_PROFILE_SCOPE("Graphics::ParticleSystem::Update");
 		if (!(delta_seconds >= 0.0f) || !std::isfinite(delta_seconds))
 			return false;
 
@@ -353,9 +465,11 @@ public:
 			m_color_g,
 			m_color_b,
 			m_color_a,
+			m_angles,
 			m_materials,
 			m_particle_emitter_flags,
-			m_particle_emitters
+			m_particle_emitters,
+			m_particle_pipelines
 		};
 	}
 
@@ -399,6 +513,47 @@ private:
 		return slot.dense_index != Invalid_Particle_Index && slot.generation == handle.Get_Generation();
 	}
 
+	static bool Has_Consistent_Source_Size(const ParticleData &source) noexcept
+	{
+		const std::size_t count = source.position_x.size();
+		return source.position_y.size() == count
+			&& source.position_z.size() == count
+			&& source.velocity_x.size() == count
+			&& source.velocity_y.size() == count
+			&& source.velocity_z.size() == count
+			&& source.lifetimes.size() == count
+			&& source.sizes.size() == count
+			&& source.color_r.size() == count
+			&& source.color_g.size() == count
+			&& source.color_b.size() == count
+			&& source.color_a.size() == count
+			&& (source.angles.empty() || source.angles.size() == count)
+			&& source.materials.size() == count
+			&& source.emitter_flags.size() == count
+			&& (source.pipelines.empty() || source.pipelines.size() == count);
+	}
+
+	bool Can_Append(std::size_t count) const noexcept
+	{
+		return count <= m_position_x.capacity() - m_position_x.size()
+			&& count <= m_position_y.capacity() - m_position_y.size()
+			&& count <= m_position_z.capacity() - m_position_z.size()
+			&& count <= m_velocity_x.capacity() - m_velocity_x.size()
+			&& count <= m_velocity_y.capacity() - m_velocity_y.size()
+			&& count <= m_velocity_z.capacity() - m_velocity_z.size()
+			&& count <= m_lifetimes.capacity() - m_lifetimes.size()
+			&& count <= m_sizes.capacity() - m_sizes.size()
+			&& count <= m_color_r.capacity() - m_color_r.size()
+			&& count <= m_color_g.capacity() - m_color_g.size()
+			&& count <= m_color_b.capacity() - m_color_b.size()
+			&& count <= m_color_a.capacity() - m_color_a.size()
+			&& count <= m_angles.capacity() - m_angles.size()
+			&& count <= m_materials.capacity() - m_materials.size()
+			&& count <= m_particle_emitter_flags.capacity() - m_particle_emitter_flags.size()
+			&& count <= m_particle_emitters.capacity() - m_particle_emitters.size()
+			&& count <= m_particle_pipelines.capacity() - m_particle_pipelines.size();
+	}
+
 	void Decrement_Emitter_Count(ParticleEmitterHandle handle) noexcept
 	{
 		if (!Is_Valid_Emitter_Handle(handle))
@@ -427,9 +582,11 @@ private:
 			m_color_g[particle_index] = m_color_g[last_particle_index];
 			m_color_b[particle_index] = m_color_b[last_particle_index];
 			m_color_a[particle_index] = m_color_a[last_particle_index];
+			m_angles[particle_index] = m_angles[last_particle_index];
 			m_materials[particle_index] = m_materials[last_particle_index];
 			m_particle_emitter_flags[particle_index] = m_particle_emitter_flags[last_particle_index];
 			m_particle_emitters[particle_index] = m_particle_emitters[last_particle_index];
+			m_particle_pipelines[particle_index] = m_particle_pipelines[last_particle_index];
 		}
 
 		m_position_x.pop_back();
@@ -444,9 +601,11 @@ private:
 		m_color_g.pop_back();
 		m_color_b.pop_back();
 		m_color_a.pop_back();
+		m_angles.pop_back();
 		m_materials.pop_back();
 		m_particle_emitter_flags.pop_back();
 		m_particle_emitters.pop_back();
+		m_particle_pipelines.pop_back();
 	}
 
 	std::vector<ParticleEmitter> m_emitters;
@@ -467,9 +626,11 @@ private:
 	AlignedVector<float> m_color_g;
 	AlignedVector<float> m_color_b;
 	AlignedVector<float> m_color_a;
+	AlignedVector<float> m_angles;
 	AlignedVector<MaterialHandle> m_materials;
 	AlignedVector<ParticleEmitterFlags> m_particle_emitter_flags;
 	AlignedVector<ParticleEmitterHandle> m_particle_emitters;
+	AlignedVector<PipelineHandle> m_particle_pipelines;
 };
 
 }

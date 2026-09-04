@@ -1,4 +1,5 @@
 add_executable(z_generals)
+set_property(TARGET z_generals PROPERTY CXX_SCAN_FOR_MODULES ON)
 
 # Use a binary name that doesn't conflict with original game.
 if("${CMAKE_SYSTEM}" MATCHES "Windows")

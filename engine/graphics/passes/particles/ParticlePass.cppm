@@ -75,7 +75,8 @@ public:
 				has_bound_pipeline = true;
 			}
 
-			if (!command_list.Draw(input.billboard.vertex_count, 0, 1, draw.particle_index))
+			const std::uint32_t vertex_count = draw.point_sprite ? 1u : input.billboard.vertex_count;
+			if (!command_list.Draw(vertex_count, 0, 1, draw.particle_index))
 				return false;
 		}
 

@@ -22,7 +22,7 @@ struct GPUInstanceData
     uint reserved;
 };
 
-StructuredBuffer<GPUInstanceData> Instances : register(t1);
+StructuredBuffer<GPUInstanceData> Instances : register(t127);
 
 struct GPULightData
 {
@@ -35,7 +35,7 @@ struct GPULightData
     uint shadow_data_index;
 };
 
-StructuredBuffer<GPULightData> Lights : register(t2);
+StructuredBuffer<GPULightData> Lights : register(t126);
 
 cbuffer MaterialParameters : register(b0)
 {

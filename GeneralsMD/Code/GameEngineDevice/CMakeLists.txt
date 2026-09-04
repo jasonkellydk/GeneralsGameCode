@@ -170,6 +170,7 @@ set(GAMEENGINEDEVICE_SRC
 )
 
 add_library(z_gameenginedevice STATIC)
+set_property(TARGET z_gameenginedevice PROPERTY CXX_SCAN_FOR_MODULES ON)
 
 add_dependencies(z_gameenginedevice generals_graphics)
 

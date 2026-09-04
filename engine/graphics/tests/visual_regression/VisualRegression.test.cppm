@@ -28,7 +28,7 @@ import Graphics.Scene.Beams;
 import Graphics.Scene.Lighting.Renderer;
 import Graphics.Shaders.Library;
 import Graphics.Testing.VisualRegression;
-import Graphics.RHI.DX11;
+import Graphics.Backends.DX11;
 
 using namespace Graphics;
 

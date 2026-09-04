@@ -20,6 +20,8 @@
 
 #pragma once
 
+#include <span>
+
 #include "GameClient/Snow.h"
 
 class IndexBufferClass;
@@ -42,6 +44,12 @@ class W3DSnowManager : public SnowManager
 	void	render(RenderInfoClass &rinfo);
 	void	renderAsQuads(RenderInfoClass &rinfo, Int cubeOriginX, Int cubeOriginY, Int cubeDimX, Int cubeDimY);
 	void	renderSubBox(RenderInfoClass &rinfo, Int originX, Int originY, Int cubeDimX, Int cubeDimY );
+	std::size_t Build_Modern_Particles(float camera_x, float camera_y, float camera_z,
+		std::span<float> position_x, std::span<float> position_y, std::span<float> position_z,
+		std::span<float> sizes) const noexcept;
+	float Modern_Cull_Radius() const noexcept;
+	bool Modern_Uses_Point_Sprites() const noexcept;
+	float Modern_Point_Sprite_Size() const noexcept;
 	void	ReleaseResources();
 	Bool	ReAcquireResources();
 

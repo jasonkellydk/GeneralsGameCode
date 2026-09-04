@@ -12,11 +12,19 @@ module;
 #include <utility>
 #include <vector>
 
+#if defined(RTS_PROFILE_TRACY)
+#include <tracy/Tracy.hpp>
+#define GRAPHICS_PROFILE_SCOPE(name) ZoneScopedN(name)
+#else
+#define GRAPHICS_PROFILE_SCOPE(name) ((void)0)
+#endif
+
 export module Graphics.Scene.Beams;
 
 export import Graphics.Resources.Bindless.BindlessResourceTable;
 export import Graphics.Resources.Handles.ResourceHandle;
 export import Graphics.Resources.Materials.Material;
+export import Graphics.Resources.Residency.GPUResourceResidency;
 export import Graphics.RenderGraph.Execution;
 export import Graphics.Shaders.Library;
 
@@ -30,7 +38,10 @@ export inline constexpr std::uint32_t Invalid_Beam_Index = std::numeric_limits<s
 export enum class BeamFlags : std::uint32_t
 {
 	None = 0,
-	Enabled = 1u << 0
+	Enabled = 1u << 0,
+	AlphaTest = 1u << 1,
+	Additive = 1u << 2,
+	Multiply = 1u << 3
 };
 
 export constexpr BeamFlags operator|(BeamFlags left, BeamFlags right) noexcept
@@ -74,6 +85,10 @@ export struct BeamDescription final
 	float uv_offset = 0.0f;
 	MaterialHandle material{};
 	BeamFlags flags = BeamFlags::Enabled;
+	PipelineHandle pipeline{};
+	bool color_gradient = false;
+	Color4 start_color{};
+	Color4 end_color{};
 };
 
 export using BeamDesc = BeamDescription;
@@ -99,6 +114,16 @@ export struct BeamData final
 	std::span<const float> uv_offsets{};
 	std::span<const MaterialHandle> materials{};
 	std::span<const BeamFlags> flags{};
+	std::span<const PipelineHandle> pipelines{};
+	std::span<const std::uint8_t> color_gradient{};
+	std::span<const float> start_color_r{};
+	std::span<const float> start_color_g{};
+	std::span<const float> start_color_b{};
+	std::span<const float> start_color_a{};
+	std::span<const float> end_color_r{};
+	std::span<const float> end_color_g{};
+	std::span<const float> end_color_b{};
+	std::span<const float> end_color_a{};
 	std::span<const BeamHandle> handles{};
 
 	std::size_t Size() const noexcept
@@ -125,9 +150,17 @@ export struct BeamVertex final
 	float position[3]{};
 	float color[4]{};
 	float uv[2]{};
+	std::uint32_t resource_index = std::numeric_limits<std::uint32_t>::max();
 };
 
-static_assert(sizeof(BeamVertex) == 36);
+static_assert(sizeof(BeamVertex) == 40);
+
+export struct BeamDrawRange final
+{
+	PipelineHandle pipeline{};
+	std::uint32_t first_vertex = 0;
+	std::uint32_t vertex_count = 0;
+};
 
 export class BeamSet final
 {
@@ -150,6 +183,16 @@ public:
 		m_uv_offsets.reserve(capacity);
 		m_materials.reserve(capacity);
 		m_flags.reserve(capacity);
+		m_pipelines.reserve(capacity);
+		m_color_gradient.reserve(capacity);
+		m_start_color_r.reserve(capacity);
+		m_start_color_g.reserve(capacity);
+		m_start_color_b.reserve(capacity);
+		m_start_color_a.reserve(capacity);
+		m_end_color_r.reserve(capacity);
+		m_end_color_g.reserve(capacity);
+		m_end_color_b.reserve(capacity);
+		m_end_color_a.reserve(capacity);
 		m_dense_handles.reserve(capacity);
 		m_slots.reserve(capacity);
 	}
@@ -224,6 +267,16 @@ public:
 		m_uv_offsets[dense_index] = description.uv_offset;
 		m_materials[dense_index] = description.material;
 		m_flags[dense_index] = description.flags;
+		m_pipelines[dense_index] = description.pipeline;
+		m_color_gradient[dense_index] = description.color_gradient;
+		m_start_color_r[dense_index] = description.start_color.r;
+		m_start_color_g[dense_index] = description.start_color.g;
+		m_start_color_b[dense_index] = description.start_color.b;
+		m_start_color_a[dense_index] = description.start_color.a;
+		m_end_color_r[dense_index] = description.end_color.r;
+		m_end_color_g[dense_index] = description.end_color.g;
+		m_end_color_b[dense_index] = description.end_color.b;
+		m_end_color_a[dense_index] = description.end_color.a;
 		return true;
 	}
 
@@ -265,6 +318,16 @@ public:
 			m_uv_offsets,
 			m_materials,
 			m_flags,
+			m_pipelines,
+			m_color_gradient,
+			m_start_color_r,
+			m_start_color_g,
+			m_start_color_b,
+			m_start_color_a,
+			m_end_color_r,
+			m_end_color_g,
+			m_end_color_b,
+			m_end_color_a,
 			m_dense_handles
 		};
 	}
@@ -287,6 +350,16 @@ public:
 		m_uv_offsets.clear();
 		m_materials.clear();
 		m_flags.clear();
+		m_pipelines.clear();
+		m_color_gradient.clear();
+		m_start_color_r.clear();
+		m_start_color_g.clear();
+		m_start_color_b.clear();
+		m_start_color_a.clear();
+		m_end_color_r.clear();
+		m_end_color_g.clear();
+		m_end_color_b.clear();
+		m_end_color_a.clear();
 		m_dense_handles.clear();
 		m_slots.clear();
 		m_free_head = Invalid_Beam_Index;
@@ -341,6 +414,16 @@ private:
 		m_uv_offsets.push_back(description.uv_offset);
 		m_materials.push_back(description.material);
 		m_flags.push_back(description.flags);
+		m_pipelines.push_back(description.pipeline);
+		m_color_gradient.push_back(description.color_gradient);
+		m_start_color_r.push_back(description.start_color.r);
+		m_start_color_g.push_back(description.start_color.g);
+		m_start_color_b.push_back(description.start_color.b);
+		m_start_color_a.push_back(description.start_color.a);
+		m_end_color_r.push_back(description.end_color.r);
+		m_end_color_g.push_back(description.end_color.g);
+		m_end_color_b.push_back(description.end_color.b);
+		m_end_color_a.push_back(description.end_color.a);
 	}
 
 	void Move_Dense(std::uint32_t destination, std::uint32_t source) noexcept
@@ -361,6 +444,16 @@ private:
 		m_uv_offsets[destination] = m_uv_offsets[source];
 		m_materials[destination] = m_materials[source];
 		m_flags[destination] = m_flags[source];
+		m_pipelines[destination] = m_pipelines[source];
+		m_color_gradient[destination] = m_color_gradient[source];
+		m_start_color_r[destination] = m_start_color_r[source];
+		m_start_color_g[destination] = m_start_color_g[source];
+		m_start_color_b[destination] = m_start_color_b[source];
+		m_start_color_a[destination] = m_start_color_a[source];
+		m_end_color_r[destination] = m_end_color_r[source];
+		m_end_color_g[destination] = m_end_color_g[source];
+		m_end_color_b[destination] = m_end_color_b[source];
+		m_end_color_a[destination] = m_end_color_a[source];
 	}
 
 	void Pop_Dense() noexcept
@@ -381,6 +474,16 @@ private:
 		m_uv_offsets.pop_back();
 		m_materials.pop_back();
 		m_flags.pop_back();
+		m_pipelines.pop_back();
+		m_color_gradient.pop_back();
+		m_start_color_r.pop_back();
+		m_start_color_g.pop_back();
+		m_start_color_b.pop_back();
+		m_start_color_a.pop_back();
+		m_end_color_r.pop_back();
+		m_end_color_g.pop_back();
+		m_end_color_b.pop_back();
+		m_end_color_a.pop_back();
 		m_dense_handles.pop_back();
 	}
 
@@ -400,12 +503,29 @@ private:
 	AlignedVector<float> m_uv_offsets;
 	AlignedVector<MaterialHandle> m_materials;
 	AlignedVector<BeamFlags> m_flags;
+	AlignedVector<PipelineHandle> m_pipelines;
+	AlignedVector<std::uint8_t> m_color_gradient;
+	AlignedVector<float> m_start_color_r;
+	AlignedVector<float> m_start_color_g;
+	AlignedVector<float> m_start_color_b;
+	AlignedVector<float> m_start_color_a;
+	AlignedVector<float> m_end_color_r;
+	AlignedVector<float> m_end_color_g;
+	AlignedVector<float> m_end_color_b;
+	AlignedVector<float> m_end_color_a;
 	std::vector<BeamHandle> m_dense_handles;
 	std::vector<Slot> m_slots;
 	std::uint32_t m_free_head = Invalid_Beam_Index;
 };
 
-export std::size_t Build_Beam_Vertices(const BeamData &beams, const BeamView &view, std::span<BeamVertex> output) noexcept;
+export std::size_t Build_Beam_Vertices(
+	const BeamData &beams,
+	const BeamView &view,
+	std::span<BeamVertex> output,
+	std::span<const std::uint32_t> order = {},
+	std::span<const std::uint32_t> resource_indices = {},
+	std::span<const PipelineHandle> pipelines = {},
+	std::span<BeamDrawRange> ranges = {}) noexcept;
 
 export struct BeamPassInput final
 {
@@ -418,6 +538,7 @@ export struct BeamPassInput final
 	GraphResourceHandle depth_resource{};
 	RHIViewport viewport{};
 	std::uint32_t vertex_count = 0;
+	std::span<const BeamDrawRange> draw_ranges{};
 };
 
 export class BeamPass final
@@ -444,12 +565,22 @@ public:
 		if (!color_target.Is_Valid() || !depth_target.Is_Valid() || !input.vertex_buffer.Is_Valid() || !input.pipeline.Is_Valid() || input.vertex_count == 0 || input.viewport.width == 0 || input.viewport.height == 0)
 			return false;
 
-		return commands.Set_Render_Targets(color_target, depth_target)
-			&& commands.Set_Viewport(input.viewport)
-			&& commands.Set_Bindless_Resources(input.bindless_resources)
-			&& commands.Bind_Pipeline(input.pipeline)
-			&& commands.Set_Vertex_Buffer(0, input.vertex_buffer, sizeof(BeamVertex), 0)
-			&& commands.Draw(input.vertex_count);
+		if (!commands.Set_Render_Targets(color_target, depth_target)
+			|| !commands.Set_Viewport(input.viewport)
+			|| !commands.Set_Bindless_Resources(input.bindless_resources)
+			|| !commands.Set_Vertex_Buffer(0, input.vertex_buffer, sizeof(BeamVertex), 0))
+			return false;
+
+		if (input.draw_ranges.empty())
+			return commands.Bind_Pipeline(input.pipeline) && commands.Draw(input.vertex_count);
+
+		for (const BeamDrawRange &range : input.draw_ranges) {
+			if (!range.pipeline.Is_Valid() || range.vertex_count == 0
+				|| !commands.Bind_Pipeline(range.pipeline)
+				|| !commands.Draw(range.vertex_count, range.first_vertex))
+				return false;
+		}
+		return true;
 	}
 };
 
@@ -468,6 +599,10 @@ public:
 		m_device = &device;
 		m_beams.Reserve(max_beams);
 		m_vertices.resize(vertex_count);
+		m_order.reserve(max_beams);
+		m_resource_indices.resize(max_beams, std::numeric_limits<std::uint32_t>::max());
+		m_resolved_pipelines.resize(max_beams);
+		m_draw_ranges.reserve(max_beams);
 		m_graph = std::make_unique<RenderGraph>();
 		m_graph->Reserve(2, 1, 2);
 		m_color_resource = m_graph->Create_Resource({GraphResourceKind::Texture});
@@ -478,7 +613,7 @@ public:
 			return false;
 		}
 
-		m_shader = m_shaders.Load_Basic_Opaque(shader_directory);
+		m_shader = m_shaders.Load_Beam(shader_directory);
 		if (!m_shader.Is_Valid()) {
 			Shutdown();
 			return false;
@@ -496,25 +631,20 @@ public:
 			return false;
 		}
 
-		PipelineDesc pipeline_description = m_shaders.Make_Pipeline_Description(m_shader, Make_Basic_Opaque_Pipeline());
-		pipeline_description.depth_test = true;
-		pipeline_description.depth_write = false;
-		pipeline_description.blend_mode = RHIBlendMode::Alpha;
-		m_pipeline = m_shaders.Create_Pipeline(device, material, m_shader, pipeline_description);
-		if (!m_pipeline.Is_Valid()) {
-			Shutdown();
-			return false;
-		}
-
-		BeamInstanceData instance_data;
-		instance_data.transform[0] = 1.0f;
-		instance_data.transform[5] = 1.0f;
-		instance_data.transform[10] = 1.0f;
-		instance_data.transform[15] = 1.0f;
-		m_instance_buffer = device.Create_Buffer_Initialized(
-			{static_cast<std::uint32_t>(sizeof(instance_data)), RHIBufferUsage::Storage, static_cast<std::uint32_t>(sizeof(instance_data))},
-			std::as_bytes(std::span<const BeamInstanceData>(&instance_data, 1)));
-		if (!m_instance_buffer.Is_Valid()) {
+		const PipelineDesc pipeline_description = m_shaders.Make_Pipeline_Description(m_shader, Make_Beam_Pipeline());
+		PipelineDesc alpha_test_description = pipeline_description;
+		alpha_test_description.depth_write = true;
+		alpha_test_description.blend_mode = RHIBlendMode::Disabled;
+		PipelineDesc additive_description = pipeline_description;
+		additive_description.blend_mode = RHIBlendMode::Additive;
+		PipelineDesc multiply_description = pipeline_description;
+		multiply_description.blend_mode = RHIBlendMode::Multiply;
+		m_pipelines[0] = m_shaders.Create_Pipeline(device, m_shader, pipeline_description);
+		m_pipelines[1] = m_shaders.Create_Pipeline(device, m_shader, additive_description);
+		m_pipelines[2] = m_shaders.Create_Pipeline(device, m_shader, multiply_description);
+		m_pipelines[3] = m_shaders.Create_Pipeline(device, m_shader, alpha_test_description);
+		m_pipeline = m_pipelines[0];
+		if (!m_pipelines[0].Is_Valid() || !m_pipelines[1].Is_Valid() || !m_pipelines[2].Is_Valid() || !m_pipelines[3].Is_Valid()) {
 			Shutdown();
 			return false;
 		}
@@ -533,11 +663,12 @@ public:
 			return false;
 		}
 
-		m_bindless.Reserve(2, 1, 0, 0, 1);
-		if (!m_bindless.Register_Buffer(m_instance_buffer).Is_Valid() || !m_bindless.Register_Material(m_material, m_material_constants).Is_Valid()) {
+		m_bindless.Reserve(256, 0, 128, 0, 128);
+		if (!m_bindless.Register_Material(m_material, m_material_constants).Is_Valid()) {
 			Shutdown();
 			return false;
 		}
+		m_residency = std::make_unique<GPUResourceResidency>(device);
 
 		return true;
 	}
@@ -549,23 +680,30 @@ public:
 				m_device->Destroy_Buffer(m_vertex_buffer);
 			if (m_material_constants.Is_Valid())
 				m_device->Destroy_Buffer(m_material_constants);
-			if (m_instance_buffer.Is_Valid())
-				m_device->Destroy_Buffer(m_instance_buffer);
-			if (m_pipeline.Is_Valid())
-				m_device->Destroy_Pipeline(m_pipeline);
+			for (const PipelineHandle pipeline : m_pipelines)
+				if (pipeline.Is_Valid())
+					m_device->Destroy_Pipeline(pipeline);
 		}
 
 		m_vertex_buffer = {};
 		m_material_constants = {};
-		m_instance_buffer = {};
-		m_pipeline = {};
+		m_residency.reset();
 		m_bindless.Clear();
 		if (m_material.Is_Valid())
 			m_materials.Destroy(m_material);
 		m_material = {};
+		m_textures = {};
+		m_materials = {};
+		m_samplers = {};
+		m_pipeline = {};
+		m_pipelines.fill({});
 		if (m_shader.Is_Valid())
 			m_shaders.Destroy(m_shader);
 		m_shader = {};
+		m_order.clear();
+		m_resource_indices.clear();
+		m_resolved_pipelines.clear();
+		m_draw_ranges.clear();
 		m_plan = {};
 		m_graph.reset();
 		m_pass = {};
@@ -611,6 +749,90 @@ public:
 		return m_material;
 	}
 
+	PipelineHandle Pipeline_For_Flags(BeamFlags flags) const noexcept
+	{
+		if (Has_Beam_Flag(flags, BeamFlags::AlphaTest))
+			return m_pipelines[3];
+		if (Has_Beam_Flag(flags, BeamFlags::Additive))
+			return m_pipelines[1];
+		if (Has_Beam_Flag(flags, BeamFlags::Multiply))
+			return m_pipelines[2];
+		return m_pipelines[0];
+	}
+
+	ShaderHandle Beam_Shader() const noexcept
+	{
+		return m_shader;
+	}
+
+	TextureHandle Create_Texture(const Texture &description, std::span<const std::byte> initial_data)
+	{
+		if (!Is_Initialized() || m_residency == nullptr || initial_data.empty() || !Has_Texture_Usage(description.usage, TextureUsage::Sampled))
+			return {};
+
+		Texture stored = description;
+		stored.pixel_data = {};
+		const TextureHandle handle = m_textures.Create(stored);
+		if (!handle.Is_Valid())
+			return {};
+
+		Texture upload = description;
+		upload.pixel_data = initial_data;
+		if (!m_residency->Upload_Texture(handle, upload)) {
+			m_textures.Destroy(handle);
+			return {};
+		}
+
+		const GPUResidentTexture resident = m_residency->Texture_Info(handle);
+		if (!resident.texture.Is_Valid() || !m_bindless.Register_Texture(handle, resident.texture).Is_Valid()) {
+			m_residency->Destroy_Texture(handle);
+			m_textures.Destroy(handle);
+			return {};
+		}
+		return handle;
+	}
+
+	MaterialHandle Create_Material(const Material &description)
+	{
+		if (!Is_Initialized() || m_residency == nullptr)
+			return {};
+
+		Material stored = description;
+		if (!stored.shader.Is_Valid())
+			stored.shader = m_shader;
+		const MaterialHandle handle = m_materials.Create(stored);
+		if (!handle.Is_Valid() || !m_residency->Upload_Material(handle, stored)) {
+			m_materials.Destroy(handle);
+			return {};
+		}
+
+		const GPUResidentMaterial resident = m_residency->Material_Info(handle);
+		if (!resident.constants.Is_Valid() || !m_bindless.Register_Material(handle, resident.constants).Is_Valid()) {
+			m_residency->Destroy_Material(handle);
+			m_materials.Destroy(handle);
+			return {};
+		}
+		return handle;
+	}
+
+	bool Destroy_Texture(TextureHandle handle) noexcept
+	{
+		if (m_residency == nullptr || m_textures.Resolve(handle) == nullptr)
+			return false;
+		m_bindless.Destroy_Texture(handle);
+		m_residency->Destroy_Texture(handle);
+		return m_textures.Destroy(handle);
+	}
+
+	bool Destroy_Material(MaterialHandle handle) noexcept
+	{
+		if (handle == m_material || m_residency == nullptr || m_materials.Resolve(handle) == nullptr)
+			return false;
+		m_bindless.Destroy_Material(handle);
+		m_residency->Destroy_Material(handle);
+		return m_materials.Destroy(handle);
+	}
+
 	bool Set_View(const BeamView &view) noexcept
 	{
 		if (!Is_Initialized())
@@ -631,10 +853,46 @@ public:
 
 	bool Render(CommandList &commands, RHITextureHandle color_target, RHITextureHandle depth_target, RHIViewport viewport) noexcept
 	{
+		GRAPHICS_PROFILE_SCOPE("Graphics::BeamRenderer::Render");
 		if (!Is_Initialized() || !color_target.Is_Valid() || !depth_target.Is_Valid() || viewport.width == 0 || viewport.height == 0)
 			return false;
 
-		m_vertex_count = static_cast<std::uint32_t>(Build_Beam_Vertices(m_beams.Data(), m_view, std::span<BeamVertex>(m_vertices)));
+		const BeamData data = m_beams.Data();
+		m_order.clear();
+		for (std::size_t index = 0; index < data.Size(); ++index) {
+			m_resolved_pipelines[index] = data.pipelines.empty() || !data.pipelines[index].Is_Valid()
+				? Pipeline_For_Flags(data.flags[index])
+				: data.pipelines[index];
+			m_resource_indices[index] = std::numeric_limits<std::uint32_t>::max();
+			if (!data.materials.empty()) {
+				if (const Material *material = m_materials.Resolve(data.materials[index]); material != nullptr && material->textures[0].Is_Valid()) {
+					const ResourceIndex resource_index = m_bindless.Texture_Index(material->textures[0]);
+					if (resource_index.Is_Valid())
+						m_resource_indices[index] = resource_index.Get_Index();
+				}
+			}
+			m_order.push_back(static_cast<std::uint32_t>(index));
+		}
+		std::sort(m_order.begin(), m_order.end(), [this, &data](std::uint32_t left, std::uint32_t right) noexcept {
+			const PipelineHandle left_pipeline = m_resolved_pipelines[left];
+			const PipelineHandle right_pipeline = m_resolved_pipelines[right];
+			if (left_pipeline.Get_Index() != right_pipeline.Get_Index())
+				return left_pipeline.Get_Index() < right_pipeline.Get_Index();
+			if (left_pipeline.Get_Generation() != right_pipeline.Get_Generation())
+				return left_pipeline.Get_Generation() < right_pipeline.Get_Generation();
+			if (data.materials[left] != data.materials[right])
+				return data.materials[left].Get_Index() < data.materials[right].Get_Index();
+			return left < right;
+		});
+		m_draw_ranges.clear();
+		m_vertex_count = static_cast<std::uint32_t>(Build_Beam_Vertices(
+			data,
+			m_view,
+			std::span<BeamVertex>(m_vertices),
+			std::span<const std::uint32_t>(m_order),
+			std::span<const std::uint32_t>(m_resource_indices.data(), data.Size()),
+			std::span<const PipelineHandle>(m_resolved_pipelines.data(), data.Size()),
+			std::span<BeamDrawRange>(m_draw_ranges)));
 		if (m_vertex_count == 0)
 			return true;
 		if (!m_device->Update_Buffer(m_vertex_buffer, 0, std::as_bytes(std::span<const BeamVertex>(m_vertices.data(), m_vertex_count))))
@@ -654,7 +912,8 @@ public:
 			m_color_resource,
 			m_depth_resource,
 			viewport,
-			m_vertex_count
+			m_vertex_count,
+			std::span<const BeamDrawRange>(m_draw_ranges)
 		};
 		return m_plan.Execute(*m_graph, commands, [&](GraphPassHandle pass, CommandList &command_list, const PassResources &resources) noexcept {
 			return pass == m_pass && BeamPass::Execute(command_list, resources, input);
@@ -667,29 +926,24 @@ public:
 	}
 
 private:
-	struct alignas(16) BeamInstanceData final
-	{
-		std::array<float, 16> transform{};
-		std::array<float, 4> bounds{};
-		std::uint32_t mesh_index = 0;
-		std::uint32_t material_index = 0;
-		std::uint32_t flags = 0;
-		std::uint32_t reserved = 0;
-	};
-
-	static_assert(sizeof(BeamInstanceData) == 96);
-
 	Device *m_device = nullptr;
 	BeamSet m_beams;
 	BeamView m_view{};
 	AlignedVector<BeamVertex> m_vertices;
+	std::vector<std::uint32_t> m_order;
+	std::vector<std::uint32_t> m_resource_indices;
+	std::vector<PipelineHandle> m_resolved_pipelines;
+	std::vector<BeamDrawRange> m_draw_ranges;
 	std::uint32_t m_vertex_count = 0;
 	ShaderLibrary m_shaders;
 	ShaderHandle m_shader{};
+	TexturePool m_textures;
+	SamplerPool m_samplers;
 	MaterialPool m_materials;
+	std::unique_ptr<GPUResourceResidency> m_residency;
 	MaterialHandle m_material{};
+	std::array<PipelineHandle, 4> m_pipelines{};
 	PipelineHandle m_pipeline{};
-	RHIBufferHandle m_instance_buffer{};
 	RHIBufferHandle m_material_constants{};
 	RHIBufferHandle m_vertex_buffer{};
 	BindlessResourceTable m_bindless;
@@ -752,7 +1006,7 @@ std::array<float, 4> Transform(const std::array<float, 16> &matrix, Vec3 point) 
 	};
 }
 
-void Write_Vertex(BeamVertex &vertex, const std::array<float, 4> &position, const std::array<float, 4> &color, float u, float v) noexcept
+void Write_Vertex(BeamVertex &vertex, const std::array<float, 4> &position, const std::array<float, 4> &color, float u, float v, std::uint32_t resource_index) noexcept
 {
 	vertex.position[0] = position[0];
 	vertex.position[1] = position[1];
@@ -763,16 +1017,32 @@ void Write_Vertex(BeamVertex &vertex, const std::array<float, 4> &position, cons
 	vertex.color[3] = color[3];
 	vertex.uv[0] = u;
 	vertex.uv[1] = v;
+	vertex.resource_index = resource_index;
 }
 }
 
-export std::size_t Build_Beam_Vertices(const BeamData &beams, const BeamView &view, std::span<BeamVertex> output) noexcept
+export std::size_t Build_Beam_Vertices(
+	const BeamData &beams,
+	const BeamView &view,
+	std::span<BeamVertex> output,
+	std::span<const std::uint32_t> order,
+	std::span<const std::uint32_t> resource_indices,
+	std::span<const PipelineHandle> pipelines,
+	std::span<BeamDrawRange> ranges) noexcept
 {
 	if (beams.Size() > output.size() / 6)
 		return 0;
+	if ((!order.empty() && order.size() != beams.Size())
+		|| (!resource_indices.empty() && resource_indices.size() != beams.Size())
+		|| (!pipelines.empty() && pipelines.size() != beams.Size()))
+		return 0;
 
 	std::size_t output_count = 0;
-	for (std::size_t index = 0; index < beams.Size(); ++index) {
+	std::size_t range_count = 0;
+	for (std::size_t ordered_index = 0; ordered_index < beams.Size(); ++ordered_index) {
+		const std::size_t index = order.empty() ? ordered_index : order[ordered_index];
+		if (index >= beams.Size())
+			return 0;
 		if (!Has_Beam_Flag(beams.flags[index], BeamFlags::Enabled) || !(beams.widths[index] > 0.0f))
 			continue;
 
@@ -807,14 +1077,42 @@ export std::size_t Build_Beam_Vertices(const BeamData &beams, const BeamView &vi
 			beams.color_b[index],
 			beams.color_a[index] * beams.opacities[index]
 		};
+		const std::array<float, 4> start_color = beams.color_gradient.empty() || beams.color_gradient[index] == 0
+			? color
+			: std::array<float, 4>{
+				beams.start_color_r[index],
+				beams.start_color_g[index],
+				beams.start_color_b[index],
+				beams.start_color_a[index] * beams.opacities[index]
+			};
+		const std::array<float, 4> end_color = beams.color_gradient.empty() || beams.color_gradient[index] == 0
+			? color
+			: std::array<float, 4>{
+				beams.end_color_r[index],
+				beams.end_color_g[index],
+				beams.end_color_b[index],
+				beams.end_color_a[index] * beams.opacities[index]
+			};
+		const std::uint32_t resource_index = resource_indices.empty() ? std::numeric_limits<std::uint32_t>::max() : resource_indices[index];
+		const PipelineHandle pipeline = pipelines.empty() ? (beams.pipelines.empty() ? PipelineHandle{} : beams.pipelines[index]) : pipelines[index];
+		if (!ranges.empty()) {
+			if (range_count != 0 && ranges[range_count - 1].pipeline == pipeline
+				&& ranges[range_count - 1].first_vertex + ranges[range_count - 1].vertex_count == output_count) {
+				ranges[range_count - 1].vertex_count += 6;
+			} else {
+				if (range_count >= ranges.size())
+					return 0;
+				ranges[range_count++] = {pipeline, static_cast<std::uint32_t>(output_count), 6};
+			}
+		}
 		const float start_v = beams.uv_offsets[index];
 		const float end_v = start_v + beams.uv_scales[index];
-		Write_Vertex(output[output_count++], start_clip, color, 0.0f, start_v);
-		Write_Vertex(output[output_count++], start_right_clip, color, 1.0f, start_v);
-		Write_Vertex(output[output_count++], end_clip, color, 0.0f, end_v);
-		Write_Vertex(output[output_count++], end_clip, color, 0.0f, end_v);
-		Write_Vertex(output[output_count++], start_right_clip, color, 1.0f, start_v);
-		Write_Vertex(output[output_count++], end_right_clip, color, 1.0f, end_v);
+		Write_Vertex(output[output_count++], start_clip, start_color, 0.0f, start_v, resource_index);
+		Write_Vertex(output[output_count++], start_right_clip, start_color, 1.0f, start_v, resource_index);
+		Write_Vertex(output[output_count++], end_clip, end_color, 0.0f, end_v, resource_index);
+		Write_Vertex(output[output_count++], end_clip, end_color, 0.0f, end_v, resource_index);
+		Write_Vertex(output[output_count++], start_right_clip, start_color, 1.0f, start_v, resource_index);
+		Write_Vertex(output[output_count++], end_right_clip, end_color, 1.0f, end_v, resource_index);
 	}
 
 	return output_count;

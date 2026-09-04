@@ -19,7 +19,7 @@ module;
 #include <vector>
 #include <windows.h>
 
-export module Graphics.RHI.DX11;
+export module Graphics.Backends.DX11;
 
 export import Graphics.RHI;
 
@@ -103,6 +103,7 @@ struct DX11Pipeline final
 	DX11NativeObject<ID3D11InputLayout> input_layout;
 	DX11NativeObject<ID3D11DepthStencilState> depth_stencil_state;
 	DX11NativeObject<ID3D11BlendState> blend_state;
+	DX11NativeObject<ID3D11RasterizerState> rasterizer_state;
 	DX11NativeObject<ID3D11SamplerState> sampler_state;
 	RHIPrimitiveTopology topology = RHIPrimitiveTopology::TriangleList;
 };
@@ -171,6 +172,7 @@ public:
 	bool Set_Depth_Target(RHITextureHandle depth_target) noexcept override;
 	bool Clear(const std::array<float, 4> &color, float depth) noexcept override;
 	bool Clear_Depth(float depth) noexcept override;
+	bool Copy_Texture(RHITextureHandle source, RHITextureHandle destination) noexcept override;
 	bool Set_Viewport(RHIViewport viewport) noexcept override;
 	bool Set_Vertex_Buffer(std::uint32_t slot, RHIBufferHandle buffer, std::uint32_t stride, std::uint32_t offset) noexcept override;
 	bool Set_Index_Buffer(RHIBufferHandle buffer, RHIIndexFormat format, std::uint32_t offset) noexcept override;
@@ -273,9 +275,16 @@ static D3D11_PRIMITIVE_TOPOLOGY To_DX11_Topology(RHIPrimitiveTopology topology) 
 	switch (topology) {
 	case RHIPrimitiveTopology::TriangleList:
 		return D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST;
+	case RHIPrimitiveTopology::PointList:
+		return D3D11_PRIMITIVE_TOPOLOGY_POINTLIST;
 	}
 
 	return D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST;
+}
+
+static D3D11_CULL_MODE To_DX11_Cull_Mode(RHICullMode mode) noexcept
+{
+	return mode == RHICullMode::None ? D3D11_CULL_NONE : D3D11_CULL_BACK;
 }
 
 static bool Create_DX11_Pipeline(
@@ -285,7 +294,10 @@ static bool Create_DX11_Pipeline(
 	std::span<const std::byte> pixel_bytecode,
 	DX11Pipeline &pipeline) noexcept
 {
-	if (device == nullptr || description.topology != RHIPrimitiveTopology::TriangleList || description.vertex_format != RHIVertexFormat::Position3Color4UV2)
+	if (device == nullptr || (description.topology != RHIPrimitiveTopology::TriangleList
+		&& description.topology != RHIPrimitiveTopology::PointList)
+		|| (description.vertex_format != RHIVertexFormat::Position3Color4UV2
+			&& description.vertex_format != RHIVertexFormat::Position3Color4UV2ResourceIndex))
 		return false;
 	if (vertex_bytecode.empty() || pixel_bytecode.empty())
 		return false;
@@ -303,10 +315,12 @@ static bool Create_DX11_Pipeline(
 	const D3D11_INPUT_ELEMENT_DESC input_elements[] = {
 		{"POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 0, D3D11_INPUT_PER_VERTEX_DATA, 0},
 		{"COLOR", 0, DXGI_FORMAT_R32G32B32A32_FLOAT, 0, 12, D3D11_INPUT_PER_VERTEX_DATA, 0},
-		{"TEXCOORD", 0, DXGI_FORMAT_R32G32_FLOAT, 0, 28, D3D11_INPUT_PER_VERTEX_DATA, 0}
+		{"TEXCOORD", 0, DXGI_FORMAT_R32G32_FLOAT, 0, 28, D3D11_INPUT_PER_VERTEX_DATA, 0},
+		{"TEXCOORD", 1, DXGI_FORMAT_R32_UINT, 0, 36, D3D11_INPUT_PER_VERTEX_DATA, 0}
 	};
+	const UINT input_element_count = description.vertex_format == RHIVertexFormat::Position3Color4UV2 ? 3u : 4u;
 	ID3D11InputLayout *input_layout = nullptr;
-	if (FAILED(device->CreateInputLayout(input_elements, static_cast<UINT>(std::size(input_elements)), vertex_bytecode.data(), vertex_bytecode.size(), &input_layout)))
+	if (FAILED(device->CreateInputLayout(input_elements, input_element_count, vertex_bytecode.data(), vertex_bytecode.size(), &input_layout)))
 		return false;
 	pipeline.input_layout.Reset(input_layout);
 
@@ -321,9 +335,22 @@ static bool Create_DX11_Pipeline(
 
 	D3D11_BLEND_DESC blend_description{};
 	D3D11_RENDER_TARGET_BLEND_DESC &render_target_blend = blend_description.RenderTarget[0];
-	render_target_blend.BlendEnable = description.blend_mode == RHIBlendMode::Alpha ? TRUE : FALSE;
-	render_target_blend.SrcBlend = description.blend_mode == RHIBlendMode::Alpha ? D3D11_BLEND_SRC_ALPHA : D3D11_BLEND_ONE;
-	render_target_blend.DestBlend = description.blend_mode == RHIBlendMode::Alpha ? D3D11_BLEND_INV_SRC_ALPHA : D3D11_BLEND_ZERO;
+	render_target_blend.BlendEnable = description.blend_mode == RHIBlendMode::Disabled ? FALSE : TRUE;
+	switch (description.blend_mode) {
+	case RHIBlendMode::Disabled:
+	case RHIBlendMode::Additive:
+		render_target_blend.SrcBlend = D3D11_BLEND_ONE;
+		render_target_blend.DestBlend = description.blend_mode == RHIBlendMode::Additive ? D3D11_BLEND_ONE : D3D11_BLEND_ZERO;
+		break;
+	case RHIBlendMode::Alpha:
+		render_target_blend.SrcBlend = D3D11_BLEND_SRC_ALPHA;
+		render_target_blend.DestBlend = D3D11_BLEND_INV_SRC_ALPHA;
+		break;
+	case RHIBlendMode::Multiply:
+		render_target_blend.SrcBlend = D3D11_BLEND_ZERO;
+		render_target_blend.DestBlend = D3D11_BLEND_SRC_COLOR;
+		break;
+	}
 	render_target_blend.BlendOp = D3D11_BLEND_OP_ADD;
 	render_target_blend.SrcBlendAlpha = D3D11_BLEND_ONE;
 	render_target_blend.DestBlendAlpha = description.blend_mode == RHIBlendMode::Alpha ? D3D11_BLEND_INV_SRC_ALPHA : D3D11_BLEND_ZERO;
@@ -333,6 +360,16 @@ static bool Create_DX11_Pipeline(
 	if (FAILED(device->CreateBlendState(&blend_description, &blend_state)))
 		return false;
 	pipeline.blend_state.Reset(blend_state);
+
+	D3D11_RASTERIZER_DESC rasterizer_description{};
+	rasterizer_description.FillMode = D3D11_FILL_SOLID;
+	rasterizer_description.CullMode = To_DX11_Cull_Mode(description.cull_mode);
+	rasterizer_description.FrontCounterClockwise = FALSE;
+	rasterizer_description.DepthClipEnable = TRUE;
+	ID3D11RasterizerState *rasterizer_state = nullptr;
+	if (FAILED(device->CreateRasterizerState(&rasterizer_description, &rasterizer_state)))
+		return false;
+	pipeline.rasterizer_state.Reset(rasterizer_state);
 
 	D3D11_SAMPLER_DESC sampler_description{};
 	sampler_description.Filter = D3D11_FILTER_MIN_MAG_MIP_LINEAR;
@@ -555,7 +592,7 @@ export class DX11Device final : public Device
 {
 public:
 	explicit DX11Device(DX11DeviceOptions options = {});
-	~DX11Device() noexcept override;
+	~DX11Device() noexcept override = default;
 
 	DX11Device(const DX11Device &) = delete;
 	DX11Device &operator=(const DX11Device &) = delete;
@@ -782,7 +819,7 @@ bool DX11CommandList::Bind_Pipeline(RHIPipelineHandle pipeline) noexcept
 		return false;
 
 	DX11Pipeline *resource = m_state->pipelines.Resolve(pipeline);
-	if (resource == nullptr || resource->vertex_shader.Get() == nullptr || resource->pixel_shader.Get() == nullptr || resource->input_layout.Get() == nullptr || resource->depth_stencil_state.Get() == nullptr || resource->blend_state.Get() == nullptr || resource->sampler_state.Get() == nullptr)
+	if (resource == nullptr || resource->vertex_shader.Get() == nullptr || resource->pixel_shader.Get() == nullptr || resource->input_layout.Get() == nullptr || resource->depth_stencil_state.Get() == nullptr || resource->blend_state.Get() == nullptr || resource->rasterizer_state.Get() == nullptr || resource->sampler_state.Get() == nullptr)
 		return false;
 
 	ID3D11DeviceContext *context = m_state->context.Get();
@@ -793,6 +830,7 @@ bool DX11CommandList::Bind_Pipeline(RHIPipelineHandle pipeline) noexcept
 	context->PSSetSamplers(0, 1, &sampler_state);
 	context->OMSetDepthStencilState(resource->depth_stencil_state.Get(), 0);
 	context->OMSetBlendState(resource->blend_state.Get(), nullptr, 0xffffffffu);
+	context->RSSetState(resource->rasterizer_state.Get());
 	context->IASetPrimitiveTopology(To_DX11_Topology(resource->topology));
 	m_pipeline = pipeline;
 	return true;
@@ -852,21 +890,24 @@ bool DX11CommandList::Set_Bindless_Resources(std::span<const RHIBindlessResource
 		return false;
 
 	m_bindless_resources = resources;
-	std::uint32_t storage_buffer_slot = 1;
+	std::uint32_t storage_buffer_slot = 127;
 	for (const RHIBindlessResource &resource : resources) {
 		switch (resource.type) {
 		case RHIResourceType::Buffer:
 			if (!Bind_Buffer_At_Slot(RHIShaderStage::Vertex, storage_buffer_slot, resource.buffer)
 				|| !Bind_Buffer_At_Slot(RHIShaderStage::Fragment, storage_buffer_slot, resource.buffer))
 				return false;
-			++storage_buffer_slot;
+			if (storage_buffer_slot == 0)
+				return false;
+			--storage_buffer_slot;
 			break;
 		case RHIResourceType::Texture:
 			if (resource.index.Get_Index() >= 128 || !Bind_Texture_At_Slot(RHIShaderStage::Fragment, resource.index.Get_Index(), resource.texture))
 				return false;
 			break;
 		case RHIResourceType::Material:
-			if (!Bind_Buffer_At_Slot(RHIShaderStage::Fragment, 0, resource.buffer))
+			if (!Bind_Buffer_At_Slot(RHIShaderStage::Vertex, 0, resource.buffer)
+				|| !Bind_Buffer_At_Slot(RHIShaderStage::Fragment, 0, resource.buffer))
 				return false;
 			break;
 		case RHIResourceType::Sampler:
@@ -950,6 +991,23 @@ bool DX11CommandList::Clear_Depth(float depth) noexcept
 		return false;
 
 	m_state->context.Get()->ClearDepthStencilView(depth_target->depth_stencil_view.Get(), D3D11_CLEAR_DEPTH, depth, 0);
+	return true;
+}
+
+bool DX11CommandList::Copy_Texture(RHITextureHandle source, RHITextureHandle destination) noexcept
+{
+	if (!Is_Ready() || !source.Is_Valid() || !destination.Is_Valid())
+		return false;
+
+	DX11Texture *source_texture = m_state->textures.Resolve(source);
+	DX11Texture *destination_texture = m_state->textures.Resolve(destination);
+	if (source_texture == nullptr || destination_texture == nullptr
+		|| source_texture->object.Get() == nullptr || destination_texture->object.Get() == nullptr
+		|| source_texture->width != destination_texture->width || source_texture->height != destination_texture->height
+		|| source_texture->format != destination_texture->format)
+		return false;
+
+	m_state->context.Get()->CopyResource(destination_texture->object.Get(), source_texture->object.Get());
 	return true;
 }
 
@@ -1056,8 +1114,6 @@ DX11Device::DX11Device(DX11DeviceOptions options)
 	} else if (m_state->native_swap_chain.Get() != nullptr && !m_state->swap_chain.Create_Targets(options.width, options.height))
 		m_state->native_swap_chain.Reset();
 }
-
-DX11Device::~DX11Device() noexcept = default;
 
 bool DX11Device::Is_Valid() const noexcept
 {

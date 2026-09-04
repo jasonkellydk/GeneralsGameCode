@@ -7,6 +7,13 @@ module;
 #include <utility>
 #include <vector>
 
+#if defined(RTS_PROFILE_TRACY)
+#include <tracy/Tracy.hpp>
+#define GRAPHICS_PROFILE_SCOPE(name) ZoneScopedN(name)
+#else
+#define GRAPHICS_PROFILE_SCOPE(name) ((void)0)
+#endif
+
 export module Graphics.Scene.Lighting.Renderer;
 
 export import Graphics.RHI;
@@ -119,6 +126,7 @@ public:
 
 	bool Sync() noexcept
 	{
+		GRAPHICS_PROFILE_SCOPE("Graphics::LightRenderer::Sync");
 		if (!Is_Initialized())
 			return false;
 

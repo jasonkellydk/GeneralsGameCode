@@ -20,6 +20,8 @@
 
 #pragma once
 
+#include <span>
+
 #include "GameClient/Smudge.h"
 #include "WWLib/sharebuf.h"
 
@@ -44,6 +46,10 @@ public:
 	void render (RenderInfoClass &rinfo);
 	virtual void ReleaseResources() override;
 	virtual void ReAcquireResources() override;
+
+	std::size_t Collect_Modern_Smudges(std::span<float> position_x, std::span<float> position_y,
+		std::span<float> position_z, std::span<float> offset_x, std::span<float> offset_y,
+		std::span<float> sizes, std::span<float> opacities) const noexcept;
 
 private:
 	Bool testHardwareSupport();		///<test if video card supports the effect.

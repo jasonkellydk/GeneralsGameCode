@@ -17,7 +17,7 @@ export module Graphics.Passes.Opaque.Tests;
 import Graphics.Passes.Opaque;
 
 #if defined(_WIN32)
-import Graphics.RHI.DX11;
+import Graphics.Backends.DX11;
 
 using namespace Graphics;
 #endif
