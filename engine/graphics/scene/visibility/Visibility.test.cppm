@@ -49,6 +49,9 @@ BOOST_AUTO_TEST_CASE(visibility_outputs_compact_visible_handles)
 {
 	RenderScene scene;
 	const InstanceHandle visible_handle = scene.Create(Make_Instance(0.0f, 0.0f, -5.0f, 1.0f));
+	RenderInstance hidden = Make_Instance(0.0f, 0.0f, -5.0f, 1.0f);
+	hidden.flags = RenderInstanceFlags::Hidden;
+	scene.Create(hidden);
 	scene.Create(Make_Instance(50.0f, 0.0f, -5.0f, 1.0f));
 	scene.Create(Make_Instance(0.0f, 0.0f, 5.0f, 1.0f));
 

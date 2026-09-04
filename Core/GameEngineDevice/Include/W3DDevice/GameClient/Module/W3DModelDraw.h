@@ -55,6 +55,8 @@ public:
 #include "GameClient/ParticleSys.h"
 #include "Common/STLTypedefs.h"
 
+import Graphics.Scene.StaticMeshes;
+
 // FORWARD REFERENCES /////////////////////////////////////////////////////////////////////////////
 class Thing;
 class RenderObjClass;
@@ -507,6 +509,19 @@ private:
 	Bool													m_hideHeadlights;
 	Bool													m_pauseAnimation;
 	Int														m_animationMode;
+
+	Graphics::MeshHandle						m_modernMesh;
+	Graphics::MaterialHandle					m_modernMaterial;
+	Graphics::InstanceHandle				m_modernInstance;
+	Graphics::RenderBounds					m_modernBounds;
+	Bool													m_modernActive;
+	Bool													m_modernHidden;
+
+	bool isModernStaticOpaqueState() const noexcept;
+	bool createModernMesh();
+	void syncModernModel();
+	void updateModernInstance(const Matrix3D *transformMtx);
+	void releaseModernMesh() noexcept;
 
 	void adjustAnimation(const ModelConditionInfo* prevState, Real prevAnimFraction);
 	Real getCurrentAnimFraction() const;

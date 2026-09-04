@@ -36,6 +36,13 @@
 
 #include <SDL3/SDL.h>
 
+#include <array>
+#include <cstddef>
+#include <cstdint>
+#include <limits>
+#include <span>
+#include <vector>
+
 #include "Common/crc.h"
 #include "Common/CRCDebug.h"
 #include "Common/GameState.h"
@@ -68,6 +75,32 @@
 #include "WW3D2/MeshMdl.h"
 #include "Common/BitFlagsIO.h"
 #include "WW3D2/StringUtilities.h"
+#include "WWMath/sphere.h"
+
+namespace
+{
+Graphics::RenderTransform Make_Modern_Transform(const Matrix3D &matrix) noexcept
+{
+	Graphics::RenderTransform transform;
+	for (std::size_t row = 0; row < 3; ++row) {
+		for (std::size_t column = 0; column < 4; ++column)
+			transform.matrix[row * 4 + column] = matrix[static_cast<int>(row)][static_cast<int>(column)];
+	}
+	transform.matrix[12] = 0.0f;
+	transform.matrix[13] = 0.0f;
+	transform.matrix[14] = 0.0f;
+	transform.matrix[15] = 1.0f;
+	return transform;
+}
+
+void Set_Modern_Vertex_Color(Graphics::StaticMeshVertex &vertex, unsigned packed_color) noexcept
+{
+	vertex.color[0] = static_cast<float>((packed_color >> 16) & 0xffu) / 255.0f;
+	vertex.color[1] = static_cast<float>((packed_color >> 8) & 0xffu) / 255.0f;
+	vertex.color[2] = static_cast<float>(packed_color & 0xffu) / 255.0f;
+	vertex.color[3] = static_cast<float>((packed_color >> 24) & 0xffu) / 255.0f;
+}
+}
 
 
 //-------------------------------------------------------------------------------------------------
@@ -1733,6 +1766,12 @@ W3DModelDraw::W3DModelDraw(Thing *thing, const ModuleData* moduleData) : DrawMod
 	m_whichAnimInCurState = -1;
 	m_nextState = nullptr;
 	m_nextStateAnimLoopDuration = NO_NEXT_DURATION;
+	m_modernMesh = {};
+	m_modernMaterial = {};
+	m_modernInstance = {};
+	m_modernBounds = {};
+	m_modernActive = FALSE;
+	m_modernHidden = FALSE;
 	for (i = 0; i < WEAPONSLOT_COUNT; ++i)
 	{
 		m_weaponRecoilInfoVec[i].clear();
@@ -1799,6 +1838,192 @@ W3DModelDraw::~W3DModelDraw()
 	nukeCurrentRender(nullptr);
 }
 
+bool W3DModelDraw::isModernStaticOpaqueState() const noexcept
+{
+	if (m_curState == nullptr || m_nextState != nullptr || m_renderObject == nullptr
+		|| m_renderObject->Class_ID() != RenderObjClass::CLASSID_MESH)
+		return false;
+
+	const W3DModelDrawModuleData *module_data = getW3DModelDrawModuleData();
+	if (module_data == nullptr || module_data->m_particlesAttachedToAnimatedBones
+		|| !module_data->m_attachToDrawableBone.isEmpty())
+		return false;
+
+	const ModelConditionInfo &state = *m_curState;
+	if (!state.m_animations.empty() || !state.m_hideShowVec.empty() || !state.m_particleSysBones.empty()
+		|| state.m_transitionSig != NO_TRANSITION
+		|| (state.m_validStuff & (ModelConditionInfo::TURRETS_VALID
+			| ModelConditionInfo::HAS_PROJECTILE_BONES
+			| ModelConditionInfo::BARRELS_VALID)) != 0)
+		return false;
+
+	MeshClass *mesh = static_cast<MeshClass *>(m_renderObject);
+	MeshModelClass *model = mesh->Peek_Model();
+	if (model == nullptr || model->Get_Flag(MeshGeometryClass::SKIN) != 0
+		|| model->Get_Flag(MeshGeometryClass::TWO_SIDED) != 0
+		|| model->Get_Pass_Count() != 1
+		|| model->Has_Material_Array(0) || model->Has_Texture_Array(0, 0)
+		|| model->Has_Texture_Array(0, 1) || model->Has_Shader_Array(0))
+		return false;
+
+	VertexMaterialClass *material = model->Peek_Single_Material(0);
+	const ShaderClass shader = model->Get_Single_Shader(0);
+	return material != nullptr
+		&& material->Get_Opacity() >= 0.999f
+		&& !shader.Uses_Alpha()
+		&& !shader.Uses_Texture()
+		&& !shader.Uses_Fog()
+		&& !shader.Uses_Primary_Gradient()
+		&& !shader.Uses_Secondary_Gradient()
+		&& shader.Get_Cull_Mode() != ShaderClass::CULL_MODE_DISABLE;
+}
+
+bool W3DModelDraw::createModernMesh()
+{
+	Graphics::StaticMeshRenderer &renderer = Graphics::GetStaticMeshRenderer();
+	if (!renderer.Is_Initialized() || !isModernStaticOpaqueState())
+		return false;
+
+	MeshClass *mesh = static_cast<MeshClass *>(m_renderObject);
+	MeshModelClass *model = mesh->Peek_Model();
+	const int vertex_count = model->Get_Vertex_Count();
+	const int polygon_count = model->Get_Polygon_Count();
+	if (vertex_count <= 0 || vertex_count > 65535 || polygon_count <= 0
+		|| static_cast<std::uint64_t>(polygon_count) > std::numeric_limits<std::uint32_t>::max() / 3u)
+		return false;
+
+	const Vector3 *positions = model->Get_Vertex_Array();
+	const Vector2 *uvs = model->Get_UV_Array_By_Index(0);
+	const unsigned *vertex_colors = model->Get_DCG_Array(0);
+	VertexMaterialClass *material = model->Peek_Single_Material(0);
+	if (positions == nullptr || material == nullptr)
+		return false;
+
+	Vector3 diffuse;
+	material->Get_Diffuse(&diffuse);
+	const float opacity = material->Get_Opacity();
+	std::vector<Graphics::StaticMeshVertex> vertices(static_cast<std::size_t>(vertex_count));
+	for (int index = 0; index < vertex_count; ++index) {
+		Graphics::StaticMeshVertex &vertex = vertices[static_cast<std::size_t>(index)];
+		vertex.position[0] = positions[index].X;
+		vertex.position[1] = positions[index].Y;
+		vertex.position[2] = positions[index].Z;
+		vertex.uv[0] = uvs != nullptr ? uvs[index].X : 0.0f;
+		vertex.uv[1] = uvs != nullptr ? uvs[index].Y : 0.0f;
+		if (vertex_colors != nullptr)
+			Set_Modern_Vertex_Color(vertex, vertex_colors[index]);
+		else {
+			vertex.color[0] = diffuse.X;
+			vertex.color[1] = diffuse.Y;
+			vertex.color[2] = diffuse.Z;
+			vertex.color[3] = opacity;
+		}
+	}
+
+	const TriIndex *polygons = model->Get_Polygon_Array();
+	if (polygons == nullptr)
+		return false;
+	std::vector<std::uint16_t> indices(static_cast<std::size_t>(polygon_count) * 3u);
+	for (int polygon = 0; polygon < polygon_count; ++polygon) {
+		const TriIndex &triangle = polygons[polygon];
+		for (int corner = 0; corner < 3; ++corner) {
+			if (triangle[corner] >= vertex_count)
+				return false;
+			indices[static_cast<std::size_t>(polygon) * 3u + static_cast<std::size_t>(corner)] = triangle[corner];
+		}
+	}
+
+	SphereClass sphere;
+	mesh->Get_Obj_Space_Bounding_Sphere(sphere);
+	const Graphics::MeshHandle modern_mesh = renderer.Create_Mesh({
+		static_cast<std::uint32_t>(vertex_count),
+		static_cast<std::uint32_t>(indices.size()),
+		static_cast<std::uint32_t>(sizeof(Graphics::StaticMeshVertex)),
+		Graphics::MeshIndexFormat::UInt16,
+		std::as_bytes(std::span<const Graphics::StaticMeshVertex>(vertices)),
+		std::as_bytes(std::span<const std::uint16_t>(indices)),
+		{sphere.Center.X, sphere.Center.Y, sphere.Center.Z},
+		sphere.Radius
+	});
+	if (!modern_mesh.Is_Valid())
+		return false;
+
+	Graphics::RenderInstance instance;
+	const Matrix3D legacy_transform = m_renderObject->Get_Transform();
+	instance.transform = Make_Modern_Transform(legacy_transform);
+	instance.bounds = {{sphere.Center.X, sphere.Center.Y, sphere.Center.Z}, sphere.Radius};
+	instance.mesh = modern_mesh;
+	instance.material = renderer.Default_Material();
+	instance.flags = Graphics::RenderInstanceFlags::CastsShadow | Graphics::RenderInstanceFlags::ReceivesShadow;
+	if (m_modernHidden || getDrawable()->isDrawableEffectivelyHidden())
+		instance.flags = instance.flags | Graphics::RenderInstanceFlags::Hidden;
+
+	const Graphics::InstanceHandle modern_instance = renderer.Create_Instance(instance);
+	if (!modern_instance.Is_Valid()) {
+		renderer.Destroy_Mesh(modern_mesh);
+		return false;
+	}
+
+	m_modernMesh = modern_mesh;
+	m_modernMaterial = instance.material;
+	m_modernInstance = modern_instance;
+	m_modernBounds = instance.bounds;
+	m_modernActive = TRUE;
+	m_renderObject->Set_Hidden(TRUE);
+	return true;
+}
+
+void W3DModelDraw::syncModernModel()
+{
+	if (!isModernStaticOpaqueState()) {
+		releaseModernMesh();
+		return;
+	}
+
+	if (!m_modernActive)
+		createModernMesh();
+}
+
+void W3DModelDraw::updateModernInstance(const Matrix3D *transformMtx)
+{
+	if (!m_modernActive || transformMtx == nullptr)
+		return;
+
+	Graphics::RenderInstance instance;
+	instance.transform = Make_Modern_Transform(*transformMtx);
+	instance.bounds = m_modernBounds;
+	instance.mesh = m_modernMesh;
+	instance.material = m_modernMaterial;
+	instance.flags = Graphics::RenderInstanceFlags::CastsShadow | Graphics::RenderInstanceFlags::ReceivesShadow;
+	if (m_modernHidden || getDrawable()->isDrawableEffectivelyHidden())
+		instance.flags = instance.flags | Graphics::RenderInstanceFlags::Hidden;
+
+	if (!Graphics::GetStaticMeshRenderer().Update_Instance(m_modernInstance, instance)) {
+		releaseModernMesh();
+	}
+}
+
+void W3DModelDraw::releaseModernMesh() noexcept
+{
+	Graphics::StaticMeshRenderer &renderer = Graphics::GetStaticMeshRenderer();
+	if (renderer.Is_Initialized()) {
+		if (m_modernInstance.Is_Valid())
+			renderer.Destroy_Instance(m_modernInstance);
+		if (m_modernMesh.Is_Valid())
+			renderer.Destroy_Mesh(m_modernMesh);
+	}
+
+	m_modernMesh = {};
+	m_modernMaterial = {};
+	m_modernInstance = {};
+	m_modernBounds = {};
+	m_modernActive = FALSE;
+	if (m_renderObject != nullptr) {
+		const Bool drawable_hidden = getDrawable() != nullptr && getDrawable()->isDrawableEffectivelyHidden();
+		m_renderObject->Set_Hidden(m_modernHidden || drawable_hidden);
+	}
+}
+
 //-------------------------------------------------------------------------------------------------
 void W3DModelDraw::doStartOrStopParticleSys()
 {
@@ -1822,8 +2047,15 @@ void W3DModelDraw::doStartOrStopParticleSys()
 //-------------------------------------------------------------------------------------------------
 void W3DModelDraw::setHidden(Bool hidden)
 {
+	m_modernHidden = hidden;
+	if (m_modernActive) {
+		Matrix3D transform = *getDrawable()->getTransformMatrix();
+		adjustTransformMtx(transform);
+		updateModernInstance(&transform);
+	}
+
 	if (m_renderObject)
-		m_renderObject->Set_Hidden(hidden);
+		m_renderObject->Set_Hidden(m_modernActive ? TRUE : hidden);
 
 	if (m_shadow)
 		m_shadow->enableShadowRender(!hidden);
@@ -2097,6 +2329,9 @@ void W3DModelDraw::doDrawModule(const Matrix3D* transformMtx)
 		Matrix3D mtx = *transformMtx;
 		adjustTransformMtx(mtx);
 		m_renderObject->Set_Transform(mtx);
+		if (!m_modernActive)
+			syncModernModel();
+		updateModernInstance(&mtx);
 	}
 
 	handleClientTurretPositioning();
@@ -2775,6 +3010,8 @@ void W3DModelDraw::setTerrainDecalOpacity(Real o)
 //-------------------------------------------------------------------------------------------------
 void W3DModelDraw::nukeCurrentRender(Matrix3D* xform)
 {
+	releaseModernMesh();
+
 	// this needs to be "dirtied" so that the new pausing of the animation will be triggered.
 	m_pauseAnimation = false;
 
@@ -3169,6 +3406,7 @@ void W3DModelDraw::setModelState(const ModelConditionInfo* newState)
 	m_nextState = nextState;
 	m_nextStateAnimLoopDuration = NO_NEXT_DURATION;
 	adjustAnimation(prevState, prevAnimFraction);
+	syncModernModel();
 }
 
 //-------------------------------------------------------------------------------------------------
@@ -3650,6 +3888,7 @@ void W3DModelDraw::reactToTransformChange( const Matrix3D* oldMtx,
 		Matrix3D mtx = *getDrawable()->getTransformMatrix();
 		adjustTransformMtx(mtx);
 		m_renderObject->Set_Transform(mtx);
+		updateModernInstance(&mtx);
 	}
 
 	if (m_trackRenderObject)

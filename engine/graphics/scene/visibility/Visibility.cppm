@@ -87,6 +87,9 @@ export bool Build_Visible_Set(const RenderScene &scene, const View &view, Visibl
 	visible_set.Clear();
 	const RenderSceneData scene_data = scene.Data();
 	for (std::size_t dense_index = 0; dense_index < scene_data.Size(); ++dense_index) {
+		if (Has_Render_Instance_Flag(scene_data.flags[dense_index], RenderInstanceFlags::Hidden))
+			continue;
+
 		if (!Is_Visible(
 			view.frustum,
 			scene_data.world_bounds.center_x[dense_index],
