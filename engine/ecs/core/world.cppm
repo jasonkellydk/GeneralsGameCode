@@ -41,7 +41,7 @@ public:
 
 		Signature signature;
 		signature.reserve(sizeof...(Components));
-		(signature.push_back(GetRegisteredComponent<Components>()), ...);
+		(signature.push_back(GetDefaultConstructibleComponent<Components>()), ...);
 		CanonicalizeSignature(signature);
 
 		const Entity entity = AllocateEntity();
@@ -158,6 +158,7 @@ private:
 	{
 		EntityGeneration generation{1};
 		bool alive{false};
+		bool retired{false};
 		EntityLocation location{};
 	};
 
@@ -175,6 +176,15 @@ private:
 		return component;
 	}
 
+	template<typename T>
+	ComponentId GetDefaultConstructibleComponent() const
+	{
+		const ComponentId component = GetRegisteredComponent<T>();
+		if (m_components.Get(component).constructDefault == nullptr)
+			throw std::logic_error("ECS component does not support default construction");
+		return component;
+	}
+
 	bool AddComponent(Entity entity, ComponentId component, void *value);
 	bool RemoveComponent(Entity entity, ComponentId component);
 
@@ -185,6 +195,8 @@ private:
 		void *initializedValue = nullptr);
 
 	friend class CommandBuffer;
+	// Test seam for exercising generation exhaustion without billions of cycles.
+	friend struct WorldTestAccess;
 
 	WorldConfig m_config;
 	ComponentRegistry m_components;
@@ -211,6 +223,7 @@ Entity World::AllocateEntity()
 		const EntityIndex index = m_freeIndices.back();
 		m_freeIndices.pop_back();
 		EntityRecord &record = m_records[index];
+		assert(!record.retired);
 		record.alive = true;
 		record.location = EntityLocation{};
 		++m_entityCount;
@@ -282,20 +295,29 @@ bool World::Destroy(Entity entity)
 	record.alive = false;
 	record.location = EntityLocation{};
 	if (record.generation == std::numeric_limits<EntityGeneration>::max())
-		record.generation = 1;
+	{
+		// The maximum generation has already been issued. Retiring the index
+		// prevents an old handle from becoming valid again after wraparound.
+		record.retired = true;
+	}
 	else
+	{
 		++record.generation;
+		m_freeIndices.push_back(entity.index);
+	}
 	assert(m_entityCount > 0);
 	--m_entityCount;
-	m_freeIndices.push_back(entity.index);
 	return true;
 }
 
 bool World::AddComponent(Entity entity, const ComponentId component, void *value)
 {
 	RequireComponentsFinalized();
-	if (component == InvalidComponentId || m_components.TryGet(component) == nullptr)
+	const ComponentInfo *info = m_components.TryGet(component);
+	if (component == InvalidComponentId || info == nullptr)
 		throw std::logic_error("ECS component ID is not registered");
+	if (value == nullptr && info->constructDefault == nullptr)
+		throw std::logic_error("ECS component does not support default construction");
 	if (!IsAlive(entity))
 		return false;
 
@@ -337,6 +359,7 @@ void World::MoveEntity(Entity entity,
 	void *initializedValue)
 {
 	assert(IsAlive(entity));
+	assert(initializedValue == nullptr || initializedComponent != InvalidComponentId);
 	EntityRecord &record = m_records[entity.index];
 	const EntityLocation sourceLocation = record.location;
 	Archetype *source = sourceLocation.archetype;
@@ -344,13 +367,66 @@ void World::MoveEntity(Entity entity,
 	if (source == &target)
 		return;
 
-	const Archetype::Slot destination = target.AddEntity(entity);
+	// Ensure the source availability list cannot allocate after source values
+	// have been moved. This is a cold structural-path preflight.
+	source->PrepareForRemoval(sourceLocation.chunk);
+	const Archetype::Slot destination = target.ReserveEntity();
+	std::size_t constructedNew = 0;
+	try
+	{
+		// New components are constructed before any source component is moved.
+		// Their default constructors may throw, while registered component moves
+		// are noexcept by contract.
+		for (ComponentId component : target.GetSignature())
+		{
+			if (source->Has(component))
+				continue;
+
+			const std::size_t destinationColumn = target.ColumnIndex(component);
+			const ComponentInfo &info = m_components.Get(component);
+			void *destinationData = destination.chunk->ComponentData(destinationColumn);
+			const ChunkLayout::Column &destinationLayout = target.Layout().Columns()[destinationColumn];
+			void *destinationElement = static_cast<std::byte *>(destinationData) +
+				destination.row * destinationLayout.size;
+			if (component == initializedComponent && initializedValue != nullptr)
+			{
+				info.constructMove(destinationElement, initializedValue);
+			}
+			else
+			{
+				if (info.constructDefault == nullptr)
+					throw std::logic_error("ECS component does not support default construction");
+				info.constructDefault(destinationElement);
+			}
+			++constructedNew;
+		}
+	}
+	catch (...)
+	{
+		std::size_t remaining = constructedNew;
+		for (ComponentId component : target.GetSignature())
+		{
+			if (source->Has(component) || remaining == 0)
+				continue;
+
+			const std::size_t destinationColumn = target.ColumnIndex(component);
+			const ComponentInfo &info = m_components.Get(component);
+			const ChunkLayout::Column &destinationLayout = target.Layout().Columns()[destinationColumn];
+			void *destinationElement = static_cast<std::byte *>(destination.chunk->ComponentData(destinationColumn)) +
+				destination.row * destinationLayout.size;
+			info.destroy(destinationElement);
+			--remaining;
+		}
+		target.CancelEntity(destination);
+		throw;
+	}
+
 	for (ComponentId component : source->GetSignature())
 	{
-		const std::size_t destinationColumn = target.ColumnIndex(component);
-		if (destinationColumn == std::numeric_limits<std::size_t>::max())
+		if (!target.Has(component))
 			continue;
 
+		const std::size_t destinationColumn = target.ColumnIndex(component);
 		const std::size_t sourceColumn = source->ColumnIndex(component);
 		const ComponentInfo &info = m_components.Get(component);
 		void *destinationData = destination.chunk->ComponentData(destinationColumn);
@@ -359,24 +435,10 @@ void World::MoveEntity(Entity entity,
 		const ChunkLayout::Column &sourceLayout = source->Layout().Columns()[sourceColumn];
 		void *destinationElement = static_cast<std::byte *>(destinationData) + destination.row * destinationLayout.size;
 		void *sourceElement = static_cast<std::byte *>(sourceData) + sourceLocation.row * sourceLayout.size;
-		info.destroy(destinationElement);
 		info.constructMove(destinationElement, sourceElement);
 	}
 
-	if (initializedComponent != InvalidComponentId)
-	{
-		assert(initializedValue != nullptr);
-		const std::size_t destinationColumn = target.ColumnIndex(initializedComponent);
-		assert(destinationColumn != std::numeric_limits<std::size_t>::max());
-		const ComponentInfo &info = m_components.Get(initializedComponent);
-		void *destinationData = destination.chunk->ComponentData(destinationColumn);
-		const ChunkLayout::Column &destinationLayout = target.Layout().Columns()[destinationColumn];
-		void *destinationElement = static_cast<std::byte *>(destinationData) +
-			destination.row * destinationLayout.size;
-		info.destroy(destinationElement);
-		info.constructMove(destinationElement, initializedValue);
-	}
-
+	target.PublishEntity(destination, entity);
 	const Entity moved = source->RemoveEntity(sourceLocation.chunk, sourceLocation.row);
 	if (moved.IsValid())
 	{

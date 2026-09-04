@@ -20,6 +20,8 @@ export import engine.ecs.storage.signature;
 export namespace ecs
 {
 
+class World;
+
 class Archetype
 {
 public:
@@ -45,11 +47,19 @@ public:
 	Entity RemoveEntity(Chunk *chunk, std::size_t row);
 
 private:
+	Slot ReserveEntity();
+	void PublishEntity(Slot slot, Entity entity) noexcept;
+	void CancelEntity(Slot slot) noexcept;
+	void PrepareForRemoval(Chunk *chunk);
+
 	Signature m_signature;
 	std::vector<const ComponentInfo *> m_components;
 	ChunkLayout m_layout;
 	std::vector<std::unique_ptr<Chunk>> m_chunks;
+	std::vector<Chunk *> m_availableChunks;
 	std::size_t m_entityCount{0};
+
+	friend class World;
 };
 
 class ArchetypeRegistry
@@ -97,40 +107,112 @@ std::size_t Archetype::ColumnIndex(ComponentId component) const noexcept
 	return static_cast<std::size_t>(found - m_signature.begin());
 }
 
-Archetype::Slot Archetype::AddEntity(Entity entity)
+Archetype::Slot Archetype::ReserveEntity()
 {
 	Chunk *target = nullptr;
-	for (const std::unique_ptr<Chunk> &chunk : m_chunks)
+	if (!m_availableChunks.empty())
 	{
-		if (!chunk->IsFull())
-		{
-			target = chunk.get();
-			break;
-		}
+		target = m_availableChunks.back();
 	}
-
-	if (target == nullptr)
+	else
 	{
 		m_chunks.push_back(std::make_unique<Chunk>(ChunkLayout(m_layout), m_components));
 		target = m_chunks.back().get();
+		try
+		{
+			m_availableChunks.push_back(target);
+		}
+		catch (...)
+		{
+			m_chunks.pop_back();
+			throw;
+		}
 	}
 
-	const std::size_t row = target->Size();
-	target->AddEntity(entity);
+	assert(target != nullptr && !target->IsFull());
+	return Slot{target, target->ReserveRow()};
+}
+
+void Archetype::PublishEntity(const Slot slot, const Entity entity) noexcept
+{
+	assert(slot.chunk != nullptr);
+	slot.chunk->PublishRow(entity, slot.row);
 	++m_entityCount;
-	return Slot{target, row};
+	if (slot.chunk->IsFull())
+	{
+		assert(!m_availableChunks.empty() && m_availableChunks.back() == slot.chunk);
+		m_availableChunks.pop_back();
+	}
+}
+
+void Archetype::CancelEntity(const Slot slot) noexcept
+{
+	assert(slot.chunk != nullptr);
+	slot.chunk->CancelRow(slot.row);
+}
+
+void Archetype::PrepareForRemoval(Chunk *chunk)
+{
+	assert(chunk != nullptr);
+	assert(!chunk->IsFull() || std::find(m_availableChunks.begin(), m_availableChunks.end(), chunk) == m_availableChunks.end());
+	assert(std::find_if(m_chunks.begin(), m_chunks.end(), [chunk](const std::unique_ptr<Chunk> &candidate) {
+		return candidate.get() == chunk;
+	}) != m_chunks.end());
+
+	if (chunk->IsFull())
+		m_availableChunks.reserve(m_availableChunks.size() + 1);
+}
+
+Archetype::Slot Archetype::AddEntity(const Entity entity)
+{
+	const Slot slot = ReserveEntity();
+	std::size_t constructed = 0;
+	try
+	{
+		for (const ComponentInfo *info : m_components)
+		{
+			if (info->constructDefault == nullptr)
+				throw std::logic_error("ECS component does not support default construction");
+			const std::size_t columnIndex = ColumnIndex(info->id);
+			const ChunkLayout::Column &column = m_layout.Columns()[columnIndex];
+			info->constructDefault(static_cast<std::byte *>(slot.chunk->ComponentData(columnIndex)) +
+				slot.row * column.size);
+			++constructed;
+		}
+	}
+	catch (...)
+	{
+		for (std::size_t index = 0; index < constructed; ++index)
+		{
+			const ComponentInfo *info = m_components[index];
+			const std::size_t columnIndex = ColumnIndex(info->id);
+			const ChunkLayout::Column &column = m_layout.Columns()[columnIndex];
+			info->destroy(static_cast<std::byte *>(slot.chunk->ComponentData(columnIndex)) +
+				slot.row * column.size);
+		}
+		CancelEntity(slot);
+		throw;
+	}
+
+	PublishEntity(slot, entity);
+	return slot;
 }
 
 Entity Archetype::RemoveEntity(Chunk *chunk, std::size_t row)
 {
 	assert(chunk != nullptr);
+	assert(!chunk->IsFull() || std::find(m_availableChunks.begin(), m_availableChunks.end(), chunk) == m_availableChunks.end());
 	assert(std::find_if(m_chunks.begin(), m_chunks.end(), [chunk](const std::unique_ptr<Chunk> &candidate) {
 		return candidate.get() == chunk;
 	}) != m_chunks.end());
 
+	const bool wasFull = chunk->IsFull();
+	PrepareForRemoval(chunk);
 	const Entity moved = chunk->RemoveSwap(row);
 	assert(m_entityCount > 0);
 	--m_entityCount;
+	if (wasFull)
+		m_availableChunks.push_back(chunk);
 	return moved;
 }
 

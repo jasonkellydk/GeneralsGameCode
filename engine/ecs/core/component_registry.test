@@ -51,6 +51,17 @@ struct LateComponent
 {
 };
 
+struct NonDefault
+{
+	int value;
+
+	NonDefault() = delete;
+	explicit NonDefault(const int initialValue) : value(initialValue) {}
+	NonDefault(const NonDefault &) = default;
+	NonDefault(NonDefault &&) noexcept = default;
+	~NonDefault() noexcept = default;
+};
+
 } // namespace component_registry_test
 
 namespace ecs
@@ -134,6 +145,14 @@ struct ComponentTraits<component_registry_test::LateComponent>
 	static constexpr std::string_view StableName = "tests.late";
 	static constexpr std::uint32_t Version = 1;
 	static constexpr PersistencePolicy Persistence = PersistencePolicy::Transient;
+};
+
+template<>
+struct ComponentTraits<component_registry_test::NonDefault>
+{
+	static constexpr std::string_view StableName = "tests.component.non_default";
+	static constexpr std::uint32_t Version = 1;
+	static constexpr PersistencePolicy Persistence = PersistencePolicy::Serializable;
 };
 
 } // namespace ecs
@@ -224,6 +243,18 @@ BOOST_AUTO_TEST_CASE(registration_is_frozen_after_finalization)
 	BOOST_TEST(registry.Register<component_registry_test::Position>() == position);
 	BOOST_TEST(registry.TryGet<component_registry_test::Position>() == position);
 	BOOST_TEST(registry.SchemaHash() == schemaHash);
+}
+
+BOOST_AUTO_TEST_CASE(non_default_constructible_components_have_no_default_lifecycle_operation)
+{
+	ecs::ComponentRegistry registry;
+	registry.Register<component_registry_test::NonDefault>();
+	registry.Finalize();
+
+	const ecs::ComponentInfo &info = registry.Get(registry.TryGet<component_registry_test::NonDefault>());
+	BOOST_CHECK(info.constructDefault == nullptr);
+	BOOST_CHECK(info.constructMove != nullptr);
+	BOOST_CHECK(info.destroy != nullptr);
 }
 
 BOOST_AUTO_TEST_SUITE_END()

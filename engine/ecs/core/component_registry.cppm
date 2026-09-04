@@ -63,6 +63,7 @@ export namespace ecs
         std::size_t size{};
         std::size_t alignment{};
 
+        // Null when the component intentionally has no default constructor.
         void (*constructDefault)(void*){};
         void (*constructMove)(void*, void*) noexcept{};
         void (*destroy)(void*) noexcept{};
@@ -77,6 +78,7 @@ export namespace ecs
         template<typename T>
         ComponentId TryGet() const noexcept;
 
+        [[nodiscard]] ComponentId TryGet(const std::type_info& type) const noexcept;
         [[nodiscard]] const ComponentInfo* TryGet(ComponentId id) const noexcept;
         [[nodiscard]] ComponentId TryGet(ComponentKey key) const noexcept;
         [[nodiscard]] const ComponentInfo& Get(ComponentId id) const;
@@ -162,7 +164,6 @@ export namespace ecs
     {
         static_assert(std::is_object_v<T>, "ECS components must be object types");
         static_assert(!std::is_const_v<T> && !std::is_volatile_v<T>, "ECS component types must be unqualified");
-        static_assert(std::is_default_constructible_v<T>, "ECS components must be default constructible");
         static_assert(std::is_move_constructible_v<T>, "ECS components must be move constructible");
         static_assert(std::is_nothrow_move_constructible_v<T>, "ECS component moves must be noexcept");
         static_assert(std::is_destructible_v<T>, "ECS components must be destructible");
@@ -207,9 +208,12 @@ export namespace ecs
         info.persistence = ComponentTraits<T>::Persistence;
         info.size = sizeof(T);
         info.alignment = alignof(T);
-        info.constructDefault = &ConstructDefault<T>;
         info.constructMove = &ConstructMove<T>;
         info.destroy = &Destroy<T>;
+        if constexpr (std::is_default_constructible_v<T>)
+        {
+            info.constructDefault = &ConstructDefault<T>;
+        }
 
         m_infos.push_back(info);
         try
@@ -230,8 +234,7 @@ export namespace ecs
     template<typename T>
     ComponentId ComponentRegistry::TryGet() const noexcept
     {
-        const auto existing = m_typeToInfo.find(std::type_index(typeid(T)));
-        return existing == m_typeToInfo.end() ? InvalidComponentId : existing->second->id;
+        return TryGet(typeid(T));
     }
 }
 
@@ -269,6 +272,12 @@ namespace ecs
     const ComponentInfo* ComponentRegistry::TryGet(const ComponentId id) const noexcept
     {
         return static_cast<std::size_t>(id) < m_idToInfo.size() ? m_idToInfo[id] : nullptr;
+    }
+
+    ComponentId ComponentRegistry::TryGet(const std::type_info& type) const noexcept
+    {
+        const auto existing = m_typeToInfo.find(std::type_index(type));
+        return existing == m_typeToInfo.end() ? InvalidComponentId : existing->second->id;
     }
 
     ComponentId ComponentRegistry::TryGet(const ComponentKey key) const noexcept

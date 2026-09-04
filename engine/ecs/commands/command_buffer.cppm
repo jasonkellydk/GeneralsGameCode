@@ -11,6 +11,7 @@ module;
 #include <span>
 #include <stdexcept>
 #include <type_traits>
+#include <typeinfo>
 #include <utility>
 #include <vector>
 
@@ -54,6 +55,14 @@ enum class StructuralCommandType : std::uint8_t
 	RemoveComponent
 };
 
+enum class CommandBufferState : std::uint8_t
+{
+	Recording,
+	Playing,
+	Consumed,
+	Failed
+};
+
 class DeferredEntity
 {
 public:
@@ -95,6 +104,7 @@ public:
 
 	[[nodiscard]] CommandBufferOrder Order() const noexcept { return m_order; }
 	void SetOrder(CommandBufferOrder order);
+	[[nodiscard]] CommandBufferState State() const noexcept { return m_state; }
 
 	DeferredEntity Create();
 	void Destroy(Entity entity);
@@ -113,15 +123,31 @@ public:
 	}
 
 	template<typename T>
+	void Add(Entity entity)
+	{
+		RecordComponentCommand(StructuralCommandType::AddComponent,
+			MakeTarget(entity), ComponentKeyFor<T>(), &typeid(T));
+	}
+
+	template<typename T>
+	void Add(DeferredEntity entity)
+	{
+		RecordComponentCommand(StructuralCommandType::AddComponent,
+			MakeTarget(entity), ComponentKeyFor<T>(), &typeid(T));
+	}
+
+	template<typename T>
 	void Remove(Entity entity)
 	{
-		RecordComponentCommand(StructuralCommandType::RemoveComponent, MakeTarget(entity), ComponentKeyFor<T>());
+		RecordComponentCommand(StructuralCommandType::RemoveComponent,
+			MakeTarget(entity), ComponentKeyFor<T>(), &typeid(T));
 	}
 
 	template<typename T>
 	void Remove(DeferredEntity entity)
 	{
-		RecordComponentCommand(StructuralCommandType::RemoveComponent, MakeTarget(entity), ComponentKeyFor<T>());
+		RecordComponentCommand(StructuralCommandType::RemoveComponent,
+			MakeTarget(entity), ComponentKeyFor<T>(), &typeid(T));
 	}
 
 	[[nodiscard]] Entity Resolve(DeferredEntity entity) const;
@@ -222,6 +248,7 @@ private:
 		std::uint32_t sequence{0};
 		CommandTarget target{};
 		ComponentKey componentKey{0};
+		const std::type_info *componentType{&typeid(void)};
 		void *payload{nullptr};
 		void (*destroyPayload)(void *) noexcept{nullptr};
 	};
@@ -247,11 +274,18 @@ private:
 	CommandTarget MakeTarget(DeferredEntity entity) const;
 	void ValidateDeferredTarget(const DeferredEntity &entity) const;
 	void Validate(const World &world) const;
+	ComponentId ResolveComponent(const StructuralCommand &command, const World &world) const;
 	void Playback(World &world);
 	Entity ResolveTarget(const CommandTarget &target, const std::vector<Entity> &resolved) const;
 
+	void EnsureRecording() const;
 	void Record(StructuralCommand command);
-	void RecordComponentCommand(StructuralCommandType type, CommandTarget target, ComponentKey componentKey);
+	void RecordComponentCommand(StructuralCommandType type,
+		CommandTarget target,
+		ComponentKey componentKey,
+		const std::type_info *componentType);
+	void ClearPendingCommands() noexcept;
+	void FailPlayback() noexcept;
 
 	template<typename T>
 	static void DestroyPayload(void *payload) noexcept
@@ -262,6 +296,7 @@ private:
 	template<typename T, typename Value>
 	void RecordAdd(CommandTarget target, Value &&value)
 	{
+		EnsureRecording();
 		static_assert(detail::HasComponentTraits<T>,
 			"Command components must specialize ecs::ComponentTraits");
 		static_assert(ComponentTraits<T>::StableName.size() != 0,
@@ -286,6 +321,7 @@ private:
 		command.type = StructuralCommandType::AddComponent;
 		command.target = target;
 		command.componentKey = ComponentKeyFor<T>();
+		command.componentType = &typeid(T);
 		command.payload = allocation.data;
 		command.destroyPayload = &DestroyPayload<T>;
 		try
@@ -301,6 +337,7 @@ private:
 	}
 
 	CommandBufferOrder m_order{};
+	CommandBufferState m_state{CommandBufferState::Recording};
 	std::uint64_t m_ownerToken{0};
 	std::uint64_t m_epoch{1};
 	std::uint32_t m_nextSequence{0};
@@ -399,15 +436,12 @@ void CommandBuffer::PayloadArena::Rewind(const PayloadAllocation allocation) noe
 
 CommandBuffer::~CommandBuffer() noexcept
 {
-	for (StructuralCommand &command : m_commands)
-	{
-		if (command.destroyPayload != nullptr)
-			command.destroyPayload(command.payload);
-	}
+	ClearPendingCommands();
 }
 
 CommandBuffer::CommandBuffer(CommandBuffer &&other) noexcept :
 	m_order(other.m_order),
+	m_state(other.m_state),
 	m_ownerToken(other.m_ownerToken),
 	m_epoch(other.m_epoch),
 	m_nextSequence(other.m_nextSequence),
@@ -420,6 +454,7 @@ CommandBuffer::CommandBuffer(CommandBuffer &&other) noexcept :
 	other.m_nextSequence = 0;
 	other.m_nextTemporaryIndex = 0;
 	other.m_lastEpoch = 0;
+	other.m_state = CommandBufferState::Recording;
 	other.m_commands.clear();
 	other.m_lastResolved.clear();
 	other.m_payload.Clear();
@@ -438,6 +473,7 @@ CommandBuffer &CommandBuffer::operator=(CommandBuffer &&other) noexcept
 	}
 
 	m_order = other.m_order;
+	m_state = other.m_state;
 	m_ownerToken = other.m_ownerToken;
 	m_epoch = other.m_epoch;
 	m_nextSequence = other.m_nextSequence;
@@ -450,6 +486,7 @@ CommandBuffer &CommandBuffer::operator=(CommandBuffer &&other) noexcept
 	other.m_nextSequence = 0;
 	other.m_nextTemporaryIndex = 0;
 	other.m_lastEpoch = 0;
+	other.m_state = CommandBufferState::Recording;
 	other.m_commands.clear();
 	other.m_lastResolved.clear();
 	other.m_payload.Clear();
@@ -459,6 +496,7 @@ CommandBuffer &CommandBuffer::operator=(CommandBuffer &&other) noexcept
 
 void CommandBuffer::SetOrder(const CommandBufferOrder order)
 {
+	EnsureRecording();
 	if (!m_commands.empty() || m_nextTemporaryIndex != 0 || !m_lastResolved.empty())
 		throw std::logic_error("ECS command-buffer ordering must be set before recording commands");
 	m_order = order;
@@ -488,6 +526,7 @@ void CommandBuffer::ValidateDeferredTarget(const DeferredEntity &entity) const
 
 DeferredEntity CommandBuffer::Create()
 {
+	EnsureRecording();
 	if (m_nextTemporaryIndex == (std::numeric_limits<std::uint32_t>::max)())
 		throw std::length_error("ECS command buffer temporary entity limit reached");
 
@@ -510,27 +549,60 @@ DeferredEntity CommandBuffer::Create()
 
 void CommandBuffer::Destroy(const Entity entity)
 {
-	RecordComponentCommand(StructuralCommandType::DestroyEntity, MakeTarget(entity), InvalidComponentKey);
+	RecordComponentCommand(StructuralCommandType::DestroyEntity,
+		MakeTarget(entity), InvalidComponentKey, &typeid(void));
 }
 
 void CommandBuffer::Destroy(const DeferredEntity entity)
 {
-	RecordComponentCommand(StructuralCommandType::DestroyEntity, MakeTarget(entity), InvalidComponentKey);
+	RecordComponentCommand(StructuralCommandType::DestroyEntity,
+		MakeTarget(entity), InvalidComponentKey, &typeid(void));
 }
 
 void CommandBuffer::RecordComponentCommand(const StructuralCommandType type,
 	const CommandTarget target,
-	const ComponentKey componentKey)
+	const ComponentKey componentKey,
+	const std::type_info *componentType)
 {
 	StructuralCommand command;
 	command.type = type;
 	command.target = target;
 	command.componentKey = componentKey;
+	command.componentType = componentType;
 	Record(command);
+}
+
+void CommandBuffer::ClearPendingCommands() noexcept
+{
+	for (StructuralCommand &command : m_commands)
+	{
+		if (command.destroyPayload != nullptr)
+			command.destroyPayload(command.payload);
+	}
+	m_commands.clear();
+	m_payload.Clear();
+}
+
+void CommandBuffer::FailPlayback() noexcept
+{
+	ClearPendingCommands();
+	m_lastResolved.clear();
+	m_lastEpoch = 0;
+	m_nextSequence = 0;
+	m_nextTemporaryIndex = 0;
+	++m_epoch;
+	m_state = CommandBufferState::Failed;
+}
+
+void CommandBuffer::EnsureRecording() const
+{
+	if (m_state != CommandBufferState::Recording)
+		throw std::logic_error("ECS command buffer is no longer recordable");
 }
 
 void CommandBuffer::Record(StructuralCommand command)
 {
+	EnsureRecording();
 	if (m_nextSequence == (std::numeric_limits<std::uint32_t>::max)())
 		throw std::length_error("ECS command buffer command limit reached");
 	command.sequence = m_nextSequence;
@@ -540,7 +612,8 @@ void CommandBuffer::Record(StructuralCommand command)
 
 Entity CommandBuffer::Resolve(const DeferredEntity entity) const
 {
-	if (!entity.IsValid() || entity.m_ownerToken != m_ownerToken || entity.m_epoch != m_lastEpoch ||
+	if (m_state != CommandBufferState::Consumed || !entity.IsValid() ||
+		entity.m_ownerToken != m_ownerToken || entity.m_epoch != m_lastEpoch ||
 		entity.m_index >= m_lastResolved.size())
 		throw std::logic_error("ECS deferred entity has not been committed or has expired");
 	return m_lastResolved[entity.m_index];
@@ -559,10 +632,32 @@ void CommandBuffer::Validate(const World &world) const
 		if (command.type == StructuralCommandType::AddComponent ||
 			command.type == StructuralCommandType::RemoveComponent)
 		{
-			if (world.Components().TryGet(command.componentKey) == InvalidComponentId)
-				throw std::logic_error("ECS command references an unregistered component");
+			const ComponentId component = ResolveComponent(command, world);
+			const ComponentInfo &info = world.Components().Get(component);
+			if (command.type == StructuralCommandType::AddComponent)
+			{
+				if (command.payload == nullptr && info.constructDefault == nullptr)
+					throw std::logic_error("ECS command requests default construction for a component without that operation");
+				if (command.payload != nullptr && command.destroyPayload == nullptr)
+					throw std::logic_error("ECS value command is missing its payload destructor");
+			}
 		}
 	}
+}
+
+ComponentId CommandBuffer::ResolveComponent(const StructuralCommand &command, const World &world) const
+{
+	if (command.componentType == nullptr || *command.componentType == typeid(void))
+		throw std::logic_error("ECS structural command is missing its exact component type");
+
+	const ComponentId component = world.Components().TryGet(*command.componentType);
+	if (component == InvalidComponentId)
+		throw std::logic_error("ECS structural command component type was not registered");
+
+	const ComponentInfo *info = world.Components().TryGet(component);
+	if (info == nullptr || info->stableKey != command.componentKey)
+		throw std::logic_error("ECS structural command component type and stable key disagree");
+	return component;
 }
 
 Entity CommandBuffer::ResolveTarget(const CommandTarget &target, const std::vector<Entity> &resolved) const
@@ -578,52 +673,52 @@ Entity CommandBuffer::ResolveTarget(const CommandTarget &target, const std::vect
 
 void CommandBuffer::Playback(World &world)
 {
-	Validate(world);
-	if (m_commands.empty())
-		return;
-
-	std::vector<Entity> resolved(m_nextTemporaryIndex);
-	for (const StructuralCommand &command : m_commands)
+	EnsureRecording();
+	m_state = CommandBufferState::Playing;
+	try
 	{
-		switch (command.type)
+		Validate(world);
+		std::vector<Entity> resolved(m_nextTemporaryIndex);
+		for (const StructuralCommand &command : m_commands)
 		{
-		case StructuralCommandType::CreateEntity:
+			switch (command.type)
 			{
-				ValidateDeferredTarget(command.target.deferred);
-				if (command.target.deferred.m_index >= resolved.size() || resolved[command.target.deferred.m_index].IsValid())
-					throw std::logic_error("Duplicate ECS deferred entity create command");
-				resolved[command.target.deferred.m_index] = world.Create<>();
+			case StructuralCommandType::CreateEntity:
+				{
+					ValidateDeferredTarget(command.target.deferred);
+					if (command.target.deferred.m_index >= resolved.size() || resolved[command.target.deferred.m_index].IsValid())
+						throw std::logic_error("Duplicate ECS deferred entity create command");
+					resolved[command.target.deferred.m_index] = world.Create<>();
+					break;
+				}
+			case StructuralCommandType::DestroyEntity:
+				world.Destroy(ResolveTarget(command.target, resolved));
+				break;
+			case StructuralCommandType::AddComponent:
+				{
+					const Entity entity = ResolveTarget(command.target, resolved);
+					world.AddComponent(entity, ResolveComponent(command, world), command.payload);
+					break;
+				}
+			case StructuralCommandType::RemoveComponent:
+				world.RemoveComponent(ResolveTarget(command.target, resolved), ResolveComponent(command, world));
 				break;
 			}
-		case StructuralCommandType::DestroyEntity:
-			world.Destroy(ResolveTarget(command.target, resolved));
-			break;
-		case StructuralCommandType::AddComponent:
-			{
-				const Entity entity = ResolveTarget(command.target, resolved);
-				const ComponentId component = world.Components().TryGet(command.componentKey);
-				world.AddComponent(entity, component, command.payload);
-				break;
-			}
-		case StructuralCommandType::RemoveComponent:
-			world.RemoveComponent(ResolveTarget(command.target, resolved),
-				world.Components().TryGet(command.componentKey));
-			break;
 		}
-	}
 
-	for (StructuralCommand &command : m_commands)
-	{
-		if (command.destroyPayload != nullptr)
-			command.destroyPayload(command.payload);
+		ClearPendingCommands();
+		m_lastResolved = std::move(resolved);
+		m_lastEpoch = m_epoch;
+		++m_epoch;
+		m_nextSequence = 0;
+		m_nextTemporaryIndex = 0;
+		m_state = CommandBufferState::Consumed;
 	}
-	m_commands.clear();
-	m_payload.Clear();
-	m_lastResolved = std::move(resolved);
-	m_lastEpoch = m_epoch;
-	++m_epoch;
-	m_nextSequence = 0;
-	m_nextTemporaryIndex = 0;
+	catch (...)
+	{
+		FailPlayback();
+		throw;
+	}
 }
 
 void World::Commit(CommandBuffer &commands)
@@ -653,7 +748,18 @@ void World::Commit(std::span<CommandBuffer *> commandBuffers)
 			throw std::logic_error("ECS command-buffer ordering metadata must be unique");
 	}
 	for (CommandBuffer *buffer : ordered)
-		buffer->Validate(*this);
+	{
+		buffer->EnsureRecording();
+		try
+		{
+			buffer->Validate(*this);
+		}
+		catch (...)
+		{
+			buffer->FailPlayback();
+			throw;
+		}
+	}
 	for (CommandBuffer *buffer : ordered)
 		buffer->Playback(*this);
 }

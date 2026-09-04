@@ -74,4 +74,43 @@ BOOST_AUTO_TEST_CASE(entities_use_dense_chunks_and_signature_lookup)
 	BOOST_CHECK(firstSlot.chunk->Entities()[0] == second);
 }
 
+BOOST_AUTO_TEST_CASE(available_chunks_are_reused_deterministically_after_churn)
+{
+	ecs::ComponentRegistry registry;
+	registry.Register<archetype_test::ArchetypeTestComponent>();
+	registry.Finalize();
+	const ecs::ComponentId component = registry.TryGet<archetype_test::ArchetypeTestComponent>();
+	const ecs::Signature signature{component};
+	const std::vector<const ecs::ComponentInfo *> components{&registry.Get(component)};
+	ecs::Archetype archetype(signature, components, 128);
+
+	std::uint32_t nextEntity = 0;
+	const ecs::Archetype::Slot firstSlot = archetype.AddEntity(ecs::Entity{nextEntity++, 1});
+	const std::size_t capacity = firstSlot.chunk->Capacity();
+	BOOST_REQUIRE(capacity > 1);
+	for (std::size_t index = 1; index < capacity * 64; ++index)
+		archetype.AddEntity(ecs::Entity{nextEntity++, 1});
+
+	BOOST_REQUIRE(archetype.Chunks().size() >= 64);
+	ecs::Chunk *firstChunk = archetype.Chunks()[0].get();
+	ecs::Chunk *secondChunk = archetype.Chunks()[1].get();
+	BOOST_REQUIRE(firstChunk->IsFull());
+	BOOST_REQUIRE(secondChunk->IsFull());
+	archetype.RemoveEntity(firstChunk, 0);
+	archetype.RemoveEntity(secondChunk, 0);
+
+	const ecs::Archetype::Slot reused = archetype.AddEntity(ecs::Entity{nextEntity++, 1});
+	BOOST_CHECK(reused.chunk == secondChunk);
+
+	// The same full chunk remains the deterministic LIFO choice after each
+	// remove/add pair, while m_chunks and their scheduler-visible order stay fixed.
+	for (std::size_t iteration = 0; iteration < 1024; ++iteration)
+	{
+		BOOST_REQUIRE(secondChunk->IsFull());
+		archetype.RemoveEntity(secondChunk, 0);
+		const ecs::Archetype::Slot churned = archetype.AddEntity(ecs::Entity{nextEntity++, 1});
+		BOOST_CHECK(churned.chunk == secondChunk);
+	}
+}
+
 BOOST_AUTO_TEST_SUITE_END()
