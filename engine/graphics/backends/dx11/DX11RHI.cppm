@@ -154,6 +154,7 @@ struct DX11TextureMapping final
 
 struct DX11Texture final
 {
+	std::uint64_t content_version = 1;
 	DX11NativeObject<ID3D11Texture2D> object;
     DX11NativeObject<ID3D11Texture3D> volume;
     RHITexture description{};
@@ -866,7 +867,14 @@ public:
     bool Generate_Texture_Mips(RHITextureHandle texture) noexcept override;
     bool Map_Texture(RHITextureHandle texture, std::uint32_t mip, std::uint32_t layer, bool read_only, RHITextureMapping& mapping) override;
     bool Unmap_Texture(RHITextureHandle texture, std::uint32_t mip, std::uint32_t layer) noexcept override;
-    bool Retain_Texture(RHITextureHandle texture) noexcept override;
+	bool Retain_Texture(RHITextureHandle texture) noexcept override;
+	std::uint64_t Texture_Content_Version(RHITextureHandle texture) const noexcept override {
+		const auto* resource = m_state ? m_state->textures.Resolve(texture) : nullptr;
+		if (!resource || (resource->description.usage & (static_cast<unsigned>(RHITextureUsage::RenderTarget)
+			| static_cast<unsigned>(RHITextureUsage::DepthStencil) | static_cast<unsigned>(RHITextureUsage::UnorderedAccess)))) return 0;
+		for (const auto& mapping : resource->mappings) if (mapping) return 0;
+		return resource->content_version;
+	}
     bool Destroy_Buffer(RHIBufferHandle buffer) noexcept override;
 	bool Destroy_Texture(RHITextureHandle texture) noexcept override;
 	bool Destroy_Pipeline(RHIPipelineHandle pipeline) noexcept override;
@@ -1344,6 +1352,7 @@ bool DX11CommandList::Copy_Texture(RHITextureHandle source, RHITextureHandle des
 		return false;
 
 	m_state->context.Get()->CopyResource(destination_texture->Resource(), source_texture->Resource());
+	++destination_texture->content_version;
 	return true;
 }
 
@@ -1838,6 +1847,7 @@ bool DX11Device::Update_Texture(RHITextureHandle texture, const RHITextureUpload
             data.row_pitch, data.slice_pitch, data.data.size(), layout)) return false;
     m_state->context.Get()->UpdateSubresource(resource->Resource(), layout.subresource, nullptr,
         data.data.data(), layout.row_pitch, layout.slice_pitch);
+    ++resource->content_version;
     return true;
 }
 
@@ -1926,6 +1936,7 @@ bool DX11Device::Unmap_Texture(RHITextureHandle texture, std::uint32_t mip, std:
     auto& mapping = **found;
     m_state->context.Get()->Unmap(mapping.staging.Get(), mapping.staging_subresource);
     mapping.mapped = false;
+    if (!mapping.read_only) ++resource->content_version;
     if (!mapping.read_only)
         m_state->context.Get()->CopySubresourceRegion(resource->Resource(), subresource, 0, 0, 0,
             mapping.staging.Get(), mapping.staging_subresource, nullptr);
@@ -1960,6 +1971,7 @@ bool DX11Device::Generate_Texture_Mips(RHITextureHandle texture) noexcept
     if (resource == nullptr || !resource->description.generate_mips
         || resource->shader_resource_view.Get() == nullptr) return false;
     m_state->context.Get()->GenerateMips(resource->shader_resource_view.Get());
+    ++resource->content_version;
     return true;
 }
 

@@ -21,6 +21,7 @@ import Graphics.RHI;
 import Graphics.Scene.Props.Geometry;
 import Graphics.Scene.Props.Material;
 import Graphics.Scene.Props.Renderer;
+import Graphics.Scene.Shadows.Projected;
 import Graphics.Scene.Props.MaterialDrawState;
 import Graphics.Materials.TextureMapping;
 import Graphics.Materials.MeshMaterial;
@@ -28,6 +29,7 @@ import Graphics.Materials.State;
 import Graphics.Materials.W3DMeshMaterial;
 import Graphics.Scene.DrawParameters;
 import Graphics.Scene.Beams.RibbonPipeline;
+import Graphics.Scene.Beams.RibbonSubdivision;
 import Graphics.Scene.Views.CameraMatrices;
 import Graphics.Scene.Models.Materials;
 import Graphics.Scene.Models.MeshMaterialBindings;
@@ -40,6 +42,9 @@ import Assets.Adapters.W3D.TextureMapping;
 #include "W3DDevice/GameClient/W3DTextureHandle.h"
 #include "W3DDevice/GameClient/W3DCamera.h"
 #include "W3DDevice/GameClient/W3DRenderContext.h"
+#include "Lib/BaseType.h"
+#include "GameClient/Color.h"
+#include "W3DDevice/GameClient/W3DProjectedShadow.h"
 #include "W3DDevice/GameClient/W3DSceneClass.h"
 #include "WWLib/ref_ptr.h"
 #include "WWMath/v3_rnd.h"
@@ -57,6 +62,83 @@ import Assets.Adapters.W3D.TextureMapping;
 #ifndef GRAPHICS_W3D_VALUE_CONVERSION_SHADER_DIRECTORY
 #define GRAPHICS_W3D_VALUE_CONVERSION_SHADER_DIRECTORY "."
 #endif
+
+extern void DoShadows(W3DRenderContext& context, Bool stencilPass);
+extern const FrustumClass* shadowCameraFrustum;
+// Application-owned localization paths required by the linked scene code.
+const char* g_csfFile = "data\\generals.csf";
+const char* g_strFile = "data\\Generals.str";
+
+BOOST_AUTO_TEST_CASE(guard_ground_marker_is_submitted_by_the_non_stencil_scene_pass)
+{
+    using namespace Graphics;
+    GraphicsTestDevice device({true});
+    PropRenderer renderer;
+    BOOST_REQUIRE(renderer.Initialize(device,Graphics::Test_Shader_Directory(GRAPHICS_W3D_VALUE_CONVERSION_SHADER_DIRECTORY)));
+    const auto target=device.Create_Texture({16,16,1,RHITextureFormat::RGBA8_UNorm,
+        static_cast<unsigned>(RHITextureUsage::RenderTarget)});
+    const auto depth=device.Create_Texture({16,16,1,RHITextureFormat::D32_Float,
+        static_cast<unsigned>(RHITextureUsage::DepthStencil)});
+    std::array<std::uint8_t,8*8*4> shield{};
+    for (unsigned y=0;y<7;++y) for (unsigned x=0;x<8;++x) {
+        const unsigned inset=y<4 ? 1 : y<6 ? 2 : 3;
+        if (x<inset || x>=8-inset) continue;
+        const auto pixel=(y*8+x)*4;
+        shield[pixel+1]=255; shield[pixel+3]=128;
+    }
+    const auto texture=device.Create_Texture_Initialized({8,8},{std::as_bytes(std::span(shield)),8*4});
+    BOOST_REQUIRE(texture.Is_Valid());
+    std::array<PropVertex,4> vertices{};
+    vertices[0].position={-1,-1,.5f}; vertices[1].position={1,-1,.5f};
+    vertices[2].position={1,1,.5f}; vertices[3].position={-1,1,.5f};
+    vertices[0].uv={0,1}; vertices[1].uv={1,1}; vertices[2].uv={1,0}; vertices[3].uv={0,0};
+    const std::array<std::uint32_t,6> indices{0,1,2,0,2,3};
+    const auto mesh=renderer.Create_Mesh(vertices,indices);
+    PropParameters parameters;
+    parameters.view_projection={1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1};
+    auto& commands=device.Immediate_Command_List();
+    BOOST_REQUIRE(commands.Set_Render_Targets(target,depth));
+    BOOST_REQUIRE(commands.Set_Viewport({0,0,16,16}));
+    // Exercise the actual legacy scene dispatch, with deterministic receiver
+    // geometry in place of map extraction and a synthetic guard shield texture.
+    struct MarkerManager final : W3DProjectedShadowManager {
+        PropRenderer& renderer; CommandList& commands; PropMeshHandle mesh;
+        PropParameters parameters; RHITextureHandle texture; unsigned calls=0;
+        MarkerManager(PropRenderer& r,CommandList& c,PropMeshHandle m,PropParameters p,RHITextureHandle t)
+            : renderer(r),commands(c),mesh(m),parameters(p),texture(t) {}
+        Int renderShadows(W3DRenderContext&) override {
+            ++calls;
+            return Draw_Decal(renderer,commands,mesh,parameters,texture,DecalBlend::Alpha) ? 1 : 0;
+        }
+    } manager(renderer,commands,mesh,parameters,texture);
+    struct ManagerScope {
+        W3DProjectedShadowManager* previous=TheW3DProjectedShadowManager;
+        const FrustumClass* previousFrustum=shadowCameraFrustum;
+        ~ManagerScope(){TheW3DProjectedShadowManager=previous; shadowCameraFrustum=previousFrustum;}
+    } scope;
+    TheW3DProjectedShadowManager=&manager;
+    W3DCamera camera;
+    W3DRenderContext context(camera);
+    const auto check=[&](unsigned x,std::array<int,3> expected) {
+        std::array<std::byte,16*16*4> pixels{};
+        BOOST_REQUIRE(device.Readback_Texture(target,pixels,16*4));
+        for (unsigned channel=0;channel<3;++channel)
+            BOOST_CHECK_SMALL(std::to_integer<int>(pixels[(8*16+x)*4+channel])-expected[channel],2);
+    };
+    BOOST_REQUIRE(commands.Clear({.5f,.25f,.125f,1},.75f));
+    DoShadows(context,true);
+    BOOST_CHECK_EQUAL(manager.calls,0u);
+    check(8,{128,64,32});
+    DoShadows(context,false);
+    BOOST_CHECK_EQUAL(manager.calls,1u);
+    check(8,{64,160,16});
+    check(0,{128,64,32}); // Transparent shield border preserves terrain.
+    BOOST_REQUIRE(commands.Clear({.5f,.25f,.125f,1},.25f));
+    DoShadows(context,false);
+    check(8,{128,64,32}); // Geometry above the ground occludes the marker.
+    renderer.Destroy_Mesh(mesh); renderer.Shutdown();
+    device.Destroy_Texture(texture); device.Destroy_Texture(target); device.Destroy_Texture(depth);
+}
 
 BOOST_AUTO_TEST_CASE(cloned_model_resources_remap_single_and_vertex_materials_without_mutating_source)
 {

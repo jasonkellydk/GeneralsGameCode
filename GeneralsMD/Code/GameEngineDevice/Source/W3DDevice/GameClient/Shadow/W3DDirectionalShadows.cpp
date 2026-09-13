@@ -18,6 +18,7 @@ import Graphics.Scene.Props.Submission;
 #include <cstdlib>
 #include <fstream>
 #include <string>
+#include <string_view>
 
 import Graphics.Frame.Runtime;
 import Graphics.Scene.Shadows.DirectionalRenderer;
@@ -141,8 +142,12 @@ bool Render_Directional_Shadow_Maps(W3DRenderContext& info)
             if (row<3) view.view_matrix.values[row*4+column] = view_matrix[row][column];
         }
     Graphics::ShadowSettings settings;
+    static const bool cache_shadows=[] {
+        const auto* value=std::getenv("GENERALS_SHADOW_CACHE");
+        return value==nullptr || std::string_view(value)!="0";
+    }();
+    settings.cache_maps=cache_shadows;
     info.Camera.Get_Clip_Planes(settings.near_clip,settings.far_clip);
-    settings.map_size = 2048;
     settings.depth_padding = 400;
     const auto& direction = TheGlobalData->m_terrainLightPos[0];
     Graphics::RenderLight light;
@@ -151,10 +156,12 @@ bool Render_Directional_Shadow_Maps(W3DRenderContext& info)
     light.direction = {direction.x,direction.y,direction.z};
     Graphics::RHIViewport viewport;
     viewport = Graphics::Get_Attachment_Bindings().Current().viewport;
+    settings.map_size = Graphics::Shadow_Map_Size_For_Viewport(viewport.width,viewport.height);
     const auto saved_target=Graphics::Get_Attachment_Bindings().Capture();
     const auto color = device->Get_Swap_Chain().Backbuffer();
     const auto depth = device->Get_Swap_Chain().Depth_Target();
     const auto before=device->Immediate_Command_List().Submission_Counts();
+    const auto reused_before=Graphics::Get_Directional_Shadow_Renderer().Reused_Cascade_Count();
     const bool rendered = Graphics::Get_Directional_Shadow_Renderer().Render(
         device->Immediate_Command_List(),view,light,settings,color.texture,depth.texture,
         viewport);
@@ -167,18 +174,22 @@ bool Render_Directional_Shadow_Maps(W3DRenderContext& info)
         static auto start=Clock::now(), interval=start;
         static Graphics::View previous;
         static std::uint64_t frames=0,draws=0,triangles=0,unchanged=0;
+        static std::uint64_t reused=0;
         const auto after=device->Immediate_Command_List().Submission_Counts();
         draws+=after.draw_calls-before.draw_calls;
         triangles+=after.triangles-before.triangles;
+        reused+=Graphics::Get_Directional_Shadow_Renderer().Reused_Cascade_Count()-reused_before;
         unchanged+=previous.view_matrix.values==view.view_matrix.values
             && previous.projection_matrix.values==view.projection_matrix.values;
         previous=view; ++frames;
         const auto now=Clock::now();
         if (std::chrono::duration<double>(now-interval).count()>=1) {
             benchmark<<std::chrono::duration<double>(now-start).count()<<','<<frames<<','
-                <<double(draws)/frames<<','<<double(triangles)/frames<<','<<double(unchanged)/frames<<'\n';
+                <<double(draws)/frames<<','<<double(triangles)/frames<<','<<double(unchanged)/frames
+                <<','<<double(reused)/frames<<'\n';
             benchmark.flush(); interval=now;
             frames=draws=triangles=unchanged=0;
+            reused=0;
         }
     }
     Graphics::Get_Attachment_Bindings().Restore(saved_target);

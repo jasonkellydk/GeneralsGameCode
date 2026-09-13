@@ -61,7 +61,7 @@ class W3DProjectedShadowManager	: public ProjectedShadowManager
 		void reset();					///<free all existing shadows - ready for next map.
 		void shutdown();			///<free all assets prior to shutdown of entire game.
 		void prepareShadows();
-		Int	 renderShadows(W3DRenderContext & rinfo);	///<iterate over each object and render its shadow onto affected objects.
+		virtual Int renderShadows(W3DRenderContext & rinfo);	///<iterate over each object and render its shadow onto affected objects.
 		void ReleaseResources();	///<release device dependent D3D resources.
 		Bool ReAcquireResources();	///<allocate device dependent D3D resources.
 		void invalidateCachedLightPositions();	///<forces shadows to update regardless of last lightposition

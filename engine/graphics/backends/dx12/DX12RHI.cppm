@@ -145,7 +145,54 @@ public:
 		m_type = type;
 		m_capacity = capacity;
 		m_increment = device->GetDescriptorHandleIncrementSize(type);
+		if (!shader_visible) {
+			try { m_free.reserve(capacity); m_retired.reserve(capacity); }
+			catch (...) { return false; }
+		}
 		return true;
+	}
+	bool Allocate(std::uint32_t& offset, std::uint32_t count, DX12DescriptorRange& range) noexcept {
+		if (count == 0) return false;
+		for (auto index=m_free.size(); index!=0;) {
+			auto& available=m_free[--index];
+			if (available.count<count) continue;
+			range={available.index,count}; available.index+=count; available.count-=count;
+			if (!available.count) { available=m_free.back(); m_free.pop_back(); }
+			return true;
+		}
+		// Mip chains can request contiguous ranges. Coalesce fragmented free
+		// slots before growing the high-water mark for a larger allocation.
+		if (count>1 && m_free.size()>1) {
+			const auto previous_size=m_free.size();
+			std::sort(m_free.begin(),m_free.end(),[](const auto& a,const auto& b){return a.index<b.index;});
+			std::size_t ranges=0;
+			for (const auto available : m_free) {
+				if (ranges && m_free[ranges-1].index+m_free[ranges-1].count==available.index)
+					m_free[ranges-1].count+=available.count;
+				else m_free[ranges++]=available;
+			}
+			m_free.resize(ranges);
+			if (ranges<previous_size) return Allocate(offset,count,range);
+		}
+		if (offset>m_capacity || count>m_capacity-offset) return false;
+		range={offset,count}; offset+=count; return true;
+	}
+	void Retire(DX12DescriptorRange& range, std::uint64_t fence) noexcept {
+		if (!range.Is_Valid()) return;
+		// Capacity is reserved when the heap is created. Every retired range
+		// owns at least one distinct slot, so release cannot allocate or fail.
+		if (fence<=m_completed) m_free.push_back(range);
+		else m_retired.push_back({range,fence});
+		range={};
+	}
+	void Collect(std::uint64_t completed) noexcept {
+		m_completed=completed;
+		std::size_t remaining=0;
+		for (const auto& retired : m_retired) {
+			if (retired.fence<=completed) m_free.push_back(retired.range);
+			else m_retired[remaining++]=retired;
+		}
+		m_retired.resize(remaining);
 	}
 	D3D12_CPU_DESCRIPTOR_HANDLE Cpu(std::uint32_t index) const noexcept
 	{
@@ -170,6 +217,10 @@ private:
 	D3D12_DESCRIPTOR_HEAP_TYPE m_type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
 	std::uint32_t m_capacity = 0;
 	std::uint32_t m_increment = 0;
+	struct RetiredRange { DX12DescriptorRange range; std::uint64_t fence; };
+	std::vector<DX12DescriptorRange> m_free;
+	std::vector<RetiredRange> m_retired;
+	std::uint64_t m_completed=0;
 };
 
 struct DX12MappedBufferPage final
@@ -353,6 +404,7 @@ struct DX12TextureMapping final
 
 struct DX12Texture final
 {
+	std::uint64_t content_version = 1;
 	DX12NativeObject<ID3D12Resource> object;
 	RHITexture description{};
 	std::uint32_t width = 0;
@@ -725,6 +777,7 @@ struct DX12DeviceState final
 	}
 	bool Wait_For_Fence(std::uint64_t value) noexcept;
 	void Collect_Deferred() noexcept;
+	void Retire_Texture_Views(DX12Texture& texture, std::uint64_t fence) noexcept;
 	bool Defer(IUnknown *object, std::uint64_t fence_value) noexcept;
 	bool Defer_Buffer(DX12Buffer &resource, std::uint64_t fence_value) noexcept;
 	std::uint32_t Acquire_Sampler(const D3D12_SAMPLER_DESC &description);
@@ -1140,6 +1193,13 @@ public:
 	bool Unmap_Texture(RHITextureHandle texture, std::uint32_t mip, std::uint32_t layer) noexcept override;
 	bool Generate_Texture_Mips(RHITextureHandle texture) noexcept override;
 	bool Retain_Texture(RHITextureHandle texture) noexcept override;
+	std::uint64_t Texture_Content_Version(RHITextureHandle texture) const noexcept override {
+		const auto* resource = m_state ? m_state->textures.Resolve(texture) : nullptr;
+		if (!resource || (resource->description.usage & (static_cast<unsigned>(RHITextureUsage::RenderTarget)
+			| static_cast<unsigned>(RHITextureUsage::DepthStencil) | static_cast<unsigned>(RHITextureUsage::UnorderedAccess)))) return 0;
+		for (const auto& mapping : resource->mappings) if (mapping) return 0;
+		return resource->content_version;
+	}
 	bool Destroy_Buffer(RHIBufferHandle buffer) noexcept override;
 	bool Destroy_Texture(RHITextureHandle texture) noexcept override;
 	bool Destroy_Pipeline(RHIPipelineHandle pipeline) noexcept override;
@@ -1185,8 +1245,18 @@ DX12DeviceState::~DX12DeviceState() noexcept
 
 void DX12DeviceState::Collect_Deferred() noexcept
 {
-	if (fence.Get() != nullptr)
-		completed_fence = (std::max)(completed_fence, fence.Get()->GetCompletedValue());
+	if (fence.Get() != nullptr) {
+		const auto completed=fence.Get()->GetCompletedValue();
+		if (completed==UINT64_MAX) {
+			if (!removed) Report_HResult("Device removed while polling fence",device.Get()->GetDeviceRemovedReason());
+			removed=true;
+			return;
+		}
+		completed_fence = (std::max)(completed_fence, completed);
+	}
+	cpu_resources.Collect(completed_fence);
+	cpu_render_targets.Collect(completed_fence);
+	cpu_depth_targets.Collect(completed_fence);
 	for (auto it = deferred.begin(); it != deferred.end();) {
 		if (it->fence <= completed_fence)
 			it = deferred.erase(it);
@@ -1200,7 +1270,9 @@ bool DX12DeviceState::Wait_For_Fence(std::uint64_t value) noexcept
 	GRAPHICS_PROFILE_FOCUS_SCOPE("Graphics.DX12.WaitForFence");
 	if (fence.Get() == nullptr || value == 0)
 		return true;
-	if (fence.Get()->GetCompletedValue() < value) {
+	Collect_Deferred();
+	if (removed) return false;
+	if (completed_fence < value) {
 		if (fence_event == nullptr)
 			fence_event = CreateEventW(nullptr, FALSE, FALSE, nullptr);
 		if (fence_event == nullptr)
@@ -1214,7 +1286,7 @@ bool DX12DeviceState::Wait_For_Fence(std::uint64_t value) noexcept
 	}
 	completed_fence = (std::max)(completed_fence, value);
 	Collect_Deferred();
-	return true;
+	return !removed;
 }
 
 DX12SwapChain::~DX12SwapChain() noexcept
@@ -1258,13 +1330,17 @@ void DX12SwapChain::Release_Targets() noexcept
 	if (m_state == nullptr)
 		return;
 	for (auto &handle : m_backbuffers) {
-		if (handle.Is_Valid())
+		if (handle.Is_Valid()) {
+			if (auto* texture=m_state->textures.Resolve(handle)) m_state->Retire_Texture_Views(*texture,m_state->Retirement_Fence());
 			m_state->textures.Destroy(handle);
+		}
 		handle = {};
 	}
 	for (auto &handle : m_depth_targets) {
-		if (handle.Is_Valid())
+		if (handle.Is_Valid()) {
+			if (auto* texture=m_state->textures.Resolve(handle)) m_state->Retire_Texture_Views(*texture,m_state->Retirement_Fence());
 			m_state->textures.Destroy(handle);
+		}
 		handle = {};
 	}
 }
@@ -1278,13 +1354,17 @@ bool DX12SwapChain::Create_Targets(std::uint32_t width, std::uint32_t height)
 	std::array<RHITextureHandle, SwapChainBufferCount> depth_targets{};
 	const auto destroy_created = [&]() noexcept {
 		for (auto &handle : backbuffers) {
-			if (handle.Is_Valid())
+			if (handle.Is_Valid()) {
+				if (auto* texture=m_state->textures.Resolve(handle)) m_state->Retire_Texture_Views(*texture,0);
 				m_state->textures.Destroy(handle);
+			}
 			handle = {};
 		}
 		for (auto &handle : depth_targets) {
-			if (handle.Is_Valid())
+			if (handle.Is_Valid()) {
+				if (auto* texture=m_state->textures.Resolve(handle)) m_state->Retire_Texture_Views(*texture,0);
 				m_state->textures.Destroy(handle);
+			}
 			handle = {};
 		}
 	};
@@ -1317,6 +1397,7 @@ bool DX12SwapChain::Create_Targets(std::uint32_t width, std::uint32_t height)
 			m_state->CpuRTV(backbuffer.render_target_view.index));
 		backbuffers[index] = m_state->textures.Create(std::move(backbuffer));
 		if (!backbuffers[index].Is_Valid()) {
+			m_state->Retire_Texture_Views(backbuffer,0);
 			destroy_created();
 			return false;
 		}
@@ -1362,6 +1443,7 @@ bool DX12SwapChain::Create_Targets(std::uint32_t width, std::uint32_t height)
 			m_state->CpuDSV(depth.depth_stencil_view.index));
 		depth_targets[index] = m_state->textures.Create(std::move(depth));
 		if (!depth_targets[index].Is_Valid()) {
+			m_state->Retire_Texture_Views(depth,0);
 			destroy_created();
 			return false;
 		}
@@ -2106,6 +2188,7 @@ bool DX12CommandList::Copy_Texture(RHITextureHandle source,
 		|| !m_state->Transition(*destination_texture, D3D12_RESOURCE_STATE_COPY_DEST))
 		return false;
 	m_state->command_list.Get()->CopyResource(destination_texture->object.Get(), source_texture->object.Get());
+	++destination_texture->content_version;
 	m_state->Transition(*source_texture, source_state);
 	m_state->Transition(*destination_texture, destination_state);
 	return true;
@@ -2436,8 +2519,10 @@ RHIBufferHandle DX12Device::Create_Buffer_Initialized(const RHIBuffer &descripti
 	}
 
 	const RHIBufferHandle handle = m_state->buffers.Create(std::move(resource));
-	if (!handle.Is_Valid())
+	if (!handle.Is_Valid()) {
+		m_state->cpu_resources.Retire(resource.shader_resource_view,0);
 		return {};
+	}
 	if (description.usage != RHIBufferUsage::Constant
         && !(description.usage==RHIBufferUsage::Storage && description.byte_size<=4096)
 		&& !initial_data.empty() && !Update_Buffer(handle, 0, initial_data)) {
@@ -2692,19 +2777,24 @@ RHITextureHandle DX12Device::Create_Texture_Initialized(const RHITexture &descri
 	heap.Type = D3D12_HEAP_TYPE_DEFAULT;
 	const HRESULT create_result = m_state->device.Get()->CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE,
 		&native, Texture_Initial_State(description), clear_pointer, IID_PPV_ARGS(resource.object.Put()));
-	if (FAILED(create_result) || !Create_Texture_Views(*m_state, resource))
+	if (FAILED(create_result) || !Create_Texture_Views(*m_state, resource)) {
+		m_state->Retire_Texture_Views(resource,0);
 		return {};
+	}
 	const std::uint32_t plane_count = description.format == RHITextureFormat::D24_UNorm_S8 ? 2u : 1u;
 	const std::uint32_t subresources = (volume ? description.mip_count
 		: description.mip_count * description.array_size) * plane_count;
 	try {
 		resource.states.assign(subresources, Texture_Initial_State(description));
 	} catch (...) {
+		m_state->Retire_Texture_Views(resource,0);
 		return {};
 	}
 	const RHITextureHandle handle = m_state->textures.Create(std::move(resource));
-	if (!handle.Is_Valid())
+	if (!handle.Is_Valid()) {
+		m_state->Retire_Texture_Views(resource,0);
 		return {};
+	}
 	if (!initial_data.data.empty() && !Update_Texture(handle, initial_data)) {
 		Destroy_Texture(handle);
 		return {};
@@ -2836,6 +2926,7 @@ bool DX12Device::Update_Texture(RHITextureHandle texture,
 	destination.SubresourceIndex = layout.subresource;
 	m_state->command_list.Get()->CopyTextureRegion(&destination, 0, 0, 0, &source, nullptr);
 	m_state->Transition(*resource, old_state, layout.subresource);
+	++resource->content_version;
 	return true;
 }
 
@@ -3000,6 +3091,7 @@ bool DX12Device::Unmap_Texture(RHITextureHandle texture, std::uint32_t mip,
 	if (found == resource->mappings.end())
 		return false;
 	DX12TextureMapping &mapping = **found;
+	if (!mapping.read_only) ++resource->content_version;
 	if (mapping.readback_mapped && mapping.readback.Get() != nullptr) {
 		mapping.readback.Get()->Unmap(0, nullptr);
 		mapping.readback_mapped = false;
@@ -3259,7 +3351,10 @@ bool DX12Device::Generate_Texture_Mips(RHITextureHandle texture) noexcept
 		!= resource->description.mip_count)
 		return false;
 	if (!resource->compute_mips)
+	{
+		++resource->content_version;
 		return Generate_Raster_Mips(*m_state, *resource);
+	}
 	ID3D12PipelineState *pipeline = nullptr;
 	const bool array_view = resource->description.dimension != RHITextureDimension::Volume
 		&& resource->description.array_size > 1;
@@ -3268,6 +3363,7 @@ bool DX12Device::Generate_Texture_Mips(RHITextureHandle texture) noexcept
 		|| !m_state->Ensure_Recording())
 		return false;
 	ID3D12GraphicsCommandList *commands = m_state->command_list.Get();
+	++resource->content_version;
 	ID3D12DescriptorHeap *heaps[] = {m_state->gpu_resources.Get(), m_state->gpu_samplers.Get()};
 	commands->SetDescriptorHeaps(static_cast<UINT>(std::size(heaps)), heaps);
 	commands->SetComputeRootSignature(m_state->mip_root_signature.Get());
@@ -3381,6 +3477,7 @@ bool DX12Device::Destroy_Buffer(RHIBufferHandle buffer) noexcept
 	if (DX12BufferCache::Eligible(resource->usage, resource->capacity))
 		m_state->buffer_cache.Recycle(*resource, fence_value);
 	m_state->command_list_facade.Release_Buffer_Bindings(buffer);
+	m_state->cpu_resources.Retire(resource->shader_resource_view,fence_value);
 	return m_state->buffers.Destroy(buffer);
 }
 
@@ -3405,6 +3502,7 @@ bool DX12Device::Destroy_Texture(RHITextureHandle texture) noexcept
 			return false;
 	}
 	m_state->command_list_facade.Release_Texture_Bindings(texture);
+	m_state->Retire_Texture_Views(*resource,fence_value);
 	return m_state->textures.Destroy(texture);
 }
 
@@ -3472,6 +3570,17 @@ bool DX12Device::End_Frame() noexcept
 	m_state->ready_to_present = true;
 	m_state->presented = false;
 	return true;
+}
+
+void DX12DeviceState::Retire_Texture_Views(DX12Texture& texture, std::uint64_t fence) noexcept
+{
+	cpu_resources.Retire(texture.shader_resource_view,fence);
+	cpu_resources.Retire(texture.unordered_access_view,fence);
+	for (auto& view : texture.mip_shader_resource_views) cpu_resources.Retire(view,fence);
+	for (auto& view : texture.mip_unordered_access_views) cpu_resources.Retire(view,fence);
+	cpu_render_targets.Retire(texture.render_target_view,fence);
+	cpu_render_targets.Retire(texture.mip_render_targets,fence);
+	cpu_depth_targets.Retire(texture.depth_stencil_view,fence);
 }
 
 bool DX12DeviceState::Defer(IUnknown *object, std::uint64_t fence_value) noexcept
@@ -3590,6 +3699,7 @@ DX12UploadSlice DX12DeviceState::Allocate_Upload(std::uint64_t size,
 
 bool DX12DeviceState::Ensure_Recording() noexcept
 {
+	if (removed) return false;
 	if (recording)
 		return true;
 	if (device.Get() == nullptr || command_list.Get() == nullptr)
@@ -3613,12 +3723,13 @@ bool DX12DeviceState::Ensure_Recording() noexcept
 	recording = true;
 	command_list_facade.On_New_Command_List();
 	Collect_Deferred();
-	return true;
+	return !removed;
 }
 
 std::uint64_t DX12DeviceState::Submit_Current(bool wait) noexcept
 {
 	GRAPHICS_PROFILE_FOCUS_SCOPE("Graphics.DX12.Submit");
+	if (removed) return 0;
 	if (!recording)
 		return last_submitted_fence;
 	const HRESULT close_result = command_list.Get()->Close();
@@ -3642,7 +3753,7 @@ std::uint64_t DX12DeviceState::Submit_Current(bool wait) noexcept
 	if (wait && !Wait_For_Fence(signal))
 		return 0;
 	Collect_Deferred();
-	return signal;
+	return removed ? 0 : signal;
 }
 
 bool DX12DeviceState::Transition(DX12Texture &texture, D3D12_RESOURCE_STATES desired,
@@ -3700,11 +3811,7 @@ bool DX12DeviceState::Transition(DX12Texture &texture, D3D12_RESOURCE_STATES des
 static bool Allocate_CPU_Descriptors(DX12DescriptorHeap &heap, std::uint32_t &offset,
 	std::uint32_t count, DX12DescriptorRange &range) noexcept
 {
-	if (count == 0 || offset > heap.Capacity() || count > heap.Capacity() - offset)
-		return false;
-	range = {offset, count};
-	offset += count;
-	return true;
+	return heap.Allocate(offset,count,range);
 }
 
 static bool Create_Upload_Resource(ID3D12Device *device, std::uint64_t size,

@@ -2,6 +2,7 @@ module;
 #define BOOST_TEST_MODULE DirectionalShadowDrawingTests
 #include <boost/test/included/unit_test.hpp>
 #include <array>
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <filesystem>
@@ -17,6 +18,89 @@ import Graphics.Scene.Lighting.Environment;
 import Graphics.Scene.Trees.Renderer;
 import Graphics.Scene.Terrain.Renderer;
 using namespace Graphics;
+
+BOOST_AUTO_TEST_CASE(cached_shadow_pixels_follow_texture_geometry_camera_and_light_changes)
+{
+    struct Reset { ~Reset(){ Get_Environment_Lighting()={}; } } reset;
+    GraphicsTestDevice device({true});
+    DirectionalShadowRenderer shadows;
+    PropRenderer geometry;
+    const auto shaders=Graphics::Test_Shader_Directory(GRAPHICS_TERRAIN_SHADER_DIRECTORY);
+    BOOST_REQUIRE(shadows.Initialize(device,shaders));
+    BOOST_REQUIRE(geometry.Initialize(device,shaders));
+    const auto target=device.Create_Texture({16,16,1,RHITextureFormat::RGBA8_UNorm,
+        static_cast<unsigned>(RHITextureUsage::RenderTarget)});
+    const auto depth=device.Create_Texture({16,16,1,RHITextureFormat::D32_Float,
+        static_cast<unsigned>(RHITextureUsage::DepthStencil)});
+    std::array<std::uint8_t,4> pixels{255,255,255,255};
+    const auto texture=device.Create_Texture_Initialized({1,1},{std::as_bytes(std::span(pixels)),4});
+    std::array<PropVertex,4> vertices{};
+    vertices[0].position={-1,-1,-4}; vertices[1].position={1,-1,-4};
+    vertices[2].position={1,1,-4}; vertices[3].position={-1,1,-4};
+    const std::array<std::uint32_t,6> indices{0,1,2,0,2,3};
+    const auto mesh=geometry.Create_Mesh(vertices,indices);
+    auto projection=Matrix4x4::Identity();
+    projection.values[10]=projection.values[11]=-1.f/9;
+    View view{Matrix4x4::Identity(),projection,{}, {0,0,16,16,0,1}};
+    RenderLight light; light.type=RenderLightType::Directional;
+    light.flags=RenderLightFlags::Enabled; light.direction={0,0,-1};
+    ShadowSettings settings{2,1,10,.5f,2,64};
+    PropParameters parameters; parameters.alpha_cutoff=.5f;
+    auto& commands=device.Immediate_Command_List();
+    const auto submit=[&] {
+        shadows.Clear_Casters();
+        BOOST_REQUIRE(shadows.Add_Caster(geometry,mesh,parameters,std::array{texture}));
+    };
+    const auto render=[&] { BOOST_REQUIRE(shadows.Render(commands,view,light,settings,target,depth,{0,0,16,16})); };
+    const auto image=[&] {
+        std::array<float,64*64> values{};
+        BOOST_REQUIRE(device.Readback_Texture(Get_Environment_Lighting().shadow_textures[0],
+            std::as_writable_bytes(std::span(values)),64*sizeof(float)));
+        return values;
+    };
+    submit(); render();
+    const auto original=image();
+    BOOST_CHECK(std::any_of(original.begin(),original.end(),[](float z){return z<1;}));
+    auto count=shadows.Rendered_Cascade_Count();
+    submit(); render(); // New submission references must still reuse the map.
+    BOOST_CHECK_EQUAL(shadows.Rendered_Cascade_Count(),count);
+    BOOST_CHECK(image()==original);
+    settings.cache_maps=false; render();
+    BOOST_CHECK(image()==original);
+    settings.cache_maps=true; render();
+    count=shadows.Rendered_Cascade_Count();
+    pixels[3]=0;
+    BOOST_REQUIRE(device.Update_Texture(texture,{std::as_bytes(std::span(pixels)),4}));
+    render();
+    BOOST_CHECK_GT(shadows.Rendered_Cascade_Count(),count);
+    const auto transparent=image();
+    BOOST_CHECK(std::all_of(transparent.begin(),transparent.end(),[](float z){return z==1;}));
+    pixels[3]=255;
+    BOOST_REQUIRE(device.Update_Texture(texture,{std::as_bytes(std::span(pixels)),4}));
+    render(); BOOST_CHECK(image()==original);
+    count=shadows.Rendered_Cascade_Count();
+    parameters.world[3]=.5f; submit(); render();
+    BOOST_CHECK_GT(shadows.Rendered_Cascade_Count(),count);
+    BOOST_CHECK(image()!=original);
+    count=shadows.Rendered_Cascade_Count();
+    shadows.Clear_Casters();
+    for (auto& vertex : vertices) vertex.position[0]+=.5f;
+    BOOST_REQUIRE(geometry.Update_Mesh(mesh,vertices,indices));
+    submit(); render(); BOOST_CHECK_GT(shadows.Rendered_Cascade_Count(),count);
+    count=shadows.Rendered_Cascade_Count();
+    view.view_matrix.values[3]=.5f; render();
+    BOOST_CHECK_GT(shadows.Rendered_Cascade_Count(),count);
+    count=shadows.Rendered_Cascade_Count();
+    light.direction={.2f,0,-1}; render();
+    BOOST_CHECK_GT(shadows.Rendered_Cascade_Count(),count);
+    shadows.Clear_Casters(); render();
+    const auto empty=image();
+    BOOST_CHECK(std::all_of(empty.begin(),empty.end(),[](float z){return z==1;}));
+    count=shadows.Rendered_Cascade_Count(); render();
+    BOOST_CHECK_EQUAL(shadows.Rendered_Cascade_Count(),count);
+    shadows.Shutdown(); geometry.Destroy_Mesh(mesh); geometry.Shutdown();
+    device.Destroy_Texture(texture); device.Destroy_Texture(target); device.Destroy_Texture(depth);
+}
 
 BOOST_AUTO_TEST_CASE(terrain_shadow_patches_match_full_geometry_and_cull_distant_cells)
 {
@@ -194,7 +278,9 @@ BOOST_AUTO_TEST_CASE(cascades_draw_off_slice_casters_and_clear_after_resource_re
     for (unsigned frame=0;frame<9;++frame) {
         if (frame != 0) {
             shadows.Clear_Casters();
-            settings.map_size = 64;
+            // Exercise growth and shrinkage while populated casters and
+            // cutout textures survive shadow-resource recreation.
+            settings.map_size = frame % 2 == 0 ? 128 : 64;
         }
         if (frame == 2) {
             TreeRenderer trees;
@@ -237,6 +323,11 @@ BOOST_AUTO_TEST_CASE(cascades_draw_off_slice_casters_and_clear_after_resource_re
         }
         BOOST_REQUIRE(shadows.Render(commands,view,light,settings,target,depth,{0,0,32,32}));
         BOOST_CHECK_EQUAL(Get_Environment_Lighting().parameters.shadow_options[0],2);
+        const auto drawn=shadows.Rendered_Cascade_Count();
+        const auto reused=shadows.Reused_Cascade_Count();
+        BOOST_REQUIRE(shadows.Render(commands,view,light,settings,target,depth,{0,0,32,32}));
+        BOOST_CHECK_EQUAL(shadows.Rendered_Cascade_Count(),drawn);
+        BOOST_CHECK_EQUAL(shadows.Reused_Cascade_Count(),reused+2);
         // Render restored the caller's target and viewport.
         BOOST_REQUIRE(commands.Clear({0,0,0,0},1));
         BOOST_REQUIRE(receiver.Draw(commands,mesh,style,parameters,{}));

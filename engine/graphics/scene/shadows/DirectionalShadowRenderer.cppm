@@ -47,6 +47,8 @@ public:
     }
 
     std::uint64_t Caster_Sort_Count() const noexcept { return m_caster_sort_count; }
+    std::uint64_t Rendered_Cascade_Count() const noexcept { return m_rendered_cascades; }
+    std::uint64_t Reused_Cascade_Count() const noexcept { return m_reused_cascades; }
     void Clear_Casters() noexcept
     {
         for (const auto& caster : m_casters)
@@ -93,6 +95,7 @@ public:
 
     void Shutdown() noexcept
     {
+        m_cache_valid = {};
         Clear_Casters();
         if (m_transient_mesh.Is_Valid()) m_renderer.Destroy_Mesh(m_transient_mesh);
         m_transient_mesh = {};
@@ -182,17 +185,22 @@ public:
         ShadowCascades cascades;
         if (!Build_Shadow_Cascades(view,LightHandle(0,1),light,settings,cascades)) return false;
         if (!Prepare_Maps(settings)) return false;
-        if (!Prepare_Batches()) return false;
+        std::array<bool,Max_Shadow_Cascades> dirty;
+        if (settings.cache_maps) dirty=Prepare_Cache(cascades);
+        else { dirty.fill(true); m_cacheable={}; }
+        const bool any_dirty = std::any_of(dirty.begin(),dirty.begin()+cascades.count,[](bool value){return value;});
+        if (any_dirty && !Prepare_Batches()) { m_cache_valid = {}; return false; }
         auto& environment = Get_Environment_Lighting();
         const auto saved = environment;
         environment.parameters.shadow_options[0] = 0;
         environment.parameters.cloud_offset_strength[3] = 0;
         environment.parameters.clip_plane = {};
-        const bool rendered = m_plan.Execute(m_graph,commands,
+        const bool rendered = !any_dirty || m_plan.Execute(m_graph,commands,
             [&](GraphPassHandle pass,CommandList& list,const PassResources& resources) {
                 std::uint32_t cascade = 0;
                 while (cascade<cascades.count && m_passes[cascade]!=pass) ++cascade;
                 if (cascade == cascades.count) return false;
+                if (!dirty[cascade]) return true;
                 if (!list.Set_Depth_Target(resources.Texture(m_maps.Target(cascade)))
                     || !list.Set_Viewport({0,0,settings.map_size,settings.map_size})
                     || !list.Clear_Depth(1)) return false;
@@ -234,8 +242,13 @@ public:
         const bool restored = commands.Set_Render_Targets(color_target,depth_target)
             && commands.Set_Viewport(viewport);
         environment.parameters.shadow_options[0] = 0;
-        if (!rendered || !restored) return false;
+        if (!rendered || !restored) { m_cache_valid = {}; return false; }
         for (std::uint32_t cascade=0;cascade<cascades.count;++cascade) {
+            if (dirty[cascade]) {
+                ++m_rendered_cascades;
+                std::swap(m_cached_keys[cascade],m_current_keys[cascade]);
+            } else ++m_reused_cascades;
+            m_cache_valid[cascade] = m_cacheable[cascade];
             environment.parameters.shadow_view_projection[cascade] = cascades.views[cascade].view_projection.values;
             environment.parameters.shadow_splits[cascade] = cascades.views[cascade].split_far;
             environment.shadow_textures[cascade] = m_maps.Texture(cascade);
@@ -247,6 +260,69 @@ public:
     }
 
 private:
+    struct CacheKey final {
+        std::vector<std::byte> data;
+        std::vector<PropStyle> styles;
+        bool operator==(const CacheKey&) const = default;
+        template<class Value> void Append(const Value& value) {
+            const auto bytes=std::as_bytes(std::span(&value,1));
+            data.insert(data.end(),bytes.begin(),bytes.end());
+        }
+    };
+
+    std::array<bool,Max_Shadow_Cascades> Prepare_Cache(const ShadowCascades& cascades)
+    {
+        GRAPHICS_PROFILE_SCOPE("Graphics.Shadows.CacheInputs");
+        std::array<std::array<std::array<float,4>,6>,Max_Shadow_Cascades> planes;
+        for (unsigned i=0;i<cascades.count;++i) {
+            auto& key=m_current_keys[i]; key.data.clear(); key.styles.clear();
+            key.Append(cascades.views[i].view_projection.values);
+            planes[i]=Cascade_Planes(cascades.views[i].view_projection);
+            m_cacheable[i]=true;
+        }
+        for (const auto& caster : m_casters) {
+            auto* renderer=caster.source ? caster.source : &m_renderer;
+            auto mesh=caster.source_mesh;
+            if (!caster.source) {
+                const auto* stored=m_meshes.Resolve(caster.mesh);
+                mesh=stored ? stored->handle : m_transient_mesh;
+            }
+            const auto* geometry=renderer->Mesh_Geometry(mesh);
+            std::array<std::uint64_t,PropTextureCount> versions{};
+            bool cacheable=geometry!=nullptr;
+            for (unsigned texture=0;texture<caster.texture_count;++texture) {
+                if (!caster.textures[texture].Is_Valid()) continue;
+                versions[texture]=m_device->Texture_Content_Version(caster.textures[texture]);
+                cacheable &= versions[texture]!=0;
+            }
+            for (unsigned i=0;i<cascades.count;++i) {
+                if (!Intersects_Cascade(caster.bounds,planes[i])) continue;
+                auto& key=m_current_keys[i];
+                m_cacheable[i] &= cacheable;
+                key.Append(renderer); key.Append(mesh.Get_Index()); key.Append(mesh.Get_Generation());
+                key.Append(geometry ? geometry->Revision() : 0);
+                key.Append(caster.first_index); key.Append(caster.index_count);
+                key.Append(caster.parameters);
+                const auto* instance=caster.source ? caster.source->Instances().Resolve(caster.instance) : nullptr;
+                key.Append(instance ? instance->world : caster.world);
+                key.Append(caster.texture_count);
+                key.Append(caster.textures); key.Append(versions);
+                key.styles.push_back(caster.style);
+                // Compare pose contents, not reused palette addresses or
+                // lighting-only instance generations. Wind also uses palettes.
+                const auto pose=caster.source ? caster.source->Instances().Pose(caster.instance)
+                    : std::span<const PropBoneTransform>{};
+                key.Append(pose.size());
+                const auto bytes=std::as_bytes(pose);
+                key.data.insert(key.data.end(),bytes.begin(),bytes.end());
+            }
+        }
+        std::array<bool,Max_Shadow_Cascades> dirty{};
+        for (unsigned i=0;i<cascades.count;++i)
+            dirty[i]=!m_cache_valid[i] || !m_cacheable[i] || m_cached_keys[i]!=m_current_keys[i];
+        return dirty;
+    }
+
     struct Mesh final
     {
         PropMeshHandle handle{};
@@ -448,6 +524,7 @@ private:
     bool Prepare_Maps(const ShadowSettings& settings)
     {
         if (m_maps.Count() == settings.cascade_count && m_maps.Map_Size() == settings.map_size && m_plan.Is_Valid()) return true;
+        m_cache_valid = {};
         Get_Environment_Lighting().parameters.shadow_options[0] = 0;
         Get_Environment_Lighting().shadow_textures = {};
         m_maps.Shutdown(*m_device);
@@ -461,6 +538,9 @@ private:
     }
 
     Device* m_device = nullptr;
+    std::array<CacheKey,Max_Shadow_Cascades> m_cached_keys, m_current_keys;
+    std::array<bool,Max_Shadow_Cascades> m_cache_valid{}, m_cacheable{};
+    std::uint64_t m_rendered_cascades=0, m_reused_cascades=0;
     PropRenderer m_renderer;
     ResourcePool<Mesh,ShadowCasterHandle> m_meshes;
     PropMeshHandle m_transient_mesh{};

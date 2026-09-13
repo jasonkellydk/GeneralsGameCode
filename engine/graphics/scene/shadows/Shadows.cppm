@@ -19,6 +19,14 @@ namespace Graphics
 
 export inline constexpr std::size_t Max_Shadow_Cascades = 4;
 
+// Quality tiers avoid reallocating four depth maps for every pixel of a window
+// drag. A bounded allocation keeps large displays from exhausting GPU memory.
+export constexpr std::uint32_t Shadow_Map_Size_For_Viewport(
+    std::uint32_t width, std::uint32_t height) noexcept
+{
+    return width > 1536 || height > 1536 ? 4096 : 3072;
+}
+
 export struct ShadowSettings final
 {
 	std::uint32_t cascade_count = 4;
@@ -27,6 +35,7 @@ export struct ShadowSettings final
 	float split_lambda = 0.5f;
 	float depth_padding = 50.0f;
 	std::uint32_t map_size = 1024;
+	bool cache_maps = true;
 };
 
 export struct ShadowView final
