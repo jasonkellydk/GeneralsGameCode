@@ -70,6 +70,10 @@ void PrepareShadows()
 void DoShadows(W3DRenderContext & rinfo, Bool stencilPass)
 {
     shadowCameraFrustum = &rinfo.Camera.Get_Frustum();
+    // Gameplay ground markers still use projected decals after object shadows
+    // moved to the directional renderer. Submit them beneath scene objects.
+    if (!stencilPass && TheW3DProjectedShadowManager != nullptr)
+        TheW3DProjectedShadowManager->renderShadows(rinfo);
     if (TheW3DShadowManager != nullptr && stencilPass)
         TheW3DShadowManager->queueShadows(FALSE);
 

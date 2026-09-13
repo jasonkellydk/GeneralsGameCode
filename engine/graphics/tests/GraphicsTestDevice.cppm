@@ -177,6 +177,7 @@ public:
 	bool Map_Texture(RHITextureHandle texture, std::uint32_t mip, std::uint32_t layer, bool read_only, RHITextureMapping &mapping) override { return m_device != nullptr && m_device->Map_Texture(texture, mip, layer, read_only, mapping); }
 	bool Unmap_Texture(RHITextureHandle texture, std::uint32_t mip, std::uint32_t layer) noexcept override { return m_device != nullptr && m_device->Unmap_Texture(texture, mip, layer); }
 	bool Retain_Texture(RHITextureHandle texture) noexcept override { return m_device != nullptr && m_device->Retain_Texture(texture); }
+	std::uint64_t Texture_Content_Version(RHITextureHandle texture) const noexcept override { return m_device ? m_device->Texture_Content_Version(texture) : 0; }
 	bool Destroy_Buffer(RHIBufferHandle buffer) noexcept override { return m_device != nullptr && m_device->Destroy_Buffer(buffer); }
 	bool Destroy_Texture(RHITextureHandle texture) noexcept override { return m_device != nullptr && m_device->Destroy_Texture(texture); }
 	bool Destroy_Pipeline(RHIPipelineHandle pipeline) noexcept override { return m_device != nullptr && m_device->Destroy_Pipeline(pipeline); }

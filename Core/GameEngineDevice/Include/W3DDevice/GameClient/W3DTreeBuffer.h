@@ -45,6 +45,8 @@
 #pragma once
 
 #include <array>
+#include <cstddef>
+#include <cstdint>
 #include <span>
 #include <vector>
 import Graphics.Scene.Trees.Renderer;
@@ -220,9 +222,12 @@ private:
 	enum {PARTITION_WIDTH_HEIGHT = 100};
     std::vector<Graphics::TreeVertex> m_vertexTree[MAX_BUFFERS];
     std::vector<UnsignedShort> m_indexTree[MAX_BUFFERS];
-    Graphics::TreeMeshHandle m_graphicsMeshes[MAX_BUFFERS];
-    bool m_graphicsGeometryDirty = true;
+    std::array<std::array<Graphics::TreeMeshHandle,MAX_BUFFERS>,2> m_graphicsMeshes{};
+    std::array<bool,2> m_graphicsGeometryDirty{true,true};
     UnsignedInt m_preparedFrame = ~0u;
+    std::vector<std::byte> m_shadowInputs, m_shadowInputScratch;
+    std::vector<Graphics::TreeVertex> m_shadowVertices;
+    std::vector<std::uint32_t> m_shadowIndices;
 
 
 	Short		m_areaPartition[PARTITION_WIDTH_HEIGHT*PARTITION_WIDTH_HEIGHT];
@@ -269,7 +274,7 @@ protected:
 	void updateVertexBuffer(); ///< Fills the index and vertex buffers for drawing.
 	void cull(const W3DCamera * camera);						 ///< Culls the trees.
 	UnsignedInt  doLighting(const Vector3 *normal,
-		const GlobalData::TerrainLighting	*objectLighting,
+		const GlobalData::TerrainLighting	*objectLighting, const Vector3* lightRays,
 		const Vector3 *emissive, UnsignedInt vertexDiffuse, Real scale) const;
 #if 0 // sort is no longer used and messes up the order. jba [6/6/2003]
 	void sort( Int iterations );								 ///< Performs partial bubble sort.

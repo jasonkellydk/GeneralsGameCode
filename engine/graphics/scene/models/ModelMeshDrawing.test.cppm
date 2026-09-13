@@ -114,8 +114,9 @@ BOOST_AUTO_TEST_CASE(material_batches_draw_both_triangles_after_source_release_o
                 ModelMeshDrawing drawing(std::span<const Position>(*geometry.positions), std::span<const Position>(*geometry.normals),
                     std::span<const Triangle>(*geometry.triangles), geometry.revision.Token(), bindings, state, renderer, extraction, context);
                 unsigned draws = 0;
-                BOOST_REQUIRE(drawing.Draw_Base([&](auto vertices, auto indices, auto draw_shader, auto textures, auto parameters, auto overrides) {
+                BOOST_REQUIRE(drawing.Draw_Base([&](auto vertices, auto indices, auto draw_shader, auto textures, auto& parameters, auto overrides) {
                     ++draws; BOOST_CHECK_EQUAL(indices.size(), 3);
+                    if (width==32) return Submit_Prop_Material_In_Place(device,renderer,submission,vertices,indices,draw_shader,textures,Resolve,parameters,{},overrides);
                     return Submit_Prop_Material(device,renderer,submission,vertices,indices,draw_shader,textures,Resolve,parameters,{},overrides);
                 }));
                 BOOST_CHECK_EQUAL(draws, 2);
@@ -323,11 +324,11 @@ BOOST_AUTO_TEST_CASE(skinned_instances_share_bind_geometry_and_move_without_read
         context.parameters.normal_in_world_space=1; context.bone_links=bones;
         ModelMeshDrawing drawing(std::span<const CountedPosition>(positions), std::span<const CountedPosition>{},
             std::span<const Triangle>(triangles),source.Token(),bindings,state,renderer,extraction,context);
-        const auto submit = [&](auto vertices, auto indices, auto draw_shader, auto textures, auto parameters, auto overrides) {
+        const auto submit = [&](auto vertices, auto indices, auto draw_shader, auto textures, auto& parameters, auto overrides) {
             meshes[instance]=overrides.mesh;
             overrides.instance=&instances[instance]; overrides.skin=palettes[instance];
             PropMaterialDrawContext submission_context; submission_context.batchable=true;
-            return Submit_Prop_Material(device,renderer,submission,vertices,indices,draw_shader,textures,
+            return Submit_Prop_Material_In_Place(device,renderer,submission,vertices,indices,draw_shader,textures,
                 Resolve,parameters,submission_context,overrides);
         };
         if (additional) {

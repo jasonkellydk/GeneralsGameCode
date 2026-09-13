@@ -43,6 +43,11 @@ public:
         if (m_renderer != nullptr) m_transparent.Clear(*m_renderer);
         m_materials.Clear(); m_decals.Clear();
         Release(m_frame_textures);
+        for (const auto texture : m_borrowed_textures) {
+            m_borrowed_slots[texture.Get_Index()] = {};
+            m_device->Destroy_Texture(texture);
+        }
+        m_borrowed_textures.clear();
     }
     void Clear_Shadows() noexcept
     {
@@ -67,12 +72,32 @@ public:
     }
     void Begin_Decal_Group() { m_decals.Begin_Group(); }
 
+    // Retain each borrowed generation once for the submission interval, before
+    // invoking another resolver. Failed draws may keep this lease until Clear.
+    // Dense slots are only a lookup cache; the list owns every retained handle.
+    bool Retain_Borrowed_Texture(RHITextureHandle texture) {
+        if (!m_device || !texture.Is_Valid()) return false;
+        const auto index = texture.Get_Index();
+        if (index < m_borrowed_slots.size() && m_borrowed_slots[index] == texture) return true;
+        if (!m_device->Retain_Texture(texture)) return false;
+        try {
+            if (index >= m_borrowed_slots.size()) m_borrowed_slots.resize(std::size_t(index) + 1);
+            m_borrowed_textures.push_back(texture);
+        } catch (...) {
+            m_device->Destroy_Texture(texture);
+            throw;
+        }
+        m_borrowed_slots[index] = texture;
+        return true;
+    }
+
     // On success, texture handles transfer to this submission. On failure the
     // caller still owns them. Geometry is borrowed for immediate draws and
     // retained through drawing/cancellation for every deferred phase.
     bool Submit(PropMeshHandle mesh,PropStyle style,const PropParameters& parameters,
         std::span<const RHITextureHandle> textures,PropDrawPhase phase,
-        const std::array<float,4>& camera_depth = {}, PropInstanceHandle instance = {})
+        const std::array<float,4>& camera_depth = {}, PropInstanceHandle instance = {},
+        bool transfer_textures = true)
     {
         GRAPHICS_PROFILE_SCOPE("Graphics.Props.Submit");
         if (m_device == nullptr || m_renderer == nullptr || textures.size() > PropTextureCount) return false;
@@ -107,7 +132,7 @@ public:
             break;
         }
         if (!submitted) return false;
-        for (const auto texture : textures) if (texture.Is_Valid()) {
+        for (const auto texture : textures) if (transfer_textures && texture.Is_Valid()) {
             if (batched) m_batch_textures.push_back(texture);
             else if (phase == PropDrawPhase::Immediate || phase == PropDrawPhase::Batchable) m_device->Destroy_Texture(texture);
             else if (phase == PropDrawPhase::Shadow) m_shadow_textures.push_back(texture);
@@ -150,6 +175,8 @@ private:
     TransparentGeometry m_transparent;
     std::vector<RHITextureHandle> m_frame_textures;
     std::vector<RHITextureHandle> m_shadow_textures;
+    std::vector<RHITextureHandle> m_borrowed_slots;
+    std::vector<RHITextureHandle> m_borrowed_textures;
 };
 // A scene owns each batching interval and flushes before changing targets or
 // drawing a different feature. Nested traversals keep their parent's interval.

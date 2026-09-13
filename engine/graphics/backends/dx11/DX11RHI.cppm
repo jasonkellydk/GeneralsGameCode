@@ -10,6 +10,7 @@ module;
 #include <cstdint>
 #include <cstring>
 #include <d3d11.h>
+#include <d3dcompiler.h>
 #include <dxgi.h>
 #include <fstream>
 #include <iterator>
@@ -153,6 +154,7 @@ struct DX11TextureMapping final
 
 struct DX11Texture final
 {
+	std::uint64_t content_version = 1;
 	DX11NativeObject<ID3D11Texture2D> object;
     DX11NativeObject<ID3D11Texture3D> volume;
     RHITexture description{};
@@ -168,6 +170,13 @@ struct DX11Texture final
 	RHITextureFormat format = RHITextureFormat::RGBA8_UNorm;
 };
 
+struct DX11ShaderResources final
+{
+    std::uint32_t constants = 0xffffu;
+    std::array<std::uint64_t,2> views{~0ull,~0ull};
+    bool Uses_View(std::uint32_t slot) const noexcept { return (views[slot/64] & (1ull << (slot%64))) != 0; }
+};
+
 struct DX11Pipeline final
 {
 	std::uint64_t key = 0;
@@ -181,6 +190,7 @@ struct DX11Pipeline final
 	std::uint8_t sampler_count = 1;
     std::uint8_t stencil_reference = 0;
 	RHIPrimitiveTopology topology = RHIPrimitiveTopology::TriangleList;
+	std::array<DX11ShaderResources,2> resources;
 };
 
 static_assert(std::is_nothrow_move_constructible_v<DX11Buffer>);
@@ -260,7 +270,15 @@ private:
 
 	DX11DeviceState *m_state = nullptr;
 	RHIPipelineHandle m_pipeline{};
+	struct VertexBinding { RHIBufferHandle buffer{}; std::uint32_t stride=0, offset=0; };
+	std::array<VertexBinding,D3D11_IA_VERTEX_INPUT_RESOURCE_SLOT_COUNT> m_vertex_bindings{};
+	RHIBufferHandle m_index_buffer{};
+	RHIIndexFormat m_index_format=RHIIndexFormat::UInt16;
+	std::uint32_t m_index_offset=0;
 	std::array<std::array<RHIBufferHandle, D3D11_COMMONSHADER_CONSTANT_BUFFER_API_SLOT_COUNT>, 2> m_constant_buffers{};
+	std::array<std::array<RHIBufferHandle, D3D11_COMMONSHADER_CONSTANT_BUFFER_API_SLOT_COUNT>, 2> m_requested_constants{};
+	std::array<RHIBufferHandle,128> m_requested_pixel_storage{};
+	std::array<DX11ShaderResources,2> m_shader_usage;
 	std::array<std::array<ShaderResourceBinding, D3D11_COMMONSHADER_INPUT_RESOURCE_SLOT_COUNT>, 2> m_shader_resources{};
 	RHIPrimitiveTopology m_topology = RHIPrimitiveTopology::TriangleList;
 	RHITextureHandle m_color_target{};
@@ -436,6 +454,30 @@ static D3D11_BLEND_OP To_DX11_Blend_Operation(RHIBlendOperation operation) noexc
 		: D3D11_BLEND_OP_ADD;
 }
 
+static DX11ShaderResources Reflect_DX11_Resources(std::span<const std::byte> bytecode) noexcept
+{
+    DX11NativeObject<ID3D11ShaderReflection> reflection;
+    ID3D11ShaderReflection* native_reflection=nullptr;
+    if (FAILED(D3DReflect(bytecode.data(),bytecode.size(),__uuidof(ID3D11ShaderReflection),
+        reinterpret_cast<void**>(&native_reflection)))) return {};
+    reflection.Reset(native_reflection);
+    D3D11_SHADER_DESC shader{};
+    if (FAILED(reflection.Get()->GetDesc(&shader))) return {};
+    DX11ShaderResources result{0,{0,0}};
+    for (UINT index=0;index<shader.BoundResources;++index) {
+        D3D11_SHADER_INPUT_BIND_DESC binding{};
+        if (FAILED(reflection.Get()->GetResourceBindingDesc(index,&binding))) return {};
+        for (UINT offset=0;offset<binding.BindCount && offset<128;++offset) {
+            const auto slot=binding.BindPoint+offset;
+            if (binding.Type==D3D_SIT_CBUFFER) {
+                if (slot<16) result.constants|=1u<<slot;
+            } else if (binding.Type!=D3D_SIT_SAMPLER && slot<128)
+                result.views[slot/64]|=1ull<<(slot%64);
+        }
+    }
+    return result;
+}
+
 static bool Create_DX11_Pipeline(
 	ID3D11Device *device,
 	const RHIPipeline &description,
@@ -465,6 +507,7 @@ static bool Create_DX11_Pipeline(
 	if (FAILED(device->CreatePixelShader(pixel_bytecode.data(), pixel_bytecode.size(), nullptr, &native_pixel_shader)))
 		return false;
 	pipeline.pixel_shader.Reset(native_pixel_shader);
+	pipeline.resources = {Reflect_DX11_Resources(vertex_bytecode),Reflect_DX11_Resources(pixel_bytecode)};
 
 	D3D11_INPUT_ELEMENT_DESC standard_input_elements[] = {
 		{"POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 0, D3D11_INPUT_PER_VERTEX_DATA, 0},
@@ -824,7 +867,14 @@ public:
     bool Generate_Texture_Mips(RHITextureHandle texture) noexcept override;
     bool Map_Texture(RHITextureHandle texture, std::uint32_t mip, std::uint32_t layer, bool read_only, RHITextureMapping& mapping) override;
     bool Unmap_Texture(RHITextureHandle texture, std::uint32_t mip, std::uint32_t layer) noexcept override;
-    bool Retain_Texture(RHITextureHandle texture) noexcept override;
+	bool Retain_Texture(RHITextureHandle texture) noexcept override;
+	std::uint64_t Texture_Content_Version(RHITextureHandle texture) const noexcept override {
+		const auto* resource = m_state ? m_state->textures.Resolve(texture) : nullptr;
+		if (!resource || (resource->description.usage & (static_cast<unsigned>(RHITextureUsage::RenderTarget)
+			| static_cast<unsigned>(RHITextureUsage::DepthStencil) | static_cast<unsigned>(RHITextureUsage::UnorderedAccess)))) return 0;
+		for (const auto& mapping : resource->mappings) if (mapping) return 0;
+		return resource->content_version;
+	}
     bool Destroy_Buffer(RHIBufferHandle buffer) noexcept override;
 	bool Destroy_Texture(RHITextureHandle texture) noexcept override;
 	bool Destroy_Pipeline(RHIPipelineHandle pipeline) noexcept override;
@@ -1035,6 +1085,28 @@ bool DX11CommandList::Bind_Pipeline(RHIPipelineHandle pipeline) noexcept
         context->IASetPrimitiveTopology(To_DX11_Topology(resource->topology));
 	m_pipeline = pipeline;
 	m_topology = resource->topology;
+	m_shader_usage = resource->resources;
+	// Restore logical bindings deferred while a previous shader did not use
+	// their registers. Native binding caches still suppress unchanged values.
+	for (unsigned stage=0;stage<2;++stage) {
+		auto mask=m_shader_usage[stage].constants;
+		while (mask) {
+			const auto slot=std::countr_zero(mask); mask&=mask-1;
+			if (slot>=m_requested_constants[stage].size()) continue;
+			const auto handle=m_requested_constants[stage][slot];
+			if (handle.Is_Valid() && m_state->buffers.Resolve(handle))
+				Bind_Buffer_At_Slot(stage==0 ? RHIShaderStage::Vertex : RHIShaderStage::Fragment,slot,handle);
+		}
+	}
+	for (unsigned word=0;word<2;++word) {
+		auto mask=m_shader_usage[1].views[word];
+		while (mask) {
+			const auto slot=word*64+std::countr_zero(mask); mask&=mask-1;
+			const auto handle=m_requested_pixel_storage[slot];
+			if (handle.Is_Valid() && m_state->buffers.Resolve(handle))
+				Bind_Buffer_At_Slot(RHIShaderStage::Fragment,slot,handle);
+		}
+	}
 	return true;
 }
 
@@ -1046,6 +1118,7 @@ bool DX11CommandList::Bind_Texture_At_Slot(RHIShaderStage stage, std::uint32_t s
 	DX11Texture *resource = m_state->textures.Resolve(texture);
 	if (resource == nullptr || resource->shader_resource_view.Get() == nullptr)
 		return false;
+	if (stage!=RHIShaderStage::Vertex && slot<m_requested_pixel_storage.size()) m_requested_pixel_storage[slot]={};
 
 	auto& binding = m_shader_resources[stage == RHIShaderStage::Vertex ? 0 : 1][slot];
 	if (binding.texture == texture)
@@ -1076,6 +1149,10 @@ bool DX11CommandList::Bind_Buffer_At_Slot(RHIShaderStage stage, std::uint32_t sl
 	if (resource->usage == RHIBufferUsage::Storage) {
 		if (resource->shader_resource_view.Get() == nullptr)
 			return false;
+		if (stage!=RHIShaderStage::Vertex) {
+			m_requested_pixel_storage[slot]=buffer;
+			if (!m_shader_usage[1].Uses_View(slot)) return true;
+		}
 		auto& binding = m_shader_resources[stage == RHIShaderStage::Vertex ? 0 : 1][slot];
 		if (binding.buffer == buffer)
 			return true;
@@ -1090,6 +1167,11 @@ bool DX11CommandList::Bind_Buffer_At_Slot(RHIShaderStage stage, std::uint32_t sl
 
 	if (resource->usage != RHIBufferUsage::Constant)
 		return false;
+	const auto stage_index=stage==RHIShaderStage::Vertex ? 0u : 1u;
+	if (slot<m_requested_constants[stage_index].size()) {
+		m_requested_constants[stage_index][slot]=buffer;
+		if ((m_shader_usage[stage_index].constants & (1u<<slot))==0) return true;
+	}
 	auto& bindings = m_constant_buffers[stage == RHIShaderStage::Vertex ? 0 : 1];
 	if (slot < bindings.size() && bindings[slot] == buffer)
 		return true;
@@ -1270,6 +1352,7 @@ bool DX11CommandList::Copy_Texture(RHITextureHandle source, RHITextureHandle des
 		return false;
 
 	m_state->context.Get()->CopyResource(destination_texture->Resource(), source_texture->Resource());
+	++destination_texture->content_version;
 	return true;
 }
 
@@ -1313,6 +1396,8 @@ bool DX11CommandList::Set_Draw_Constants(std::span<const std::byte> data) noexce
 {
 	if (!Is_Ready() || data.empty() || data.size() > 256)
 		return false;
+	m_requested_constants[0][1]={};
+	m_requested_constants[1][1]={};
 
 	const std::uint32_t byte_size = static_cast<std::uint32_t>((data.size() + 15u) & ~std::size_t(15u));
 	if (m_draw_constants.Get() == nullptr || m_draw_constants_size != byte_size) {
@@ -1354,17 +1439,20 @@ bool DX11CommandList::Set_Draw_Constants(std::span<const std::byte> data) noexce
 bool DX11CommandList::Set_Vertex_Buffer(std::uint32_t slot, RHIBufferHandle buffer, std::uint32_t stride, std::uint32_t offset) noexcept
 {
     GRAPHICS_PROFILE_FOCUS_SCOPE("Graphics.DX11.SetVertexBuffer");
-	if (!Is_Ready())
+	if (!Is_Ready() || slot >= m_vertex_bindings.size())
 		return false;
 
 	DX11Buffer *resource = m_state->buffers.Resolve(buffer);
 	if (resource == nullptr || resource->object.Get() == nullptr || stride == 0)
 		return false;
+	const auto& previous=m_vertex_bindings[slot];
+	if (previous.buffer==buffer && previous.stride==stride && previous.offset==offset) return true;
 
 	ID3D11Buffer *native_buffer = resource->object.Get();
 	const UINT native_stride = stride;
 	const UINT native_offset = offset;
 	m_state->context.Get()->IASetVertexBuffers(slot, 1, &native_buffer, &native_stride, &native_offset);
+	m_vertex_bindings[slot]={buffer,stride,offset};
 	return true;
 }
 
@@ -1379,7 +1467,9 @@ bool DX11CommandList::Set_Index_Buffer(RHIBufferHandle buffer, RHIIndexFormat fo
 		return false;
 
 	const DXGI_FORMAT native_format = format == RHIIndexFormat::UInt16 ? DXGI_FORMAT_R16_UINT : DXGI_FORMAT_R32_UINT;
+	if (m_index_buffer==buffer && m_index_format==format && m_index_offset==offset) return true;
 	m_state->context.Get()->IASetIndexBuffer(resource->object.Get(), native_format, offset);
+	m_index_buffer=buffer; m_index_format=format; m_index_offset=offset;
 	return true;
 }
 
@@ -1413,6 +1503,11 @@ bool DX11CommandList::Draw_Indexed(std::uint32_t index_count, std::uint32_t firs
 
 void DX11CommandList::Reset_Frame_State() noexcept
 {
+	m_requested_constants={};
+	m_requested_pixel_storage={};
+	m_shader_usage={};
+	m_vertex_bindings={};
+	m_index_buffer={};
 	m_pipeline = {};
 	m_constant_buffers = {};
 	m_draw_constants_bound = {};
@@ -1520,8 +1615,9 @@ RHIBufferHandle DX11Device::Create_Buffer_Initialized(const RHIBuffer &descripti
 	const bool pooled = DX11BufferCache::Eligible(description.usage, description.byte_size);
 	if (pooled)
 		native_description.ByteWidth = 1u << DX11BufferCache::Size_Class(description.byte_size);
-	native_description.Usage = discard ? D3D11_USAGE_DYNAMIC : D3D11_USAGE_DEFAULT;
-    native_description.CPUAccessFlags = discard ? D3D11_CPU_ACCESS_WRITE : 0;
+	const bool dynamic = discard || description.usage == RHIBufferUsage::Constant;
+    native_description.Usage = dynamic ? D3D11_USAGE_DYNAMIC : D3D11_USAGE_DEFAULT;
+    native_description.CPUAccessFlags = dynamic ? D3D11_CPU_ACCESS_WRITE : 0;
 	native_description.BindFlags = bind_flags;
 	if (description.usage == RHIBufferUsage::Storage) {
 		native_description.MiscFlags = D3D11_RESOURCE_MISC_BUFFER_STRUCTURED;
@@ -1722,8 +1818,11 @@ bool DX11Device::Update_Buffer(RHIBufferHandle buffer, std::uint32_t offset, std
 	if (resource->usage == RHIBufferUsage::Constant) {
 		if (offset != 0 || data.size() != resource->byte_size)
 			return false;
-		m_state->context.Get()->UpdateSubresource(resource->object.Get(), 0, nullptr, data.data(), 0, 0);
-		return true;
+        D3D11_MAPPED_SUBRESOURCE mapped{};
+        if (FAILED(m_state->context.Get()->Map(resource->object.Get(),0,D3D11_MAP_WRITE_DISCARD,0,&mapped))) return false;
+        std::memcpy(mapped.pData,data.data(),data.size());
+        m_state->context.Get()->Unmap(resource->object.Get(),0);
+        return true;
 	}
 
 	D3D11_BOX destination_box{};
@@ -1748,6 +1847,7 @@ bool DX11Device::Update_Texture(RHITextureHandle texture, const RHITextureUpload
             data.row_pitch, data.slice_pitch, data.data.size(), layout)) return false;
     m_state->context.Get()->UpdateSubresource(resource->Resource(), layout.subresource, nullptr,
         data.data.data(), layout.row_pitch, layout.slice_pitch);
+    ++resource->content_version;
     return true;
 }
 
@@ -1836,6 +1936,7 @@ bool DX11Device::Unmap_Texture(RHITextureHandle texture, std::uint32_t mip, std:
     auto& mapping = **found;
     m_state->context.Get()->Unmap(mapping.staging.Get(), mapping.staging_subresource);
     mapping.mapped = false;
+    if (!mapping.read_only) ++resource->content_version;
     if (!mapping.read_only)
         m_state->context.Get()->CopySubresourceRegion(resource->Resource(), subresource, 0, 0, 0,
             mapping.staging.Get(), mapping.staging_subresource, nullptr);
@@ -1870,6 +1971,7 @@ bool DX11Device::Generate_Texture_Mips(RHITextureHandle texture) noexcept
     if (resource == nullptr || !resource->description.generate_mips
         || resource->shader_resource_view.Get() == nullptr) return false;
     m_state->context.Get()->GenerateMips(resource->shader_resource_view.Get());
+    ++resource->content_version;
     return true;
 }
 

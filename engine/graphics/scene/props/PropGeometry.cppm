@@ -149,6 +149,7 @@ public:
         m_vertices.assign(vertices.begin(), vertices.end());
         m_indices.assign(indices.begin(), indices.end());
         m_bounds_valid = false;
+        ++m_revision;
         return true;
     }
 
@@ -169,10 +170,12 @@ public:
         for (std::size_t index = 0; index < indices.size(); ++index)
             m_indices[first_index + index] = base_vertex + indices[index];
         if (!vertices.empty()) m_bounds_valid = false;
+        ++m_revision;
         return true;
     }
 
     std::span<const PropVertex> Vertices() const noexcept { return m_vertices; }
+    std::uint64_t Revision() const noexcept { return m_revision; }
     std::span<const std::uint32_t> Indices() const noexcept { return m_indices; }
 
     std::uint32_t Maximum_Bone_Index() const noexcept { Update_Bounds(); return m_maximum_bone; }
@@ -208,6 +211,7 @@ private:
         return true;
     }
     std::vector<PropVertex> m_vertices;
+    std::uint64_t m_revision = 0;
     std::vector<std::uint32_t> m_indices;
     mutable std::array<float,3> m_minimum{}, m_maximum{};
     mutable bool m_bounds_valid = false;

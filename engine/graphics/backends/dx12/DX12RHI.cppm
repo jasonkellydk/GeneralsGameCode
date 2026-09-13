@@ -145,7 +145,54 @@ public:
 		m_type = type;
 		m_capacity = capacity;
 		m_increment = device->GetDescriptorHandleIncrementSize(type);
+		if (!shader_visible) {
+			try { m_free.reserve(capacity); m_retired.reserve(capacity); }
+			catch (...) { return false; }
+		}
 		return true;
+	}
+	bool Allocate(std::uint32_t& offset, std::uint32_t count, DX12DescriptorRange& range) noexcept {
+		if (count == 0) return false;
+		for (auto index=m_free.size(); index!=0;) {
+			auto& available=m_free[--index];
+			if (available.count<count) continue;
+			range={available.index,count}; available.index+=count; available.count-=count;
+			if (!available.count) { available=m_free.back(); m_free.pop_back(); }
+			return true;
+		}
+		// Mip chains can request contiguous ranges. Coalesce fragmented free
+		// slots before growing the high-water mark for a larger allocation.
+		if (count>1 && m_free.size()>1) {
+			const auto previous_size=m_free.size();
+			std::sort(m_free.begin(),m_free.end(),[](const auto& a,const auto& b){return a.index<b.index;});
+			std::size_t ranges=0;
+			for (const auto available : m_free) {
+				if (ranges && m_free[ranges-1].index+m_free[ranges-1].count==available.index)
+					m_free[ranges-1].count+=available.count;
+				else m_free[ranges++]=available;
+			}
+			m_free.resize(ranges);
+			if (ranges<previous_size) return Allocate(offset,count,range);
+		}
+		if (offset>m_capacity || count>m_capacity-offset) return false;
+		range={offset,count}; offset+=count; return true;
+	}
+	void Retire(DX12DescriptorRange& range, std::uint64_t fence) noexcept {
+		if (!range.Is_Valid()) return;
+		// Capacity is reserved when the heap is created. Every retired range
+		// owns at least one distinct slot, so release cannot allocate or fail.
+		if (fence<=m_completed) m_free.push_back(range);
+		else m_retired.push_back({range,fence});
+		range={};
+	}
+	void Collect(std::uint64_t completed) noexcept {
+		m_completed=completed;
+		std::size_t remaining=0;
+		for (const auto& retired : m_retired) {
+			if (retired.fence<=completed) m_free.push_back(retired.range);
+			else m_retired[remaining++]=retired;
+		}
+		m_retired.resize(remaining);
 	}
 	D3D12_CPU_DESCRIPTOR_HANDLE Cpu(std::uint32_t index) const noexcept
 	{
@@ -170,6 +217,10 @@ private:
 	D3D12_DESCRIPTOR_HEAP_TYPE m_type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
 	std::uint32_t m_capacity = 0;
 	std::uint32_t m_increment = 0;
+	struct RetiredRange { DX12DescriptorRange range; std::uint64_t fence; };
+	std::vector<DX12DescriptorRange> m_free;
+	std::vector<RetiredRange> m_retired;
+	std::uint64_t m_completed=0;
 };
 
 struct DX12MappedBufferPage final
@@ -180,6 +231,7 @@ struct DX12MappedBufferPage final
 	std::uint64_t retirement_fence = 0;
 	std::uint32_t capacity = 0;
 	std::uint32_t used = 0;
+	std::size_t live_slices = 0;
 	~DX12MappedBufferPage() noexcept
 	{
 		if (cpu != nullptr)
@@ -189,8 +241,36 @@ struct DX12MappedBufferPage final
 
 struct DX12MappedBufferSlice final
 {
-	std::shared_ptr<DX12MappedBufferPage> page;
+	DX12MappedBufferPage *page = nullptr;
 	std::uint32_t offset = 0;
+	DX12MappedBufferSlice() noexcept = default;
+	DX12MappedBufferSlice(DX12MappedBufferPage *owner, std::uint32_t start) noexcept
+		: page(owner), offset(start)
+	{
+		if (page) ++page->live_slices;
+	}
+	DX12MappedBufferSlice(const DX12MappedBufferSlice &) = delete;
+	DX12MappedBufferSlice &operator=(const DX12MappedBufferSlice &) = delete;
+	DX12MappedBufferSlice(DX12MappedBufferSlice &&other) noexcept
+		: page(std::exchange(other.page, nullptr)), offset(other.offset) {}
+	DX12MappedBufferSlice &operator=(DX12MappedBufferSlice &&other) noexcept
+	{
+		if (this != &other) {
+			Release();
+			page = std::exchange(other.page, nullptr);
+			offset = other.offset;
+		}
+		return *this;
+	}
+	~DX12MappedBufferSlice() noexcept { Release(); }
+	void Release() noexcept
+	{
+		if (page) {
+			assert(page->live_slices != 0);
+			--page->live_slices;
+			page = nullptr;
+		}
+	}
 	std::uint64_t GPU_Address() const noexcept { return page ? page->gpu + offset : 0; }
 	void Retire(std::uint64_t fence) noexcept
 	{
@@ -199,8 +279,10 @@ struct DX12MappedBufferSlice final
 	}
 };
 
-// Live buffer versions pin their page independently of frame rotation. Once all
-// versions are retired, the GPU fence protects reuse of their recorded addresses.
+// The device owns pages until shutdown and destroys buffers before this pool.
+// Recording and buffer updates are serialized by the backend, so version leases
+// need no atomic reference count. Reuse requires BOTH no live versions and the
+// completed GPU fence; releasing a CPU lease alone never permits overwriting it.
 class DX12MappedBufferPool final
 {
 public:
@@ -221,19 +303,19 @@ public:
 				if (size <= page->capacity - page->used) {
 					const std::uint32_t offset = page->used;
 					page->used += size;
-					return {page, offset};
+					return {page.get(), offset};
 				}
 			}
 			for (std::size_t index = 0; index < m_pages.size(); ++index) {
 				auto &page = m_pages[index];
-				if (page.use_count() == 1 && page->retirement_fence <= completed
+				if (page->live_slices == 0 && page->retirement_fence <= completed
 					&& page->capacity >= size) {
 					page->used = size;
 					m_current = index;
-					return {page, 0};
+					return {page.get(), 0};
 				}
 			}
-			auto page = std::make_shared<DX12MappedBufferPage>();
+			auto page = std::make_unique<DX12MappedBufferPage>();
 			page->capacity = (std::max)(size, 1024u * 1024u);
 			D3D12_HEAP_PROPERTIES heap{};
 			heap.Type = m_heap_type;
@@ -255,21 +337,24 @@ public:
 				return {};
 			page->gpu = page->resource.Get()->GetGPUVirtualAddress();
 			page->used = size;
-			m_pages.push_back(page);
+			m_pages.push_back(std::move(page));
 			m_current = m_pages.size() - 1;
-			return {std::move(page), 0};
+			return {m_pages.back().get(), 0};
 		} catch (...) {
 			return {};
 		}
 	}
 private:
-	std::vector<std::shared_ptr<DX12MappedBufferPage>> m_pages;
+	std::vector<std::unique_ptr<DX12MappedBufferPage>> m_pages;
 	std::size_t m_current = 0;
 	D3D12_HEAP_TYPE m_heap_type = D3D12_HEAP_TYPE_UPLOAD;
 };
 
 struct DX12Buffer final
 {
+    bool mapped_storage=false;
+    std::uint64_t storage_descriptor_epoch=0;
+    std::uint32_t storage_descriptor=0;
 	DX12NativeObject<ID3D12Resource> object;
 	DX12MappedBufferSlice constants;
 	std::vector<std::byte> constant_data;
@@ -280,6 +365,17 @@ struct DX12Buffer final
 	std::uint32_t capacity = 0;
 	std::uint32_t stride = 0;
 	D3D12_RESOURCE_STATES state = D3D12_RESOURCE_STATE_COMMON;
+    std::uint64_t gpu_base_address=0;
+    std::uint64_t GPU_Base_Address() const noexcept {
+        return mapped_storage ? (constants.page ? constants.page->gpu : 0) : gpu_base_address;
+    }
+
+    ID3D12Resource *Native_Object() const noexcept {
+        // The page pool already owns mapped storage through device shutdown.
+        // Its version lease and retirement fence protect reuse, so a second
+        // COM reference per logical buffer is unnecessary.
+        return mapped_storage ? (constants.page ? constants.page->resource.Get() : nullptr) : object.Get();
+    }
 };
 
 struct DX12TextureMapping final
@@ -308,6 +404,7 @@ struct DX12TextureMapping final
 
 struct DX12Texture final
 {
+	std::uint64_t content_version = 1;
 	DX12NativeObject<ID3D12Resource> object;
 	RHITexture description{};
 	std::uint32_t width = 0;
@@ -323,6 +420,7 @@ struct DX12Texture final
 	DX12DescriptorRange mip_render_targets;
 	bool compute_mips = false;
 	std::vector<D3D12_RESOURCE_STATES> states;
+    bool uniform_state=true;
 	std::vector<std::unique_ptr<DX12TextureMapping>> mappings;
 };
 
@@ -366,6 +464,7 @@ struct DX12UploadArena final
 	std::byte *mapped = nullptr;
 	std::uint64_t capacity = 0;
 	std::uint64_t offset = 0;
+    std::uint64_t gpu_base_address=0;
 
 	void Reset() noexcept { offset = 0; }
 	DX12UploadSlice Allocate(std::uint64_t size, std::uint64_t alignment) noexcept
@@ -377,7 +476,7 @@ struct DX12UploadArena final
 			return {};
 		offset = aligned + size;
 		return {resource.Get(), mapped + aligned, aligned,
-			resource.Get()->GetGPUVirtualAddress() + aligned, size};
+			gpu_base_address + aligned, size};
 	}
 };
 
@@ -418,7 +517,7 @@ public:
 		RHIBufferUpdateMode update_mode = RHIBufferUpdateMode::Preserve;
 		std::uint64_t fence = 0;
 	};
-	DX12NativeObject<ID3D12Resource> Take(RHIBufferUsage usage, std::uint32_t capacity,
+	DX12NativeObject<ID3D12Resource> Take(RHIBufferUsage usage, std::uint32_t& capacity,
 		RHIBufferUpdateMode update_mode, std::uint64_t completed) noexcept
 	{
 		if (!Eligible(usage, capacity))
@@ -431,7 +530,11 @@ public:
 				if (it->fence <= completed && it->capacity >= capacity) {
 					auto object = std::move(it->object);
 					m_idle_bytes -= it->capacity;
-					bucket.erase(it);
+                    capacity = it->capacity;
+					// Bucket order carries no ownership or fence semantics.
+					// Remove in constant time instead of moving every idle buffer.
+					if (it != bucket.end()-1) *it = std::move(bucket.back());
+					bucket.pop_back();
 					return object;
 				}
 			}
@@ -516,16 +619,18 @@ public:
 	bool Reset_State() noexcept override;
 	void Reset_Frame_State() noexcept;
 	void On_New_Command_List() noexcept;
-	void Mark_Graphics_State_Dirty() noexcept { m_graphics_state_dirty = true; }
+	void Mark_Graphics_State_Dirty() noexcept { m_graphics_state_dirty = true; m_root_bound = false; m_native_pipeline=nullptr; m_native_scissor_bound=false; }
 	void Release_Pipeline_Binding(RHIPipelineHandle pipeline) noexcept
 	{
+        m_native_pipeline=nullptr;
 		if (m_pipeline == pipeline) {
 			m_pipeline = {};
 			m_graphics_state_dirty = true;
 		}
 	}
-	void Invalidate_Constants() noexcept
+	void Invalidate_Constants(bool resource_indices = true) noexcept
 	{
+		m_resource_indices_dirty |= resource_indices;
 		m_constants_dirty = true;
 		m_bindless_page = std::numeric_limits<std::uint32_t>::max();
 	}
@@ -534,15 +639,20 @@ public:
 		if (std::erase_if(m_bindless_cache, [buffer](const RHIBindlessResource &entry) {
 			return (entry.type == RHIResourceType::Buffer || entry.type == RHIResourceType::Material)
 				&& entry.buffer == buffer;
-		}) != 0)
+		}) != 0) {
+			Rebuild_Bindless_Slots();
 			Invalidate_Constants();
+		}
 	}
 	void Release_Texture_Bindings(RHITextureHandle texture) noexcept
 	{
+        m_pipeline_selection_dirty=true; m_scissor_dirty=true;
 		if (std::erase_if(m_bindless_cache, [texture](const RHIBindlessResource &entry) {
 			return entry.type == RHIResourceType::Texture && entry.texture == texture;
-		}) != 0)
+		}) != 0) {
+			Rebuild_Bindless_Slots();
 			Invalidate_Constants();
+		}
 	}
 
 private:
@@ -551,8 +661,11 @@ private:
 	bool Bindless_Resources_Internal(std::span<const RHIBindlessResource> resources, bool cache) noexcept;
 	bool Select_Pipeline_State() noexcept;
 	bool Apply_Scissor() noexcept;
+    void Set_Native_Scissor(const D3D12_RECT& rectangle) noexcept;
 	bool Rebind_Targets() noexcept;
 	void Rebind_Input_Assembly() noexcept;
+	void Bind_Graphics_Root() noexcept;
+	void Rebuild_Bindless_Slots() noexcept;
 
 	DX12DeviceState *m_state = nullptr;
 	RHIPipelineHandle m_pipeline{};
@@ -560,10 +673,15 @@ private:
 	RHITextureHandle m_color_target{};
 	RHITextureHandle m_depth_target{};
 	std::vector<RHIBindlessResource> m_bindless_cache;
-	std::uint64_t m_bindless_hash = 0;
+	// Register lookups store vector positions plus one (zero means unbound).
+	std::array<std::uint32_t, 256> m_texture_slots{};
+	std::array<std::uint32_t, 128> m_material_slots{};
+	std::array<std::uint32_t, 128> m_storage_slots{};
+	std::uint32_t m_storage_count = 0;
 	std::array<std::uint32_t, 256> m_resource_indices{};
 	std::array<std::uint64_t, 2> m_resource_index_addresses{};
 	std::array<std::uint64_t, 128> m_constant_addresses{};
+    bool m_extended_constants_used=false;
 	std::uint32_t m_bindless_page = std::numeric_limits<std::uint32_t>::max();
 	std::array<std::byte, 256> m_draw_constant_data{};
 	std::uint32_t m_draw_constant_size = 0;
@@ -577,8 +695,17 @@ private:
 	RHIScissorRect m_scissor{};
 	bool m_has_viewport = false;
 	bool m_has_scissor = false;
+    ID3D12PipelineState* m_native_pipeline=nullptr;
+    D3D12_RECT m_native_scissor{};
+    bool m_native_scissor_bound=false;
+    bool m_scissor_dirty=true;
+    bool m_pipeline_selection_dirty=true;
 	bool m_graphics_state_dirty = true;
 	bool m_constants_dirty = false;
+    bool m_resource_indices_dirty = true;
+	bool m_root_bound = false;
+	std::array<std::uint32_t, 16> m_sampler_indices{};
+	std::uint32_t m_stencil_reference = 0;
 };
 
 struct DX12DeviceState final
@@ -599,6 +726,7 @@ struct DX12DeviceState final
 	std::array<DX12NativeObject<ID3D12PipelineState>, 64> mip_pipeline_states;
 	std::array<DX12NativeObject<ID3D12PipelineState>, 64> raster_mip_pipeline_states;
 	DX12NativeObject<ID3D12Resource> null_constant_buffer;
+    std::uint64_t null_constant_gpu_address=0;
 	DX12DescriptorHeap cpu_resources;
 	DX12DescriptorHeap cpu_render_targets;
 	DX12DescriptorHeap cpu_depth_targets;
@@ -607,6 +735,7 @@ struct DX12DeviceState final
 	std::vector<DX12SamplerSlot> sampler_slots;
 	std::array<DX12FrameContext, 3> frames;
 	DX12BufferCache buffer_cache;
+    std::uint64_t recording_epoch=0;
 	DX12MappedBufferPool constant_memory;
 	ResourcePool<DX12Buffer, RHIBufferHandle> buffers;
 	ResourcePool<DX12Texture, RHITextureHandle> textures;
@@ -648,6 +777,7 @@ struct DX12DeviceState final
 	}
 	bool Wait_For_Fence(std::uint64_t value) noexcept;
 	void Collect_Deferred() noexcept;
+	void Retire_Texture_Views(DX12Texture& texture, std::uint64_t fence) noexcept;
 	bool Defer(IUnknown *object, std::uint64_t fence_value) noexcept;
 	bool Defer_Buffer(DX12Buffer &resource, std::uint64_t fence_value) noexcept;
 	std::uint32_t Acquire_Sampler(const D3D12_SAMPLER_DESC &description);
@@ -669,6 +799,30 @@ static constexpr std::uint32_t BindlessCBVCount = 128;
 static constexpr std::uint32_t RootCBVCount = 8;
 static constexpr std::uint32_t PersistentDescriptorBase = FrameCount * FrameResourceDescriptors;
 static constexpr std::uint32_t PersistentDescriptorCount = 262144;
+
+// Small structured streams are immutable mapped versions. GPU descriptors are
+// copied into the current command-list arena, whose fence protects old draws.
+static bool Prepare_Storage_Descriptor(DX12DeviceState& state,DX12Buffer& buffer) noexcept
+{
+    if (!buffer.mapped_storage || buffer.storage_descriptor_epoch==state.recording_epoch) return true;
+    if (state.frames[state.current_frame].descriptor_offset==FrameResourceDescriptors)
+        if (!state.Submit_Current(false) || !state.Ensure_Recording()) return false;
+    if (buffer.storage_descriptor_epoch==state.recording_epoch) return true;
+    auto& frame=state.frames[state.current_frame];
+    buffer.storage_descriptor=frame.descriptor_base+frame.descriptor_offset++;
+    state.device.Get()->CopyDescriptorsSimple(1,state.gpu_resources.Cpu(buffer.storage_descriptor),
+        state.CpuResource(buffer.shader_resource_view.index),D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
+    buffer.storage_descriptor_epoch=state.recording_epoch;
+    return true;
+}
+
+static DX12MappedBufferSlice Allocate_Storage_Version(DX12DeviceState& state,
+    std::uint32_t size,std::uint32_t stride) noexcept
+{
+    auto slice=state.constant_memory.Allocate(state.device.Get(),(size+stride+255u)&~255u,state.completed_fence);
+    if (slice.page) slice.offset=((slice.offset+stride-1)/stride)*stride;
+    return slice;
+}
 
 static std::uint32_t Constant_Root_Parameter(std::uint32_t slot) noexcept
 {
@@ -1039,6 +1193,13 @@ public:
 	bool Unmap_Texture(RHITextureHandle texture, std::uint32_t mip, std::uint32_t layer) noexcept override;
 	bool Generate_Texture_Mips(RHITextureHandle texture) noexcept override;
 	bool Retain_Texture(RHITextureHandle texture) noexcept override;
+	std::uint64_t Texture_Content_Version(RHITextureHandle texture) const noexcept override {
+		const auto* resource = m_state ? m_state->textures.Resolve(texture) : nullptr;
+		if (!resource || (resource->description.usage & (static_cast<unsigned>(RHITextureUsage::RenderTarget)
+			| static_cast<unsigned>(RHITextureUsage::DepthStencil) | static_cast<unsigned>(RHITextureUsage::UnorderedAccess)))) return 0;
+		for (const auto& mapping : resource->mappings) if (mapping) return 0;
+		return resource->content_version;
+	}
 	bool Destroy_Buffer(RHIBufferHandle buffer) noexcept override;
 	bool Destroy_Texture(RHITextureHandle texture) noexcept override;
 	bool Destroy_Pipeline(RHIPipelineHandle pipeline) noexcept override;
@@ -1084,8 +1245,18 @@ DX12DeviceState::~DX12DeviceState() noexcept
 
 void DX12DeviceState::Collect_Deferred() noexcept
 {
-	if (fence.Get() != nullptr)
-		completed_fence = (std::max)(completed_fence, fence.Get()->GetCompletedValue());
+	if (fence.Get() != nullptr) {
+		const auto completed=fence.Get()->GetCompletedValue();
+		if (completed==UINT64_MAX) {
+			if (!removed) Report_HResult("Device removed while polling fence",device.Get()->GetDeviceRemovedReason());
+			removed=true;
+			return;
+		}
+		completed_fence = (std::max)(completed_fence, completed);
+	}
+	cpu_resources.Collect(completed_fence);
+	cpu_render_targets.Collect(completed_fence);
+	cpu_depth_targets.Collect(completed_fence);
 	for (auto it = deferred.begin(); it != deferred.end();) {
 		if (it->fence <= completed_fence)
 			it = deferred.erase(it);
@@ -1099,7 +1270,9 @@ bool DX12DeviceState::Wait_For_Fence(std::uint64_t value) noexcept
 	GRAPHICS_PROFILE_FOCUS_SCOPE("Graphics.DX12.WaitForFence");
 	if (fence.Get() == nullptr || value == 0)
 		return true;
-	if (fence.Get()->GetCompletedValue() < value) {
+	Collect_Deferred();
+	if (removed) return false;
+	if (completed_fence < value) {
 		if (fence_event == nullptr)
 			fence_event = CreateEventW(nullptr, FALSE, FALSE, nullptr);
 		if (fence_event == nullptr)
@@ -1113,7 +1286,7 @@ bool DX12DeviceState::Wait_For_Fence(std::uint64_t value) noexcept
 	}
 	completed_fence = (std::max)(completed_fence, value);
 	Collect_Deferred();
-	return true;
+	return !removed;
 }
 
 DX12SwapChain::~DX12SwapChain() noexcept
@@ -1157,13 +1330,17 @@ void DX12SwapChain::Release_Targets() noexcept
 	if (m_state == nullptr)
 		return;
 	for (auto &handle : m_backbuffers) {
-		if (handle.Is_Valid())
+		if (handle.Is_Valid()) {
+			if (auto* texture=m_state->textures.Resolve(handle)) m_state->Retire_Texture_Views(*texture,m_state->Retirement_Fence());
 			m_state->textures.Destroy(handle);
+		}
 		handle = {};
 	}
 	for (auto &handle : m_depth_targets) {
-		if (handle.Is_Valid())
+		if (handle.Is_Valid()) {
+			if (auto* texture=m_state->textures.Resolve(handle)) m_state->Retire_Texture_Views(*texture,m_state->Retirement_Fence());
 			m_state->textures.Destroy(handle);
+		}
 		handle = {};
 	}
 }
@@ -1177,13 +1354,17 @@ bool DX12SwapChain::Create_Targets(std::uint32_t width, std::uint32_t height)
 	std::array<RHITextureHandle, SwapChainBufferCount> depth_targets{};
 	const auto destroy_created = [&]() noexcept {
 		for (auto &handle : backbuffers) {
-			if (handle.Is_Valid())
+			if (handle.Is_Valid()) {
+				if (auto* texture=m_state->textures.Resolve(handle)) m_state->Retire_Texture_Views(*texture,0);
 				m_state->textures.Destroy(handle);
+			}
 			handle = {};
 		}
 		for (auto &handle : depth_targets) {
-			if (handle.Is_Valid())
+			if (handle.Is_Valid()) {
+				if (auto* texture=m_state->textures.Resolve(handle)) m_state->Retire_Texture_Views(*texture,0);
 				m_state->textures.Destroy(handle);
+			}
 			handle = {};
 		}
 	};
@@ -1216,6 +1397,7 @@ bool DX12SwapChain::Create_Targets(std::uint32_t width, std::uint32_t height)
 			m_state->CpuRTV(backbuffer.render_target_view.index));
 		backbuffers[index] = m_state->textures.Create(std::move(backbuffer));
 		if (!backbuffers[index].Is_Valid()) {
+			m_state->Retire_Texture_Views(backbuffer,0);
 			destroy_created();
 			return false;
 		}
@@ -1261,6 +1443,7 @@ bool DX12SwapChain::Create_Targets(std::uint32_t width, std::uint32_t height)
 			m_state->CpuDSV(depth.depth_stencil_view.index));
 		depth_targets[index] = m_state->textures.Create(std::move(depth));
 		if (!depth_targets[index].Is_Valid()) {
+			m_state->Retire_Texture_Views(depth,0);
 			destroy_created();
 			return false;
 		}
@@ -1357,39 +1540,6 @@ bool DX12CommandList::Is_Pipeline_Valid() const noexcept
 	return pipeline != nullptr && pipeline->pipeline_states[0].Get() != nullptr;
 }
 
-static std::uint64_t Hash_Bindless(std::span<const RHIBindlessResource> resources) noexcept
-{
-	std::uint64_t hash = 1469598103934665603ull;
-	const auto mix = [&hash](std::uint64_t value) {
-		hash ^= value;
-		hash *= 1099511628211ull;
-	};
-	for (const auto &resource : resources) {
-		mix(static_cast<std::uint64_t>(resource.type));
-		mix(resource.index.Get_Index());
-		mix(resource.index.Get_Generation());
-		mix(resource.buffer.Get_Index());
-		mix(resource.buffer.Get_Generation());
-		mix(resource.texture.Get_Index());
-		mix(resource.texture.Get_Generation());
-		mix(static_cast<std::uint64_t>(resource.stage));
-		mix(resource.constant_buffer_slot);
-	}
-	return hash ^ resources.size();
-}
-
-static bool Same_Bindless_Register(const RHIBindlessResource &left,
-	const RHIBindlessResource &right) noexcept
-{
-	if (left.type != right.type)
-		return false;
-	if (left.type == RHIResourceType::Texture)
-		return left.index.Get_Index() == right.index.Get_Index() && left.stage == right.stage;
-	if (left.type == RHIResourceType::Material)
-		return left.constant_buffer_slot == right.constant_buffer_slot;
-	return false;
-}
-
 static bool Valid_Bindless_Resource(const DX12DeviceState &state,
 	const RHIBindlessResource &resource) noexcept
 {
@@ -1419,6 +1569,16 @@ static bool Valid_Bindless_Resource(const DX12DeviceState &state,
 	return false;
 }
 
+void DX12CommandList::Bind_Graphics_Root() noexcept
+{
+	if (m_root_bound) return;
+	auto* commands = m_state->command_list.Get();
+	ID3D12DescriptorHeap* heaps[] = {m_state->gpu_resources.Get(), m_state->gpu_samplers.Get()};
+	commands->SetDescriptorHeaps(static_cast<UINT>(std::size(heaps)), heaps);
+	commands->SetGraphicsRootSignature(m_state->graphics_root_signature.Get());
+	m_root_bound = true;
+}
+
 bool DX12CommandList::Bind_Pipeline(RHIPipelineHandle pipeline) noexcept
 {
 	GRAPHICS_PROFILE_FOCUS_SCOPE("Graphics.DX12.BindPipeline");
@@ -1430,20 +1590,45 @@ bool DX12CommandList::Bind_Pipeline(RHIPipelineHandle pipeline) noexcept
 	if (m_pipeline == pipeline && !m_graphics_state_dirty)
 		return true;
 	ID3D12GraphicsCommandList *commands = m_state->command_list.Get();
-	ID3D12DescriptorHeap *heaps[] = {m_state->gpu_resources.Get(), m_state->gpu_samplers.Get()};
-	commands->SetDescriptorHeaps(static_cast<UINT>(std::size(heaps)), heaps);
-	commands->SetGraphicsRootSignature(m_state->graphics_root_signature.Get());
-	commands->SetGraphicsRoot32BitConstants(3, static_cast<UINT>(resource->sampler_indices.size()),
-		resource->sampler_indices.data(), 0);
-	commands->IASetPrimitiveTopology(To_DX12_Topology(resource->topology));
-	commands->OMSetStencilRef(resource->stencil_reference);
+	const bool restore = m_graphics_state_dirty;
+	Bind_Graphics_Root();
+	if (restore || m_sampler_indices != resource->sampler_indices) {
+		commands->SetGraphicsRoot32BitConstants(3, static_cast<UINT>(resource->sampler_indices.size()),
+			resource->sampler_indices.data(), 0);
+		m_sampler_indices = resource->sampler_indices;
+	}
+	if (restore || m_topology != resource->topology)
+		commands->IASetPrimitiveTopology(To_DX12_Topology(resource->topology));
+	if (restore || m_stencil_reference != resource->stencil_reference) {
+		commands->OMSetStencilRef(resource->stencil_reference);
+		m_stencil_reference = resource->stencil_reference;
+	}
 	m_pipeline = pipeline;
+    m_pipeline_selection_dirty=true; m_scissor_dirty=true;
 	m_topology = resource->topology;
 	m_graphics_state_dirty = false;
 	if (!Select_Pipeline_State())
 		return false;
-	Rebind_Input_Assembly();
+	if (restore) Rebind_Input_Assembly();
 	return true;
+}
+
+void DX12CommandList::Rebuild_Bindless_Slots() noexcept
+{
+    m_resource_indices_dirty = true;
+    m_texture_slots = {};
+    m_material_slots = {};
+    m_storage_count = 0;
+    for (std::uint32_t i = 0; i < m_bindless_cache.size(); ++i) {
+        const auto& resource = m_bindless_cache[i];
+        if (resource.type == RHIResourceType::Texture)
+            m_texture_slots[(resource.stage == RHIShaderStage::Vertex ? 0 : BindlessSRVCount)
+                + resource.index.Get_Index()] = i + 1;
+        else if (resource.type == RHIResourceType::Material)
+            m_material_slots[resource.constant_buffer_slot] = i + 1;
+        else if (resource.type == RHIResourceType::Buffer)
+            m_storage_slots[m_storage_count++] = i + 1;
+    }
 }
 
 bool DX12CommandList::Bindless_Resources_Internal(std::span<const RHIBindlessResource> resources,
@@ -1452,84 +1637,143 @@ bool DX12CommandList::Bindless_Resources_Internal(std::span<const RHIBindlessRes
     GRAPHICS_PROFILE_FOCUS_SCOPE("Graphics.DX12.BindlessResources");
     if (!Is_Ready())
         return false;
+    bool changed = false;
+    bool indices_changed = false;
     if (cache) {
         std::size_t storage_count = 0;
         for (const auto &resource : resources) {
-            storage_count += resource.type == RHIResourceType::Buffer;
-            if (!Valid_Bindless_Resource(*m_state, resource))
+            // A cached slot already validated this exact live generation.
+            // Destruction removes its slots before reuse; resource usage and
+            // descriptor capability do not change during a buffer's lifetime.
+            std::uint32_t known_slot=0;
+            if (resource.type==RHIResourceType::Texture) {
+                if (resource.index.Is_Valid() && resource.index.Get_Index()<BindlessSRVCount)
+                    known_slot=m_texture_slots[(resource.stage==RHIShaderStage::Vertex ? 0 : BindlessSRVCount)
+                        +resource.index.Get_Index()];
+            } else if (resource.type==RHIResourceType::Material) {
+                if (resource.constant_buffer_slot<BindlessCBVCount)
+                    known_slot=m_material_slots[resource.constant_buffer_slot];
+            } else if (resource.type==RHIResourceType::Buffer) {
+                if (storage_count<m_storage_count) known_slot=m_storage_slots[storage_count];
+                ++storage_count;
+            }
+            const bool known=known_slot!=0 && (resource.type==RHIResourceType::Texture
+                ? m_bindless_cache[known_slot-1].texture==resource.texture
+                : m_bindless_cache[known_slot-1].buffer==resource.buffer);
+            if (!known && !Valid_Bindless_Resource(*m_state, resource))
                 return false;
         }
         if (storage_count >= BindlessSRVCount)
             return false;
         try {
-            if (storage_count != 0)
+            if (storage_count != 0 && storage_count != m_storage_count) {
+                changed = true;
                 std::erase_if(m_bindless_cache, [](const RHIBindlessResource &entry) {
                     return entry.type == RHIResourceType::Buffer;
                 });
+                Rebuild_Bindless_Slots();
+            }
+            std::uint32_t storage_index = 0;
             for (const auto &resource : resources) {
                 if (resource.type == RHIResourceType::Invalid || resource.type == RHIResourceType::Sampler)
                     continue;
-                if (resource.type != RHIResourceType::Buffer)
-                    std::erase_if(m_bindless_cache, [&resource](const RHIBindlessResource &entry) {
-                        return Same_Bindless_Register(entry, resource);
-                    });
+                auto& slot = resource.type == RHIResourceType::Texture
+                    ? m_texture_slots[(resource.stage == RHIShaderStage::Vertex ? 0 : BindlessSRVCount) + resource.index.Get_Index()]
+                    : resource.type == RHIResourceType::Material
+                        ? m_material_slots[resource.constant_buffer_slot] : m_storage_slots[storage_index];
+                if (resource.type == RHIResourceType::Buffer && storage_index++ >= m_storage_count) {
+                    slot = 0;
+                    ++m_storage_count;
+                }
                 const bool target_conflict = resource.type == RHIResourceType::Texture
                     && (resource.texture == m_color_target || resource.texture == m_depth_target);
-                if (!target_conflict)
+                if (target_conflict) {
+                    if (slot != 0) {
+                        changed = true;
+                        m_bindless_cache.erase(m_bindless_cache.begin() + slot - 1);
+                        Rebuild_Bindless_Slots();
+                    }
+                } else if (slot != 0) {
+                    auto& previous = m_bindless_cache[slot - 1];
+                    const bool replacement = resource.type == RHIResourceType::Texture
+                        ? previous.texture != resource.texture
+                        : previous.buffer != resource.buffer;
+                    changed |= replacement;
+                    indices_changed |= replacement && resource.type != RHIResourceType::Material;
+                    previous = resource;
+                } else {
+                    changed = true;
+                    indices_changed |= resource.type != RHIResourceType::Material;
                     m_bindless_cache.push_back(resource);
+                    slot = static_cast<std::uint32_t>(m_bindless_cache.size());
+                }
             }
         } catch (...) {
+            Rebuild_Bindless_Slots();
+            Invalidate_Constants();
             return false;
         }
     }
+    if (changed) Invalidate_Constants(indices_changed);
     // Resource-release events remove cached identities. Internal replay operates
     // on this validated cache without repeating public-input validation.
     resources = m_bindless_cache;
     for (const auto &resource : resources)
         assert(Valid_Bindless_Resource(*m_state, resource));
-    const std::uint64_t hash = Hash_Bindless(resources);
-    if (!m_graphics_state_dirty && m_bindless_page != InvalidDescriptor && hash == m_bindless_hash)
+    if (!changed && !m_resource_indices_dirty && !m_graphics_state_dirty && m_bindless_page != InvalidDescriptor)
         return true;
     if (m_graphics_state_dirty && m_pipeline.Is_Valid() && !Bind_Pipeline(m_pipeline))
         return false;
 
     std::array<std::uint32_t, BindlessSRVCount * 2> indices;
-    indices.fill(PersistentDescriptorBase + m_state->null_srv_base);
-    const std::uint64_t null_address = m_state->null_constant_buffer.Get()->GetGPUVirtualAddress();
+    const bool rebuild_indices = m_resource_indices_dirty
+        || m_resource_index_addresses[0] == 0 || m_resource_index_addresses[1] == 0;
+    if (rebuild_indices) indices.fill(PersistentDescriptorBase + m_state->null_srv_base);
+    const std::uint64_t null_address = m_state->null_constant_gpu_address;
     std::array<std::uint64_t, BindlessCBVCount> constants;
-    constants.fill(null_address);
+    std::fill_n(constants.begin(),RootCBVCount,null_address);
     if (m_draw_constant_gpu_address != 0)
         constants[1] = m_draw_constant_gpu_address;
     std::uint32_t storage_slot = BindlessSRVCount - 1;
+    bool has_extended = false;
     for (const auto &resource : resources) {
         if (resource.type == RHIResourceType::Texture) {
+            if (!rebuild_indices) continue;
             DX12Texture *texture = m_state->textures.Resolve(resource.texture);
             assert(texture != nullptr && resource.index.Get_Index() < BindlessSRVCount);
             const bool target_conflict = resource.texture == m_color_target || resource.texture == m_depth_target;
             const bool sampleable = !target_conflict && texture->shader_resource_view.Is_Valid();
-            if (sampleable && !m_state->Transition(*texture, Shader_Resource_State()))
+            if (sampleable && (!texture->uniform_state || texture->states.empty()
+                || texture->states.front()!=Shader_Resource_State())
+                && !m_state->Transition(*texture, Shader_Resource_State()))
                 return false;
             const std::uint32_t stage = resource.stage == RHIShaderStage::Vertex ? 0 : 1;
             indices[stage * BindlessSRVCount + resource.index.Get_Index()] = PersistentDescriptorBase
                 + (sampleable ? texture->shader_resource_view.index : m_state->null_srv_base);
         } else if (resource.type == RHIResourceType::Buffer) {
-            const DX12Buffer *buffer = m_state->buffers.Resolve(resource.buffer);
+            if (!rebuild_indices) continue;
+            DX12Buffer *buffer = m_state->buffers.Resolve(resource.buffer);
             assert(buffer != nullptr && buffer->shader_resource_view.Is_Valid() && storage_slot != 0);
+            if (!Prepare_Storage_Descriptor(*m_state,*buffer)) return false;
             indices[storage_slot] = indices[BindlessSRVCount + storage_slot]
-                = PersistentDescriptorBase + buffer->shader_resource_view.index;
+                = buffer->mapped_storage ? buffer->storage_descriptor : PersistentDescriptorBase + buffer->shader_resource_view.index;
             --storage_slot;
         } else if (resource.type == RHIResourceType::Material) {
             const DX12Buffer *buffer = m_state->buffers.Resolve(resource.buffer);
             assert(buffer != nullptr && buffer->constants.page);
+            if (resource.constant_buffer_slot>=RootCBVCount && !has_extended) {
+                std::fill(constants.begin()+RootCBVCount,constants.end(),null_address);
+                has_extended=true;
+            }
             constants[resource.constant_buffer_slot] = buffer->constants.GPU_Address();
         }
     }
 
-    const bool extended_changed = std::memcmp(constants.data() + RootCBVCount,
-        m_constant_addresses.data() + RootCBVCount,
-        (BindlessCBVCount - RootCBVCount) * sizeof(std::uint64_t)) != 0;
-    const bool has_extended = std::any_of(constants.begin() + RootCBVCount, constants.end(),
-        [null_address](std::uint64_t address) { return address != null_address; });
+    const bool extended_changed = has_extended
+        ? (!m_extended_constants_used || std::memcmp(constants.data()+RootCBVCount,
+            m_constant_addresses.data()+RootCBVCount,
+            (BindlessCBVCount-RootCBVCount)*sizeof(std::uint64_t))!=0)
+        : (m_extended_constants_used || m_constant_addresses[RootCBVCount]==0);
     std::uint32_t extended_page = PersistentDescriptorBase + m_state->null_cbv_base + RootCBVCount;
     if (extended_changed && has_extended) {
         constexpr std::uint32_t count = BindlessCBVCount - RootCBVCount;
@@ -1555,10 +1799,8 @@ bool DX12CommandList::Bindless_Resources_Internal(std::span<const RHIBindlessRes
         }
     }
     auto *commands = m_state->command_list.Get();
-    ID3D12DescriptorHeap *heaps[] = {m_state->gpu_resources.Get(), m_state->gpu_samplers.Get()};
-    commands->SetDescriptorHeaps(static_cast<UINT>(std::size(heaps)), heaps);
-    commands->SetGraphicsRootSignature(m_state->graphics_root_signature.Get());
-    for (std::uint32_t stage = 0; stage < 2; ++stage) {
+    Bind_Graphics_Root();
+    for (std::uint32_t stage = 0; rebuild_indices && stage < 2; ++stage) {
         const std::uint32_t first = stage * BindlessSRVCount;
         constexpr std::size_t bytes = BindlessSRVCount * sizeof(std::uint32_t);
         if (m_resource_index_addresses[stage] == 0
@@ -1577,10 +1819,14 @@ bool DX12CommandList::Bindless_Resources_Internal(std::span<const RHIBindlessRes
             commands->SetGraphicsRootConstantBufferView(Constant_Root_Parameter(slot), constants[slot]);
     if (extended_changed)
         commands->SetGraphicsRootDescriptorTable(2, m_state->gpu_resources.Gpu(extended_page));
-    m_constant_addresses = constants;
+    std::copy_n(constants.begin(),RootCBVCount,m_constant_addresses.begin());
+    if (has_extended)
+        std::copy(constants.begin()+RootCBVCount,constants.end(),m_constant_addresses.begin()+RootCBVCount);
+    else m_constant_addresses[RootCBVCount]=null_address;
+    m_extended_constants_used=has_extended;
     m_bindless_page = 0;
-    m_bindless_hash = hash;
     m_constants_dirty = false;
+    m_resource_indices_dirty = false;
     return true;
 }
 
@@ -1592,6 +1838,7 @@ bool DX12CommandList::Set_Bindless_Resources(std::span<const RHIBindlessResource
 bool DX12CommandList::Select_Pipeline_State() noexcept
 {
 	GRAPHICS_PROFILE_FOCUS_SCOPE("Graphics.DX12.SelectPipelineState");
+    if (m_native_pipeline!=nullptr && !m_pipeline_selection_dirty) return Apply_Scissor();
 	if (!m_pipeline.Is_Valid())
 		return true;
 	DX12Pipeline *pipeline = m_state->pipelines.Resolve(m_pipeline);
@@ -1607,12 +1854,25 @@ bool DX12CommandList::Select_Pipeline_State() noexcept
 		+ Pipeline_Color_Variant(color_format);
 	if (index >= pipeline->pipeline_states.size() || pipeline->pipeline_states[index].Get() == nullptr)
 		return false;
-	m_state->command_list.Get()->SetPipelineState(pipeline->pipeline_states[index].Get());
+    auto* native=pipeline->pipeline_states[index].Get();
+    if (m_native_pipeline!=native) {
+        m_state->command_list.Get()->SetPipelineState(native);
+        m_native_pipeline=native;
+    }
+    m_pipeline_selection_dirty=false;
 	return Apply_Scissor();
+}
+
+void DX12CommandList::Set_Native_Scissor(const D3D12_RECT& rectangle) noexcept
+{
+    if (m_native_scissor_bound && std::memcmp(&rectangle,&m_native_scissor,sizeof(rectangle))==0) return;
+    m_state->command_list.Get()->RSSetScissorRects(1,&rectangle);
+    m_native_scissor=rectangle; m_native_scissor_bound=true;
 }
 
 bool DX12CommandList::Apply_Scissor() noexcept
 {
+    if (m_native_scissor_bound && !m_scissor_dirty) return true;
 	if (m_state == nullptr || m_state->command_list.Get() == nullptr)
 		return false;
 	const DX12Pipeline *pipeline = m_state->pipelines.Resolve(m_pipeline);
@@ -1622,7 +1882,8 @@ bool DX12CommandList::Apply_Scissor() noexcept
 	if (pipeline->scissor_test) {
 		if (!m_has_scissor) {
 			const D3D12_RECT native{};
-			m_state->command_list.Get()->RSSetScissorRects(1, &native);
+			Set_Native_Scissor(native);
+    m_scissor_dirty=false;
 			return true;
 		}
 		scissor = m_scissor;
@@ -1647,7 +1908,8 @@ bool DX12CommandList::Apply_Scissor() noexcept
 	native.top = static_cast<LONG>(scissor.y);
 	native.right = static_cast<LONG>(scissor.x + scissor.width);
 	native.bottom = static_cast<LONG>(scissor.y + scissor.height);
-	m_state->command_list.Get()->RSSetScissorRects(1, &native);
+	Set_Native_Scissor(native);
+    m_scissor_dirty=false;
 	return true;
 }
 
@@ -1659,20 +1921,20 @@ void DX12CommandList::Rebind_Input_Assembly() noexcept
 		if (!binding.buffer.Is_Valid())
 			continue;
 		const DX12Buffer *buffer = m_state->buffers.Resolve(binding.buffer);
-		if (buffer == nullptr || buffer->object.Get() == nullptr)
+		if (buffer == nullptr || buffer->Native_Object() == nullptr)
 			continue;
 		D3D12_VERTEX_BUFFER_VIEW view{};
-		view.BufferLocation = buffer->object.Get()->GetGPUVirtualAddress() + binding.offset;
-		view.SizeInBytes = buffer->capacity > binding.offset ? buffer->capacity - binding.offset : 0;
+		view.BufferLocation = buffer->GPU_Base_Address() + binding.offset;
+		view.SizeInBytes = buffer->byte_size > binding.offset ? buffer->byte_size - binding.offset : 0;
 		view.StrideInBytes = binding.stride;
 		commands->IASetVertexBuffers(slot, 1, &view);
 	}
 	if (m_index_buffer.Is_Valid()) {
 		const DX12Buffer *buffer = m_state->buffers.Resolve(m_index_buffer);
-		if (buffer != nullptr && buffer->object.Get() != nullptr) {
+		if (buffer != nullptr && buffer->Native_Object() != nullptr) {
 			D3D12_INDEX_BUFFER_VIEW view{};
-			view.BufferLocation = buffer->object.Get()->GetGPUVirtualAddress() + m_index_offset;
-			view.SizeInBytes = buffer->capacity > m_index_offset ? buffer->capacity - m_index_offset : 0;
+			view.BufferLocation = buffer->GPU_Base_Address() + m_index_offset;
+			view.SizeInBytes = buffer->byte_size > m_index_offset ? buffer->byte_size - m_index_offset : 0;
 			view.Format = m_index_format == RHIIndexFormat::UInt16 ? DXGI_FORMAT_R16_UINT : DXGI_FORMAT_R32_UINT;
 			commands->IASetIndexBuffer(&view);
 		}
@@ -1722,6 +1984,8 @@ bool DX12CommandList::Rebind_Targets() noexcept
 
 void DX12CommandList::On_New_Command_List() noexcept
 {
+    m_native_pipeline=nullptr; m_native_scissor_bound=false;
+	m_root_bound = false;
 	m_resource_index_addresses = {};
 	m_constant_addresses = {};
 	m_bindless_page = InvalidDescriptor;
@@ -1744,7 +2008,7 @@ void DX12CommandList::On_New_Command_List() noexcept
 			std::memcpy(slice.cpu, m_draw_constant_data.data(), m_draw_constant_size);
 			m_draw_constant_gpu_address = slice.gpu_address;
 			// Draw constants outlive pipeline bindings, including a retired pipeline.
-			m_state->command_list.Get()->SetGraphicsRootSignature(m_state->graphics_root_signature.Get());
+			Bind_Graphics_Root();
 			m_state->command_list.Get()->SetGraphicsRootConstantBufferView(4, slice.gpu_address);
 		}
 	}
@@ -1777,12 +2041,13 @@ bool DX12CommandList::Set_Render_Targets(RHITextureHandle color_target,
 	const auto color_view = m_state->CpuRTV(color->render_target_view.index);
 	const auto depth_view = m_state->CpuDSV(depth->depth_stencil_view.index);
 	m_state->command_list.Get()->OMSetRenderTargets(1, &color_view, FALSE, &depth_view);
+    m_pipeline_selection_dirty=true; m_scissor_dirty=true;
 	m_color_target = color_target;
 	m_depth_target = depth_target;
 	Remove_Bindless_Texture(m_bindless_cache, color_target);
 	Remove_Bindless_Texture(m_bindless_cache, depth_target);
+	Rebuild_Bindless_Slots();
 	m_bindless_page = InvalidDescriptor;
-	m_bindless_hash = 0;
 	if (!m_bindless_cache.empty() && !Bindless_Resources_Internal(
 		std::span<const RHIBindlessResource>(m_bindless_cache.data(), m_bindless_cache.size()), false))
 		return false;
@@ -1799,11 +2064,12 @@ bool DX12CommandList::Set_Color_Target(RHITextureHandle color_target) noexcept
 		return false;
 	const auto color_view = m_state->CpuRTV(color->render_target_view.index);
 	m_state->command_list.Get()->OMSetRenderTargets(1, &color_view, FALSE, nullptr);
+    m_pipeline_selection_dirty=true; m_scissor_dirty=true;
 	m_color_target = color_target;
 	m_depth_target = {};
 	Remove_Bindless_Texture(m_bindless_cache, color_target);
+	Rebuild_Bindless_Slots();
 	m_bindless_page = InvalidDescriptor;
-	m_bindless_hash = 0;
 	if (!m_bindless_cache.empty() && !Bindless_Resources_Internal(
 		std::span<const RHIBindlessResource>(m_bindless_cache.data(), m_bindless_cache.size()), false))
 		return false;
@@ -1820,11 +2086,12 @@ bool DX12CommandList::Set_Depth_Target(RHITextureHandle depth_target) noexcept
 		return false;
 	const auto depth_view = m_state->CpuDSV(depth->depth_stencil_view.index);
 	m_state->command_list.Get()->OMSetRenderTargets(0, nullptr, FALSE, &depth_view);
+    m_pipeline_selection_dirty=true; m_scissor_dirty=true;
 	m_color_target = {};
 	m_depth_target = depth_target;
 	Remove_Bindless_Texture(m_bindless_cache, depth_target);
+	Rebuild_Bindless_Slots();
 	m_bindless_page = InvalidDescriptor;
-	m_bindless_hash = 0;
 	if (!m_bindless_cache.empty() && !Bindless_Resources_Internal(
 		std::span<const RHIBindlessResource>(m_bindless_cache.data(), m_bindless_cache.size()), false))
 		return false;
@@ -1874,6 +2141,7 @@ bool DX12CommandList::Clear_Color_Target(RHITextureHandle texture,
 		return false;
 	m_state->command_list.Get()->ClearRenderTargetView(m_state->CpuRTV(target->render_target_view.index),
 		color.data(), 0, nullptr);
+	Invalidate_Constants();
 	return true;
 }
 
@@ -1891,6 +2159,7 @@ bool DX12CommandList::Clear_Depth_Stencil_Target(RHITextureHandle texture, float
 		flags = static_cast<D3D12_CLEAR_FLAGS>(flags | D3D12_CLEAR_FLAG_STENCIL);
 	m_state->command_list.Get()->ClearDepthStencilView(m_state->CpuDSV(target->depth_stencil_view.index),
 		flags, depth, stencil, 0, nullptr);
+	Invalidate_Constants();
 	return true;
 }
 
@@ -1919,6 +2188,7 @@ bool DX12CommandList::Copy_Texture(RHITextureHandle source,
 		|| !m_state->Transition(*destination_texture, D3D12_RESOURCE_STATE_COPY_DEST))
 		return false;
 	m_state->command_list.Get()->CopyResource(destination_texture->object.Get(), source_texture->object.Get());
+	++destination_texture->content_version;
 	m_state->Transition(*source_texture, source_state);
 	m_state->Transition(*destination_texture, destination_state);
 	return true;
@@ -1929,6 +2199,7 @@ bool DX12CommandList::Set_Viewport(RHIViewport viewport) noexcept
 	if (!Is_Ready() || viewport.width == 0 || viewport.height == 0)
 		return false;
 	m_viewport = viewport;
+    m_scissor_dirty=true;
 	m_has_viewport = true;
 	D3D12_VIEWPORT native{};
 	native.TopLeftX = static_cast<float>(viewport.x);
@@ -1952,6 +2223,7 @@ bool DX12CommandList::Set_Scissor(RHIScissorRect scissor) noexcept
 		|| scissor.y > static_cast<std::uint32_t>(LONG_MAX) - scissor.height)
 		return false;
 	m_scissor = scissor;
+    m_scissor_dirty=true;
 	m_has_scissor = true;
 	if (m_pipeline.Is_Valid())
 		return Apply_Scissor();
@@ -1960,7 +2232,7 @@ bool DX12CommandList::Set_Scissor(RHIScissorRect scissor) noexcept
 	native.top = static_cast<LONG>(scissor.y);
 	native.right = static_cast<LONG>(scissor.x + scissor.width);
 	native.bottom = static_cast<LONG>(scissor.y + scissor.height);
-	m_state->command_list.Get()->RSSetScissorRects(1, &native);
+	Set_Native_Scissor(native);
 	return true;
 }
 
@@ -1976,7 +2248,7 @@ bool DX12CommandList::Set_Draw_Constants(std::span<const std::byte> data) noexce
 		return false;
 	std::memcpy(slice.cpu, m_draw_constant_data.data(), data.size());
 	m_draw_constant_gpu_address = slice.gpu_address;
-	m_state->command_list.Get()->SetGraphicsRootSignature(m_state->graphics_root_signature.Get());
+	Bind_Graphics_Root();
 	m_state->command_list.Get()->SetGraphicsRootConstantBufferView(4, slice.gpu_address);
 	return true;
 }
@@ -1987,11 +2259,13 @@ bool DX12CommandList::Set_Vertex_Buffer(std::uint32_t slot, RHIBufferHandle buff
 	if (!Is_Ready() || slot >= m_vertex_bindings.size() || stride == 0)
 		return false;
 	DX12Buffer *resource = m_state->buffers.Resolve(buffer);
-	if (resource == nullptr || resource->object.Get() == nullptr || offset >= resource->capacity)
+	if (resource == nullptr || resource->Native_Object() == nullptr || offset >= resource->byte_size)
 		return false;
+	const auto& previous=m_vertex_bindings[slot];
+	if (!m_graphics_state_dirty && previous.buffer==buffer && previous.stride==stride && previous.offset==offset) return true;
 	D3D12_VERTEX_BUFFER_VIEW view{};
-	view.BufferLocation = resource->object.Get()->GetGPUVirtualAddress() + offset;
-	view.SizeInBytes = resource->capacity - offset;
+	view.BufferLocation = resource->GPU_Base_Address() + offset;
+	view.SizeInBytes = resource->byte_size - offset;
 	view.StrideInBytes = stride;
 	m_state->command_list.Get()->IASetVertexBuffers(slot, 1, &view);
 	m_vertex_bindings[slot] = {buffer, stride, offset};
@@ -2004,11 +2278,12 @@ bool DX12CommandList::Set_Index_Buffer(RHIBufferHandle buffer, RHIIndexFormat fo
 	if (!Is_Ready())
 		return false;
 	DX12Buffer *resource = m_state->buffers.Resolve(buffer);
-	if (resource == nullptr || resource->object.Get() == nullptr || offset >= resource->capacity)
+	if (resource == nullptr || resource->Native_Object() == nullptr || offset >= resource->byte_size)
 		return false;
+	if (!m_graphics_state_dirty && m_index_buffer==buffer && m_index_format==format && m_index_offset==offset) return true;
 	D3D12_INDEX_BUFFER_VIEW view{};
-	view.BufferLocation = resource->object.Get()->GetGPUVirtualAddress() + offset;
-	view.SizeInBytes = resource->capacity - offset;
+	view.BufferLocation = resource->GPU_Base_Address() + offset;
+	view.SizeInBytes = resource->byte_size - offset;
 	view.Format = format == RHIIndexFormat::UInt16 ? DXGI_FORMAT_R16_UINT : DXGI_FORMAT_R32_UINT;
 	m_state->command_list.Get()->IASetIndexBuffer(&view);
 	m_index_buffer = buffer;
@@ -2046,6 +2321,8 @@ bool DX12CommandList::Draw_Indexed(std::uint32_t index_count, std::uint32_t firs
 
 void DX12CommandList::Reset_Frame_State() noexcept
 {
+    m_native_pipeline=nullptr; m_native_scissor_bound=false;
+	m_root_bound = false;
 	m_resource_index_addresses = {};
 	m_constant_addresses = {};
 	m_pipeline = {};
@@ -2053,8 +2330,8 @@ void DX12CommandList::Reset_Frame_State() noexcept
 	m_color_target = {};
 	m_depth_target = {};
 	m_bindless_cache.clear();
+	Rebuild_Bindless_Slots();
 	m_bindless_page = InvalidDescriptor;
-	m_bindless_hash = 0;
 	m_draw_constant_size = 0;
 	m_draw_constant_gpu_address = 0;
 	m_vertex_bindings = {};
@@ -2185,7 +2462,7 @@ RHIBufferHandle DX12Device::Create_Buffer_Initialized(const RHIBuffer &descripti
 		return {};
 	if (description.usage == RHIBufferUsage::Constant && description.byte_size > UINT32_MAX - 255u)
 		return {};
-	const std::uint32_t capacity = description.usage == RHIBufferUsage::Constant
+	std::uint32_t capacity = description.usage == RHIBufferUsage::Constant
 		? (description.byte_size + 255u) & ~255u : description.byte_size;
 	const D3D12_RESOURCE_STATES initial_state = description.usage == RHIBufferUsage::Storage
 		? Shader_Resource_State() : description.usage == RHIBufferUsage::Index
@@ -2197,7 +2474,15 @@ RHIBufferHandle DX12Device::Create_Buffer_Initialized(const RHIBuffer &descripti
 	resource.capacity = capacity;
 	resource.stride = description.stride;
 	resource.state = initial_state;
-	if (description.usage == RHIBufferUsage::Constant) {
+    resource.mapped_storage=description.usage==RHIBufferUsage::Storage && description.byte_size<=4096;
+    if (resource.mapped_storage) {
+        resource.constant_data.resize(capacity);
+        if (!initial_data.empty()) std::memcpy(resource.constant_data.data(),initial_data.data(),initial_data.size());
+        resource.constants=Allocate_Storage_Version(*m_state,capacity,description.stride);
+        if (!resource.constants.page) return {};
+        std::memcpy(resource.constants.page->cpu+resource.constants.offset,resource.constant_data.data(),capacity);
+        resource.state=D3D12_RESOURCE_STATE_GENERIC_READ;
+    } else if (description.usage == RHIBufferUsage::Constant) {
 		resource.constant_data.resize(capacity);
 		if (!initial_data.empty())
 			std::memcpy(resource.constant_data.data(), initial_data.data(), initial_data.size());
@@ -2211,9 +2496,11 @@ RHIBufferHandle DX12Device::Create_Buffer_Initialized(const RHIBuffer &descripti
 		resource.object = m_state->buffer_cache.Take(description.usage, capacity,
 			description.update_mode, m_state->fence.Get() != nullptr
 				? m_state->fence.Get()->GetCompletedValue() : 0);
+        resource.capacity = capacity;
 		if (resource.object.Get() == nullptr
 			&& !Create_Default_Buffer(m_state->device.Get(), capacity, initial_state, resource.object.Put()))
 			return {};
+        resource.gpu_base_address=resource.object.Get()->GetGPUVirtualAddress();
 	}
 	if (description.usage == RHIBufferUsage::Storage) {
 		if (!Allocate_CPU_Descriptors(m_state->cpu_resources, m_state->resource_descriptor_offset,
@@ -2224,16 +2511,20 @@ RHIBufferHandle DX12Device::Create_Buffer_Initialized(const RHIBuffer &descripti
 		view.ViewDimension = D3D12_SRV_DIMENSION_BUFFER;
 		view.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
 		view.Buffer.NumElements = description.byte_size / description.stride;
+        if (resource.mapped_storage) view.Buffer.FirstElement=resource.constants.offset/description.stride;
 		view.Buffer.StructureByteStride = description.stride;
-		m_state->device.Get()->CreateShaderResourceView(resource.object.Get(), &view,
+		m_state->device.Get()->CreateShaderResourceView(resource.Native_Object(), &view,
 			m_state->CpuResource(resource.shader_resource_view.index));
 		Publish_Shader_Resource(*m_state, resource.shader_resource_view);
 	}
 
 	const RHIBufferHandle handle = m_state->buffers.Create(std::move(resource));
-	if (!handle.Is_Valid())
+	if (!handle.Is_Valid()) {
+		m_state->cpu_resources.Retire(resource.shader_resource_view,0);
 		return {};
+	}
 	if (description.usage != RHIBufferUsage::Constant
+        && !(description.usage==RHIBufferUsage::Storage && description.byte_size<=4096)
 		&& !initial_data.empty() && !Update_Buffer(handle, 0, initial_data)) {
 		Destroy_Buffer(handle);
 		return {};
@@ -2486,19 +2777,24 @@ RHITextureHandle DX12Device::Create_Texture_Initialized(const RHITexture &descri
 	heap.Type = D3D12_HEAP_TYPE_DEFAULT;
 	const HRESULT create_result = m_state->device.Get()->CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE,
 		&native, Texture_Initial_State(description), clear_pointer, IID_PPV_ARGS(resource.object.Put()));
-	if (FAILED(create_result) || !Create_Texture_Views(*m_state, resource))
+	if (FAILED(create_result) || !Create_Texture_Views(*m_state, resource)) {
+		m_state->Retire_Texture_Views(resource,0);
 		return {};
+	}
 	const std::uint32_t plane_count = description.format == RHITextureFormat::D24_UNorm_S8 ? 2u : 1u;
 	const std::uint32_t subresources = (volume ? description.mip_count
 		: description.mip_count * description.array_size) * plane_count;
 	try {
 		resource.states.assign(subresources, Texture_Initial_State(description));
 	} catch (...) {
+		m_state->Retire_Texture_Views(resource,0);
 		return {};
 	}
 	const RHITextureHandle handle = m_state->textures.Create(std::move(resource));
-	if (!handle.Is_Valid())
+	if (!handle.Is_Valid()) {
+		m_state->Retire_Texture_Views(resource,0);
 		return {};
+	}
 	if (!initial_data.data.empty() && !Update_Texture(handle, initial_data)) {
 		Destroy_Texture(handle);
 		return {};
@@ -2509,13 +2805,13 @@ RHITextureHandle DX12Device::Create_Texture_Initialized(const RHITexture &descri
 static bool Transition_Buffer(DX12DeviceState &state, DX12Buffer &buffer,
 	D3D12_RESOURCE_STATES desired) noexcept
 {
-	if (buffer.object.Get() == nullptr || !state.Ensure_Recording())
+	if (buffer.Native_Object() == nullptr || !state.Ensure_Recording())
 		return false;
 	if (buffer.state == desired)
 		return true;
 	D3D12_RESOURCE_BARRIER barrier{};
 	barrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
-	barrier.Transition.pResource = buffer.object.Get();
+	barrier.Transition.pResource = buffer.Native_Object();
 	barrier.Transition.StateBefore = buffer.state;
 	barrier.Transition.StateAfter = desired;
 	barrier.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
@@ -2535,6 +2831,25 @@ bool DX12Device::Update_Buffer(RHIBufferHandle buffer, std::uint32_t offset,
 		|| data.size() > resource->byte_size - offset
 		|| (resource->update_mode == RHIBufferUpdateMode::Discard && offset != 0))
 		return false;
+    if (resource->mapped_storage) {
+        auto next=Allocate_Storage_Version(*m_state,resource->capacity,resource->stride);
+        if (!next.page) return false;
+        std::memcpy(resource->constant_data.data()+offset,data.data(),data.size());
+        std::memcpy(next.page->cpu+next.offset,resource->constant_data.data(),resource->capacity);
+        resource->constants.Retire(m_state->Retirement_Fence());
+        resource->constants=std::move(next);
+        D3D12_SHADER_RESOURCE_VIEW_DESC view{};
+        view.Format=DXGI_FORMAT_UNKNOWN; view.ViewDimension=D3D12_SRV_DIMENSION_BUFFER;
+        view.Shader4ComponentMapping=D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+        view.Buffer.FirstElement=resource->constants.offset/resource->stride;
+        view.Buffer.NumElements=resource->byte_size/resource->stride;
+        view.Buffer.StructureByteStride=resource->stride;
+        m_state->device.Get()->CreateShaderResourceView(resource->Native_Object(),&view,
+            m_state->CpuResource(resource->shader_resource_view.index));
+        resource->storage_descriptor_epoch=0;
+        m_state->command_list_facade.Invalidate_Constants();
+        return true;
+    }
 	if (resource->usage == RHIBufferUsage::Constant) {
 		auto next = m_state->constant_memory.Allocate(m_state->device.Get(), resource->capacity,
 			m_state->completed_fence);
@@ -2545,7 +2860,9 @@ bool DX12Device::Update_Buffer(RHIBufferHandle buffer, std::uint32_t offset,
 		resource->constants.Retire(m_state->Retirement_Fence());
 		resource->constants = std::move(next);
 
-		m_state->command_list_facade.Invalidate_Constants();
+		// A renamed constant block changes only its root CBV address. Texture
+        // and storage descriptor indices remain valid across this upload.
+		m_state->command_list_facade.Invalidate_Constants(false);
 		return true;
 	}
 	const auto upload = m_state->Allocate_Upload(data.size(), 256);
@@ -2555,7 +2872,7 @@ bool DX12Device::Update_Buffer(RHIBufferHandle buffer, std::uint32_t offset,
 	const D3D12_RESOURCE_STATES old_state = resource->state;
 	if (!Transition_Buffer(*m_state, *resource, D3D12_RESOURCE_STATE_COPY_DEST))
 		return false;
-	m_state->command_list.Get()->CopyBufferRegion(resource->object.Get(), offset,
+	m_state->command_list.Get()->CopyBufferRegion(resource->Native_Object(), offset,
 		upload.resource, upload.offset, data.size());
 	Transition_Buffer(*m_state, *resource, old_state);
 	return true;
@@ -2609,6 +2926,7 @@ bool DX12Device::Update_Texture(RHITextureHandle texture,
 	destination.SubresourceIndex = layout.subresource;
 	m_state->command_list.Get()->CopyTextureRegion(&destination, 0, 0, 0, &source, nullptr);
 	m_state->Transition(*resource, old_state, layout.subresource);
+	++resource->content_version;
 	return true;
 }
 
@@ -2773,6 +3091,7 @@ bool DX12Device::Unmap_Texture(RHITextureHandle texture, std::uint32_t mip,
 	if (found == resource->mappings.end())
 		return false;
 	DX12TextureMapping &mapping = **found;
+	if (!mapping.read_only) ++resource->content_version;
 	if (mapping.readback_mapped && mapping.readback.Get() != nullptr) {
 		mapping.readback.Get()->Unmap(0, nullptr);
 		mapping.readback_mapped = false;
@@ -3032,7 +3351,10 @@ bool DX12Device::Generate_Texture_Mips(RHITextureHandle texture) noexcept
 		!= resource->description.mip_count)
 		return false;
 	if (!resource->compute_mips)
+	{
+		++resource->content_version;
 		return Generate_Raster_Mips(*m_state, *resource);
+	}
 	ID3D12PipelineState *pipeline = nullptr;
 	const bool array_view = resource->description.dimension != RHITextureDimension::Volume
 		&& resource->description.array_size > 1;
@@ -3041,6 +3363,7 @@ bool DX12Device::Generate_Texture_Mips(RHITextureHandle texture) noexcept
 		|| !m_state->Ensure_Recording())
 		return false;
 	ID3D12GraphicsCommandList *commands = m_state->command_list.Get();
+	++resource->content_version;
 	ID3D12DescriptorHeap *heaps[] = {m_state->gpu_resources.Get(), m_state->gpu_samplers.Get()};
 	commands->SetDescriptorHeaps(static_cast<UINT>(std::size(heaps)), heaps);
 	commands->SetComputeRootSignature(m_state->mip_root_signature.Get());
@@ -3154,6 +3477,7 @@ bool DX12Device::Destroy_Buffer(RHIBufferHandle buffer) noexcept
 	if (DX12BufferCache::Eligible(resource->usage, resource->capacity))
 		m_state->buffer_cache.Recycle(*resource, fence_value);
 	m_state->command_list_facade.Release_Buffer_Bindings(buffer);
+	m_state->cpu_resources.Retire(resource->shader_resource_view,fence_value);
 	return m_state->buffers.Destroy(buffer);
 }
 
@@ -3178,6 +3502,7 @@ bool DX12Device::Destroy_Texture(RHITextureHandle texture) noexcept
 			return false;
 	}
 	m_state->command_list_facade.Release_Texture_Bindings(texture);
+	m_state->Retire_Texture_Views(*resource,fence_value);
 	return m_state->textures.Destroy(texture);
 }
 
@@ -3245,6 +3570,17 @@ bool DX12Device::End_Frame() noexcept
 	m_state->ready_to_present = true;
 	m_state->presented = false;
 	return true;
+}
+
+void DX12DeviceState::Retire_Texture_Views(DX12Texture& texture, std::uint64_t fence) noexcept
+{
+	cpu_resources.Retire(texture.shader_resource_view,fence);
+	cpu_resources.Retire(texture.unordered_access_view,fence);
+	for (auto& view : texture.mip_shader_resource_views) cpu_resources.Retire(view,fence);
+	for (auto& view : texture.mip_unordered_access_views) cpu_resources.Retire(view,fence);
+	cpu_render_targets.Retire(texture.render_target_view,fence);
+	cpu_render_targets.Retire(texture.mip_render_targets,fence);
+	cpu_depth_targets.Retire(texture.depth_stencil_view,fence);
 }
 
 bool DX12DeviceState::Defer(IUnknown *object, std::uint64_t fence_value) noexcept
@@ -3363,6 +3699,7 @@ DX12UploadSlice DX12DeviceState::Allocate_Upload(std::uint64_t size,
 
 bool DX12DeviceState::Ensure_Recording() noexcept
 {
+	if (removed) return false;
 	if (recording)
 		return true;
 	if (device.Get() == nullptr || command_list.Get() == nullptr)
@@ -3376,6 +3713,7 @@ bool DX12DeviceState::Ensure_Recording() noexcept
 	if (FAILED(command_list.Get()->Reset(frame.allocator.Get(), nullptr)))
 		return false;
 	current_frame = next_frame;
+    ++recording_epoch;
 	frame.uploads.Reset();
 	frame.descriptor_offset = 0;
 	for (auto &upload : frame.transient_uploads)
@@ -3385,12 +3723,13 @@ bool DX12DeviceState::Ensure_Recording() noexcept
 	recording = true;
 	command_list_facade.On_New_Command_List();
 	Collect_Deferred();
-	return true;
+	return !removed;
 }
 
 std::uint64_t DX12DeviceState::Submit_Current(bool wait) noexcept
 {
 	GRAPHICS_PROFILE_FOCUS_SCOPE("Graphics.DX12.Submit");
+	if (removed) return 0;
 	if (!recording)
 		return last_submitted_fence;
 	const HRESULT close_result = command_list.Get()->Close();
@@ -3414,7 +3753,7 @@ std::uint64_t DX12DeviceState::Submit_Current(bool wait) noexcept
 	if (wait && !Wait_For_Fence(signal))
 		return 0;
 	Collect_Deferred();
-	return signal;
+	return removed ? 0 : signal;
 }
 
 bool DX12DeviceState::Transition(DX12Texture &texture, D3D12_RESOURCE_STATES desired,
@@ -3433,13 +3772,16 @@ bool DX12DeviceState::Transition(DX12Texture &texture, D3D12_RESOURCE_STATES des
 		barrier.Transition.Subresource = index;
 		command_list.Get()->ResourceBarrier(1, &barrier);
 		texture.states[index] = desired;
+        texture.uniform_state=texture.states.size()==1;
 	};
 	if (subresource == D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES) {
 		bool different = false;
 		for (const auto state : texture.states)
 			different |= state != desired;
-		if (!different)
+		if (!different) {
+            texture.uniform_state=true;
 			return true;
+        }
 		const auto first_state = texture.states.empty() ? D3D12_RESOURCE_STATE_COMMON : texture.states.front();
 		bool uniform = true;
 		for (const auto state : texture.states)
@@ -3447,6 +3789,7 @@ bool DX12DeviceState::Transition(DX12Texture &texture, D3D12_RESOURCE_STATES des
 		if (!uniform) {
 			for (std::uint32_t index = 0; index < texture.states.size(); ++index)
 				apply(index);
+            texture.uniform_state=true;
 			return true;
 		}
 		D3D12_RESOURCE_BARRIER barrier{};
@@ -3458,6 +3801,7 @@ bool DX12DeviceState::Transition(DX12Texture &texture, D3D12_RESOURCE_STATES des
 		command_list.Get()->ResourceBarrier(1, &barrier);
 		for (auto &state : texture.states)
 			state = desired;
+        texture.uniform_state=true;
 		return true;
 	}
 	apply(subresource);
@@ -3467,11 +3811,7 @@ bool DX12DeviceState::Transition(DX12Texture &texture, D3D12_RESOURCE_STATES des
 static bool Allocate_CPU_Descriptors(DX12DescriptorHeap &heap, std::uint32_t &offset,
 	std::uint32_t count, DX12DescriptorRange &range) noexcept
 {
-	if (count == 0 || offset > heap.Capacity() || count > heap.Capacity() - offset)
-		return false;
-	range = {offset, count};
-	offset += count;
-	return true;
+	return heap.Allocate(offset,count,range);
 }
 
 static bool Create_Upload_Resource(ID3D12Device *device, std::uint64_t size,
@@ -3497,6 +3837,7 @@ static bool Create_Upload_Resource(ID3D12Device *device, std::uint64_t size,
 	}
 	if (FAILED(arena.resource.Get()->Map(0, nullptr, reinterpret_cast<void **>(&arena.mapped))))
 		return false;
+	arena.gpu_base_address=arena.resource.Get()->GetGPUVirtualAddress();
 	arena.capacity = size;
 	arena.offset = 0;
 	return true;
@@ -3782,7 +4123,8 @@ static bool Create_DX12_Device(DX12DeviceState &state, const DX12DeviceOptions &
 	std::memset(null_bytes, 0, static_cast<std::size_t>(null_buffer_description.Width));
 	state.null_constant_buffer.Get()->Unmap(0, nullptr);
 	D3D12_CONSTANT_BUFFER_VIEW_DESC null_cbv{};
-	null_cbv.BufferLocation = state.null_constant_buffer.Get()->GetGPUVirtualAddress();
+	state.null_constant_gpu_address=state.null_constant_buffer.Get()->GetGPUVirtualAddress();
+    null_cbv.BufferLocation = state.null_constant_gpu_address;
 	null_cbv.SizeInBytes = static_cast<UINT>(null_buffer_description.Width);
 	for (std::uint32_t index = 0; index < BindlessCBVCount; ++index)
 		state.device.Get()->CreateConstantBufferView(&null_cbv, state.CpuResource(null_cbvs.index + index));

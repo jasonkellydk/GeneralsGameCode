@@ -4,6 +4,7 @@ module;
 #include <bit>
 #include <cstddef>
 #include <cstdint>
+#include <cstring>
 #include <filesystem>
 #include <limits>
 #include <span>
@@ -109,6 +110,23 @@ public:
         shader.fragment_path = directory / "prop_records.pso";
         m_record_shader = m_shaders.Load_Precompiled(shader);
         if (!m_shaders.Is_Loaded(m_record_shader)) return false;
+        shader.program.vertex_shader = 23;
+        shader.program.fragment_shader = 23;
+        shader.program.source_key = 0x50524F5044455054ull;
+        shader.vertex_path = directory / "prop_depth.vso";
+        shader.fragment_path = directory / "prop_depth.pso";
+        m_depth_shader = m_shaders.Load_Precompiled(shader);
+        if (!m_shaders.Is_Loaded(m_depth_shader)) return false;
+        shader.program.vertex_shader = 24;
+        shader.program.source_key = 0x50524F5044455049ull;
+        shader.vertex_path = directory / "prop_depth_instanced.vso";
+        m_depth_instanced_shader = m_shaders.Load_Precompiled(shader);
+        if (!m_shaders.Is_Loaded(m_depth_instanced_shader)) return false;
+        shader.program.vertex_shader = 25;
+        shader.program.source_key = 0x50524F5044455052ull;
+        shader.vertex_path = directory / "prop_depth_records.vso";
+        m_depth_record_shader = m_shaders.Load_Precompiled(shader);
+        if (!m_shaders.Is_Loaded(m_depth_record_shader)) return false;
         m_device = &device;
         if (!m_constants.Initialize(device) || !m_environment.Initialize(device)) { Shutdown(); return false; }
         for (std::size_t index=0; index<m_bindings.size(); ++index)
@@ -129,6 +147,7 @@ public:
         }
         m_pipelines.clear();
         m_bindings = {};
+        m_last_material_mesh = {};
         m_device = nullptr;
     }
 
@@ -254,16 +273,31 @@ private:
         if (!Upload(*mesh)) return false;
         if (worlds.size() > std::numeric_limits<std::uint32_t>::max() / 64u) return false;
         const bool instanced = !worlds.empty();
-        if (!records.empty() && (!m_instances.Prepare(*m_device)
+        const bool color_output=style.color_write_mask != 0;
+        const bool shared_lighting=color_output && records.size()==1;
+        const bool record_lighting=color_output && records.size()>1;
+        if (!records.empty() && (!m_instances.Prepare(*m_device,record_lighting)
             || !mesh->instance_indices.Prepare(*m_device,records))) return false;
         if (instanced && !mesh->instances.Prepare(*m_device,worlds)) return false;
-        const bool shared_lighting=records.size()==1;
         const RHIPipelineHandle pipeline = Pipeline(style, instanced, !records.empty(),shared_lighting);
         if (!pipeline.Is_Valid()) return false;
         {
             GRAPHICS_PROFILE_SCOPE("Graphics.Props.BindResources");
-            if (!m_constants.Prepare_Resources(*m_device, parameters, mesh->material,
-                std::span(m_bindings).first<4>(), !records.empty())) return false;
+            // Reuse the preceding owner's identical material block across
+            // meshes. Resolve its full generation each time; mesh destruction
+            // or replacement must never leave a borrowed binding dangling.
+            auto material_owner=handle;
+            auto* material_mesh=mesh;
+            bool material_prepared=false;
+            if (auto* previous=m_meshes.Resolve(m_last_material_mesh))
+                if (previous->material.Matches(material)) {
+                    material_owner=m_last_material_mesh;
+                    material_mesh=previous;
+                    material_prepared=true;
+                }
+            if (!m_constants.Prepare_Resources(*m_device, parameters, material_mesh->material,
+                std::span(m_bindings).first<4>(), !records.empty(), color_output, material_prepared)) return false;
+            m_last_material_mesh=material_owner;
             if (shared_lighting && !m_constants.Prepare_Lighting(*m_device,m_instances.At_Index(records.front()).lighting)) return false;
             std::size_t count = 4;
             for (std::size_t slot = 0; slot < textures.size(); ++slot) {
@@ -288,6 +322,11 @@ private:
                 m_bindings[count] = {};
                 m_bindings[count].type = RHIResourceType::Buffer;
                 m_bindings[count++].buffer = m_instances.Palettes().Buffer();
+                if (record_lighting) {
+                    m_bindings[count] = {};
+                    m_bindings[count].type = RHIResourceType::Buffer;
+                    m_bindings[count++].buffer = m_instances.Lighting_Buffer();
+                }
             }
             unsigned environment_count=0;
             if (!m_environment.Prepare_Resources(*m_device, std::span(m_bindings).subspan(count), environment_count)) return false;
@@ -411,16 +450,20 @@ private:
             description.samplers[slot] = style.samplers[0];
         description.samplers[3].address.fill(RHISamplerAddress::Clamp);
         const RHIPipelineHandle handle = m_device->Create_Pipeline(description,
-            {m_shaders.Bytecode(records ? m_record_shader : instanced ? m_instanced_shader : m_shader, ShaderStage::Vertex)},
-            {m_shaders.Bytecode(records && !shared_lighting ? m_record_shader : m_shader, ShaderStage::Pixel)});
-        if (handle.Is_Valid()) m_pipelines.push_back({style, handle, instanced, records,shared_lighting});
+            {m_shaders.Bytecode(style.color_write_mask == 0
+                  ? (records ? m_depth_record_shader : instanced ? m_depth_instanced_shader : m_depth_shader)
+                  : (records ? m_record_shader : instanced ? m_instanced_shader : m_shader), ShaderStage::Vertex)},
+            {m_shaders.Bytecode(style.color_write_mask == 0 ? m_depth_shader
+                : records && !shared_lighting ? m_record_shader : m_shader, ShaderStage::Pixel)});
+          if (handle.Is_Valid()) m_pipelines.push_back({style, handle, instanced, records,shared_lighting});
         return handle;
     }
 
     EnvironmentLightingBinding m_environment;
     Device *m_device = nullptr;
     ShaderLibrary m_shaders;
-    ShaderHandle m_shader{}, m_instanced_shader{}, m_record_shader{};
+      ShaderHandle m_shader{}, m_instanced_shader{}, m_record_shader{}, m_depth_shader{}, m_depth_instanced_shader{}, m_depth_record_shader{};
+    PropMeshHandle m_last_material_mesh{};
     PropInstances m_instances;
     PropConstantBindings m_constants;
     std::uint64_t m_geometry_uploaded_bytes=0;

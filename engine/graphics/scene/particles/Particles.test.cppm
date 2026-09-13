@@ -58,6 +58,36 @@ BOOST_AUTO_TEST_CASE(texture_regions_survive_source_release_compaction_and_defau
 	BOOST_CHECK(copied.Particles().texture_regions[0] == full);
 }
 
+BOOST_AUTO_TEST_CASE(appending_a_live_particle_view_preserves_fields_and_capacity_failure)
+{
+    ParticleSystem particles;
+    particles.Reserve(2, 4);
+    ParticleEmitter emitter;
+    emitter.position = {1, 2, 3};
+    emitter.velocity = {4, 5, 6};
+    emitter.color = {.2f, .3f, .4f, .5f};
+    emitter.material = MaterialHandle(3, 1);
+    emitter.max_particles = 4;
+    const auto first = particles.Create_Emitter(emitter);
+    const auto second = particles.Create_Emitter(emitter);
+    BOOST_REQUIRE(particles.Spawn(first, 2));
+    BOOST_REQUIRE(particles.Append_Particles(second, particles.Particles()));
+    const auto data = particles.Particles();
+    BOOST_CHECK_EQUAL(particles.Particle_Count(first), 2);
+    BOOST_CHECK_EQUAL(particles.Particle_Count(second), 2);
+    for (unsigned i = 0; i < 2; ++i) {
+        const auto original = Pack_GPU_Particle(data, i, 7);
+        const auto copied = Pack_GPU_Particle(data, i + 2, 7);
+        BOOST_CHECK(original.position_lifetime == copied.position_lifetime);
+        BOOST_CHECK(original.velocity_size == copied.velocity_size);
+        BOOST_CHECK(original.color == copied.color);
+        BOOST_CHECK(original.texture_region == copied.texture_region);
+        BOOST_CHECK(data.materials[i] == data.materials[i + 2]);
+    }
+    BOOST_CHECK(!particles.Append_Particles(second, data));
+    BOOST_CHECK_EQUAL(particles.Particle_Count(), 4);
+}
+
 BOOST_AUTO_TEST_CASE(particles_spawn_into_soa_storage_and_simulate)
 {
 	ParticleSystem particles;

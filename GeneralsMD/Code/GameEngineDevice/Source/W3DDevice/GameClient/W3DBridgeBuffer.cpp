@@ -288,7 +288,7 @@ Bool W3DBridge::load(BodyDamageType curDamageState)
 	}
 
 	Int numVertex = m_leftMesh->Peek_Model()->Get_Vertex_Count();
-	Vector3 *pVert = m_leftMesh->Peek_Model()->Get_Vertex_Array();
+	const Vector3 *pVert = m_leftMesh->Peek_Model()->Peek_Vertex_Array();
 	m_leftMinX = FLT_MAX;
 	m_leftMaxX = -FLT_MAX;
 	m_minY = FLT_MAX;
@@ -303,7 +303,7 @@ Bool W3DBridge::load(BodyDamageType curDamageState)
 	}
 	if (m_bridgeType == SECTIONAL_BRIDGE) {
 		numVertex = m_sectionMesh->Peek_Model()->Get_Vertex_Count();
-		pVert = m_sectionMesh->Peek_Model()->Get_Vertex_Array();
+		pVert = m_sectionMesh->Peek_Model()->Peek_Vertex_Array();
 		m_sectionMinX = FLT_MAX;
 		m_sectionMaxX = -FLT_MAX;
 		for (i=0; i<numVertex; i++) {
@@ -314,7 +314,7 @@ Bool W3DBridge::load(BodyDamageType curDamageState)
 		}
 
 		numVertex = m_rightMesh->Peek_Model()->Get_Vertex_Count();
-		pVert = m_rightMesh->Peek_Model()->Get_Vertex_Array();
+		pVert = m_rightMesh->Peek_Model()->Peek_Vertex_Array();
 		m_rightMinX = FLT_MAX;
 		m_rightMaxX = -FLT_MAX;
 		for (i=0; i<numVertex; i++) {
@@ -408,7 +408,7 @@ Int W3DBridge::getModelVertices(Graphics::SurfaceVertex *destination_vb, Int cur
 
 	Int i;
 	Int numVertex = pMesh->Peek_Model()->Get_Vertex_Count();
-	Vector3 *pVert = pMesh->Peek_Model()->Get_Vertex_Array();
+	const Vector3 *pVert = pMesh->Peek_Model()->Peek_Vertex_Array();
 
 	const Vector3 *pNormal = 	pMesh->Peek_Model()->Get_Vertex_Normal_Array();
 

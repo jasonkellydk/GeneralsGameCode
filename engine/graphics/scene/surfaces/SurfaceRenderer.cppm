@@ -2,6 +2,7 @@ module;
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <cstring>
 #include <filesystem>
 #include <span>
 #include <utility>
@@ -106,6 +107,7 @@ public:
         }
         m_pipelines.clear();
         m_constants = {};
+        m_constants_uploaded=false;
         m_device = nullptr;
     }
 
@@ -121,7 +123,13 @@ public:
         std::span<const std::uint32_t> indices)
     {
         SurfaceMesh *mesh = m_meshes.Resolve(handle);
-        if (mesh == nullptr || !mesh->geometry.Assign(vertices, indices)) return false;
+        if (mesh == nullptr) return false;
+        const auto old_vertices=mesh->geometry.Vertices();
+        const auto old_indices=mesh->geometry.Indices();
+        if (old_vertices.size()==vertices.size() && old_indices.size()==indices.size()
+            && (vertices.empty() || std::memcmp(old_vertices.data(),vertices.data(),vertices.size_bytes())==0)
+            && (indices.empty() || std::memcmp(old_indices.data(),indices.data(),indices.size_bytes())==0)) return true;
+        if (!mesh->geometry.Assign(vertices, indices)) return false;
         Release_GPU(*mesh);
         return true;
     }
@@ -149,8 +157,12 @@ public:
             || ((parameters.shroud > 0.5f || parameters.shroud_only > 0.5f) && !has_texture(3))) return false;
         if (!Upload(*mesh)) return false;
         const RHIPipelineHandle pipeline = Pipeline(style);
-        if (!pipeline.Is_Valid() || !m_device->Update_Buffer(m_constants, 0,
-            std::as_bytes(std::span(&parameters, 1)))) return false;
+        if (!pipeline.Is_Valid()) return false;
+        if (!m_constants_uploaded || std::memcmp(&parameters,&m_last_parameters,sizeof(parameters))!=0) {
+            if (!m_device->Update_Buffer(m_constants,0,std::as_bytes(std::span(&parameters,1)))) return false;
+            m_last_parameters=parameters;
+            m_constants_uploaded=true;
+        }
         std::array<RHIBindlessResource, 5> bindings{};
         bindings[0].type = RHIResourceType::Material;
         bindings[0].buffer = m_constants;
@@ -223,6 +235,8 @@ private:
     ShaderLibrary m_shaders;
     ShaderHandle m_shader{};
     RHIBufferHandle m_constants{};
+    SurfaceParameters m_last_parameters{};
+    bool m_constants_uploaded=false;
     ResourcePool<SurfaceMesh, SurfaceMeshHandle> m_meshes;
     std::vector<SurfacePipeline> m_pipelines;
 };

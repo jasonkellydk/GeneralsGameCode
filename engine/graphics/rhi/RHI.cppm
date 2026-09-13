@@ -487,6 +487,9 @@ public:
 	virtual bool Unmap_Texture(RHITextureHandle, std::uint32_t, std::uint32_t) noexcept { return false; }
 	// Each retained reference requires Destroy_Texture; the device must outlive them.
 	virtual bool Retain_Texture(RHITextureHandle) noexcept { return false; }
+	// Content version within a handle generation; zero means untracked/mutable
+	// GPU output. Owners can reuse derived data only while both remain equal.
+	virtual std::uint64_t Texture_Content_Version(RHITextureHandle) const noexcept { return 0; }
 	virtual bool Destroy_Buffer(RHIBufferHandle buffer) noexcept = 0;
 	virtual bool Destroy_Texture(RHITextureHandle texture) noexcept = 0;
 	virtual bool Destroy_Pipeline(RHIPipelineHandle pipeline) noexcept = 0;

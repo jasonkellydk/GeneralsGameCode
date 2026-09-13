@@ -28,6 +28,14 @@ T GraphicsResource<T : IOpaqueDescriptor>(uint slot)
     return *DescriptorHandle<T>(uint2(NonUniformResourceIndex(index), 0));
 }
 
+// Named resources use a literal register in a draw-uniform constant buffer.
+// Only dynamically indexed resource arrays need non-uniform descriptors.
+T GraphicsUniformResource<T : IOpaqueDescriptor>(uint slot)
+{
+    uint index = GraphicsResourceIndex[slot / 4][slot % 4];
+    return *DescriptorHandle<T>(uint2(index, 0));
+}
+
 struct GraphicsResourceArray<T : IOpaqueDescriptor>
 {
     uint base;
@@ -38,11 +46,11 @@ struct GraphicsResourceArray<T : IOpaqueDescriptor>
 }
 
 #define GRAPHICS_TEXTURE_2D(name, type, slot) \
-    Texture2D<type> name() { return GraphicsResource<Texture2D<type>>(slot); }
+    Texture2D<type> name() { return GraphicsUniformResource<Texture2D<type>>(slot); }
 #define GRAPHICS_TEXTURE_ARRAY(name, type, slot, count) \
     static const GraphicsResourceArray<Texture2D<type>> name = {slot};
 #define GRAPHICS_STORAGE_BUFFER(name, type, slot) \
-    StructuredBuffer<type> name() { return GraphicsResource<StructuredBuffer<type>>(slot); }
+    StructuredBuffer<type> name() { return GraphicsUniformResource<StructuredBuffer<type>>(slot); }
 #else
 #define GRAPHICS_SAMPLER(name, slot) \
     SamplerState name##Resource : register(s##slot); \

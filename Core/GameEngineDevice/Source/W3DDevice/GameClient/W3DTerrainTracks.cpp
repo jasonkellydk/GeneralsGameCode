@@ -148,6 +148,8 @@ W3DRenderObject *	 TerrainTracksRenderObjClass::Clone() const
 //=============================================================================
 Int TerrainTracksRenderObjClass::freeTerrainTracksResources()
 {
+    Graphics::Get_Surface_Renderer().Destroy_Mesh(m_graphicsMesh);
+    m_graphicsMesh = {};
 	REF_PTR_RELEASE(m_stageZeroTexture);
 	m_haveAnchor=false;
 	m_haveCap=true;
@@ -601,8 +603,11 @@ void TerrainTracksRenderObjClassSystem::ReAcquireResources()
 //=============================================================================
 void TerrainTracksRenderObjClassSystem::ReleaseResources()
 {
-    Graphics::Get_Surface_Renderer().Destroy_Mesh(m_graphicsMesh);
-    m_graphicsMesh = {};
+    for (auto* head : {m_usedModules,m_freeModules})
+        for (auto* mod=head;mod;mod=mod->m_nextSystem) {
+            Graphics::Get_Surface_Renderer().Destroy_Mesh(mod->m_graphicsMesh);
+            mod->m_graphicsMesh={};
+        }
 }
 
 //=============================================================================
@@ -797,10 +802,13 @@ void TerrainTracksRenderObjClassSystem::flush(W3DCamera& camera)
             edges.push_back(edge);
         }
         geometry.Build(edges,m_maxTankTrackEdges,m_maxTankTrackOpaqueEdges,color);
-        if (m_graphicsMesh.Is_Valid()) renderer.Update_Mesh(m_graphicsMesh,geometry.vertices,geometry.indices);
-        else m_graphicsMesh = renderer.Create_Mesh(geometry.vertices,geometry.indices);
+        // Each track owns its mesh, including its quantised fade state.
+        // Interleaved tracks and reflection passes can reuse unchanged buffers.
+        if (mod->m_graphicsMesh.Is_Valid()) {
+            if (!renderer.Update_Mesh(mod->m_graphicsMesh,geometry.vertices,geometry.indices)) continue;
+        } else mod->m_graphicsMesh = renderer.Create_Mesh(geometry.vertices,geometry.indices);
         const std::array<Graphics::RHITextureHandle,4> textures{Resolve_Graphics_Texture(mod->m_stageZeroTexture),{},{},{}};
-        renderer.Draw(device->Immediate_Command_List(),m_graphicsMesh,style,parameters,textures);
+        renderer.Draw(device->Immediate_Command_List(),mod->m_graphicsMesh,style,parameters,textures);
     }
     m_edgesToFlush = 0;
 }

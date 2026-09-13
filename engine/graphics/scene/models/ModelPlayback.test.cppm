@@ -125,6 +125,64 @@ BOOST_AUTO_TEST_CASE(single_frame_clips_keep_zero_endpoint_playback) {
     }
 }
 
+BOOST_AUTO_TEST_CASE(repeated_pose_reuses_hierarchy_until_animation_root_or_controls_change) {
+    Assets::AnimationCache cache;
+    Assets::ModelAnimationDesc clip;
+    clip.name="CACHED";clip.skeleton_name="RIG";clip.frame_count=2;clip.frame_rate=1;
+    clip.channels={{1,Assets::ModelChannelComponent::TranslationX,0,true,{{2,0,0,0},{6,0,0,0}}}};
+    std::string error;
+    const auto handle=cache.Publish(clip,2,Assets::AnimationSampling::Consecutive,error);
+    BOOST_REQUIRE_MESSAGE(handle,error);
+    Assets::ModelRigDesc rig;
+    rig.skeleton_name="RIG";rig.bones={{"ROOT"},{"JOINT",0,{1,0,0}}};
+    ModelHierarchy hierarchy(rig);
+    ModelPlayback playback(cache);
+    playback.Set(handle,0,ModelPlaybackMode::Loop,0);
+    auto root=Affine_Identity();
+    playback.Evaluate(hierarchy,root,0);
+    const auto first_revision=hierarchy.Revision();
+    BOOST_CHECK_EQUAL(hierarchy.World_Transform(1).matrix[3],3);
+    for (unsigned repeat=0;repeat<20;++repeat) playback.Evaluate(hierarchy,root,0);
+    BOOST_CHECK_EQUAL(hierarchy.Revision(),first_revision);
+    playback.Set(handle,0,ModelPlaybackMode::Manual,0);
+    playback.Evaluate(hierarchy,root,0);
+    BOOST_CHECK_EQUAL(hierarchy.Revision(),first_revision);
+    playback.Set(handle,0,ModelPlaybackMode::Loop,0);
+    root.matrix[3]=10;
+    playback.Evaluate(hierarchy,root,0);
+    BOOST_CHECK_NE(hierarchy.Revision(),first_revision);
+    BOOST_CHECK_EQUAL(hierarchy.World_Transform(1).matrix[3],13);
+    auto delta=Affine_Identity();delta.matrix[3]=4;
+    hierarchy.Capture(1);hierarchy.Control(1,delta);
+    playback.Evaluate(hierarchy,root,0);
+    BOOST_CHECK_EQUAL(hierarchy.World_Transform(1).matrix[3],17);
+    hierarchy.Release(1);
+    playback.Evaluate(hierarchy,root,0);
+    BOOST_CHECK_EQUAL(hierarchy.World_Transform(1).matrix[3],13);
+    playback.Evaluate(hierarchy,root,500);
+    BOOST_CHECK_EQUAL(hierarchy.World_Transform(1).matrix[3],15);
+    hierarchy.Evaluate_Rest(root);
+    BOOST_CHECK_EQUAL(hierarchy.World_Transform(1).matrix[3],11);
+    playback.Evaluate(hierarchy,root,500);
+    BOOST_CHECK_EQUAL(hierarchy.World_Transform(1).matrix[3],15);
+    hierarchy.Scale(2);
+    playback.Evaluate(hierarchy,root,500);
+    BOOST_CHECK_EQUAL(hierarchy.World_Transform(1).matrix[3],20);
+    ModelHierarchy replacement(rig);
+    hierarchy=replacement;
+    playback.Evaluate(hierarchy,root,500);
+    BOOST_CHECK_EQUAL(hierarchy.World_Transform(1).matrix[3],15);
+    playback.Set(handle,0,ModelPlaybackMode::Manual,500);
+    playback.Evaluate(hierarchy,root,500);
+    BOOST_CHECK_EQUAL(hierarchy.World_Transform(1).matrix[3],13);
+    playback.Reset();
+    playback.Evaluate(hierarchy,root,500);
+    const auto rest_revision=hierarchy.Revision();
+    playback.Evaluate(hierarchy,root,1000);
+    BOOST_CHECK_EQUAL(hierarchy.Revision(),rest_revision);
+    BOOST_CHECK_EQUAL(hierarchy.World_Transform(1).matrix[3],11);
+}
+
 BOOST_AUTO_TEST_CASE(blended_pose_keeps_translation_rotation_visibility_and_source_lifetime) {
     Assets::AnimationCache cache;
     Assets::ModelAnimationDesc first;
@@ -167,6 +225,16 @@ BOOST_AUTO_TEST_CASE(blended_pose_keeps_translation_rotation_visibility_and_sour
     RenderTransform query;
     BOOST_CHECK(!playback.Evaluate_Bone(hierarchy, 2, 0, root, query));
     BOOST_CHECK(query.matrix == root.matrix);
+    const auto revision=hierarchy.Revision();
+    playback.Blend(a,0,b,0,.5f);
+    playback.Evaluate(hierarchy,root,50000);
+    BOOST_CHECK_EQUAL(hierarchy.Revision(),revision);
+    BOOST_CHECK_EQUAL(cache.Reference_Count(a),1);
+    BOOST_CHECK_EQUAL(cache.Reference_Count(b),1);
+    playback.Blend(a,0,b,0,.25f);
+    playback.Evaluate(hierarchy,root,50000);
+    BOOST_CHECK_NE(hierarchy.Revision(),revision);
+    BOOST_CHECK_SMALL(hierarchy.World_Transform(1).matrix[3]-14.f,.00001f);
     playback.Blend(b, 0, a, 0, .5f);
     playback.Evaluate(hierarchy, root, 50000);
     BOOST_CHECK(hierarchy.Visible(1));
@@ -259,4 +327,33 @@ BOOST_AUTO_TEST_CASE(playback_pose_drives_visible_geometry_after_cache_release_a
         }
         renderer.Shutdown();
     }
+}
+
+BOOST_AUTO_TEST_CASE(moving_roots_and_both_blend_frames_keep_world_motion_live)
+{
+    Assets::AnimationCache cache;
+    Assets::ModelAnimationDesc clip;
+    clip.name="LOCAL";clip.skeleton_name="RIG";clip.frame_count=4;clip.frame_rate=1;
+    clip.channels={{1,Assets::ModelChannelComponent::TranslationX,0,true,
+        {{0,0,0,0},{2,0,0,0},{4,0,0,0},{6,0,0,0}}}};
+    std::string error;
+    const auto handle=cache.Publish(clip,2,Assets::AnimationSampling::Consecutive,error);
+    BOOST_REQUIRE_MESSAGE(handle,error);
+    Assets::ModelRigDesc rig;rig.skeleton_name="RIG";rig.bones={{"ROOT"},{"JOINT",0,{1,0,0}}};
+    ModelHierarchy hierarchy(rig);ModelPlayback playback(cache);
+    playback.Blend(handle,0,handle,2,.25f);
+    for (float x : {0.f,3.f,-7.f,0.f}) {
+        auto root=Affine_Identity();root.matrix[3]=x;
+        playback.Evaluate(hierarchy,root,0);
+        BOOST_CHECK_EQUAL(hierarchy.World_Transform(1).matrix[3],x+2.f);
+    }
+    playback.Blend(handle,0,handle,3,.25f);
+    playback.Evaluate(hierarchy,Affine_Identity(),0);
+    BOOST_CHECK_EQUAL(hierarchy.World_Transform(1).matrix[3],2.5f);
+    playback.Blend(handle,1,handle,3,.25f);
+    playback.Evaluate(hierarchy,Affine_Identity(),0);
+    BOOST_CHECK_EQUAL(hierarchy.World_Transform(1).matrix[3],4.f);
+    hierarchy.Scale(2);
+    playback.Evaluate(hierarchy,Affine_Identity(),0);
+    BOOST_CHECK_EQUAL(hierarchy.World_Transform(1).matrix[3],8.f);
 }

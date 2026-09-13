@@ -120,6 +120,10 @@ if(WIN32 AND TARGET slang-bootstrap AND DEFINED GRAPHICS_SHADER_ASSET_DIRECTORY)
     _graphics_add_dx12_shader_stage(prop.pso pixel prop_pixel prop.slang)
     _graphics_add_dx12_shader_stage(prop_records.vso vertex prop_vertex_records prop.slang)
     _graphics_add_dx12_shader_stage(prop_records.pso pixel prop_pixel_records prop.slang)
+    _graphics_add_dx12_shader_stage(prop_depth.vso vertex prop_depth_vertex prop.slang)
+    _graphics_add_dx12_shader_stage(prop_depth_instanced.vso vertex prop_depth_vertex_instanced prop.slang)
+    _graphics_add_dx12_shader_stage(prop_depth_records.vso vertex prop_depth_vertex_records prop.slang)
+    _graphics_add_dx12_shader_stage(prop_depth.pso pixel prop_depth_pixel prop.slang)
 
     add_custom_target(generals_graphics_dx12_shaders
         DEPENDS ${_GRAPHICS_DX12_SHADER_OUTPUTS})

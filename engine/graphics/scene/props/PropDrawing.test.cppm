@@ -7,11 +7,13 @@ module;
 #include <cstddef>
 #include <cstdint>
 #include <filesystem>
+#include <random>
 #include <span>
 #include <vector>
 export module Graphics.Scene.Props.Drawing.Tests;
 import Graphics.Tests.Device;
 import Graphics.Scene.Props.Renderer;
+import Graphics.Scene.Props.SkinBounds;
 import Graphics.Scene.Props.Material;
 import Graphics.Scene.Props.Extraction;
 import Graphics.Scene.Props.MeshSet;
@@ -19,13 +21,106 @@ import Graphics.Scene.Models.SourceRevision;
 import Graphics.Scene.Props.MaterialPassQueue;
 import Graphics.Scene.Lighting.Environment;
 import Assets.Adapters.W3D.Materials;
-using namespace Graphics;
 
 import Graphics.Scene.Props.Lighting;
 import Graphics.Materials.TextureCoordinates;
 import Assets.Images.PixelEncoding;
 import Graphics.Resources.Textures.Storage;
 import Assets.Math;
+using namespace Graphics;
+
+BOOST_AUTO_TEST_CASE(skin_bounds_enclose_float_deformation_with_negative_scale_shear_and_translation)
+{
+    std::mt19937 random(711);
+    std::uniform_real_distribution<float> value(-1000.f,1000.f);
+    std::array<PropVertex,24> vertices;
+    std::array<std::uint32_t,24> indices;
+    // All box corners give an independent brute-force deformation reference.
+    for (unsigned i=0; i<vertices.size(); ++i) {
+        vertices[i].position = {i&1 ? 7.f : -3.f, i&2 ? 11.f : -17.f, i&4 ? 23.f : -29.f};
+        vertices[i].bone_index = float(i/8);
+        indices[i] = i;
+    }
+    PropGeometry geometry;
+    BOOST_REQUIRE(geometry.Assign(vertices,indices));
+    PropSkinBounds bounds;
+    for (unsigned trial=0; trial<128; ++trial) {
+        std::array<PropBoneTransform,3> pose;
+        for (auto& matrix : pose) for (auto& coefficient : matrix) coefficient=value(random)*(trial%4==0 ? 1e-42f : trial%4==1 ? 1e30f : trial%4==2 ? 0.f : 1.f);
+        std::array<float,3> minimum,maximum;
+        BOOST_REQUIRE(bounds.Evaluate(geometry,pose,minimum,maximum));
+        std::array<float,3> cached_minimum,cached_maximum;
+        BOOST_REQUIRE(bounds.Evaluate(geometry,pose,cached_minimum,cached_maximum));
+        BOOST_CHECK(cached_minimum==minimum);
+        BOOST_CHECK(cached_maximum==maximum);
+        for (const auto& vertex : vertices) {
+            const auto point=Transform_Prop_Skin_Position(vertex.position,pose[unsigned(vertex.bone_index)]);
+            for (unsigned axis=0; axis<3; ++axis) {
+                BOOST_CHECK_LE(minimum[axis],point[axis]);
+                BOOST_CHECK_GE(maximum[axis],point[axis]);
+            }
+        }
+    }
+}
+
+BOOST_AUTO_TEST_CASE(single_instance_addresses_match_batched_skinning_and_depth)
+{
+    GraphicsTestDevice device({true});
+    PropRenderer renderer;
+    BOOST_REQUIRE(renderer.Initialize(device,Test_Shader_Directory(GRAPHICS_TERRAIN_SHADER_DIRECTORY)));
+    const auto target=device.Create_Texture({32,32,1,RHITextureFormat::RGBA8_UNorm,
+        static_cast<std::uint32_t>(RHITextureUsage::RenderTarget)});
+    const auto depth=device.Create_Texture({32,32,1,RHITextureFormat::D32_Float,
+        static_cast<std::uint32_t>(RHITextureUsage::DepthStencil)});
+    std::array<PropVertex,4> vertices{};
+    vertices[0].position={-.2f,-.5f,.5f};vertices[1].position={.2f,-.5f,.5f};
+    vertices[2].position={.2f,.5f,.5f};vertices[3].position={-.2f,.5f,.5f};
+    for (auto& vertex : vertices) vertex.color={1,0,0,1};
+    const std::array<std::uint32_t,6> indices{0,1,2,0,2,3};
+    const auto mesh=renderer.Create_Mesh(vertices,indices);
+    PropParameters parameters;
+    parameters.world=parameters.view=parameters.view_projection={1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1};
+    parameters.textured=0;
+    auto& instances=renderer.Instances();
+    const auto unused=instances.Update({},parameters);
+    std::array<PropInstanceHandle,2> handles;
+    std::array<std::uint32_t,2> records;
+    for (unsigned i=0;i<2;++i) {
+        const PropBoneTransform pose{1,0,0,0,0,1,0,i ? .1f : -.1f,0,0,1,0};
+        const auto skin=instances.Palettes().Update({},1,[&](std::size_t) -> const PropBoneTransform& { return pose; });
+        BOOST_REQUIRE(skin.Is_Valid());
+        parameters.world[3]=i ? .5f : -.5f;
+        handles[i]=instances.Update({},parameters,skin);
+        instances.Palettes().Release(skin);
+        records[i]=handles[i].Get_Index();
+        BOOST_REQUIRE_NE(records[i],0u);
+    }
+    auto& commands=device.Immediate_Command_List();
+    BOOST_REQUIRE(commands.Set_Render_Targets(target,depth));
+    BOOST_REQUIRE(commands.Set_Viewport({0,0,32,32}));
+    PropStyle style;style.blend=RHIBlendMode::Disabled;
+    for (unsigned frame=0;frame<6;++frame) {
+        style.color_write_mask=frame%2 ? 0 : 15;
+        BOOST_REQUIRE(commands.Clear({0,0,1,1},1));
+        BOOST_REQUIRE(renderer.Draw_Records(commands,mesh,style,parameters,{},records));
+        std::array<std::byte,32*32*4> reference{},actual{};
+        const auto sampled=style.color_write_mask ? target : depth;
+        BOOST_REQUIRE(device.Readback_Texture(sampled,reference,32*4));
+        if (style.color_write_mask) {
+            BOOST_CHECK_EQUAL(std::to_integer<int>(reference[(16*32+8)*4]),255);
+            BOOST_CHECK_EQUAL(std::to_integer<int>(reference[(16*32+24)*4]),255);
+        }
+        BOOST_REQUIRE(commands.Clear({0,0,1,1},1));
+        for (const auto handle : handles)
+            BOOST_REQUIRE(renderer.Draw_Record(commands,mesh,style,parameters,{},handle));
+        BOOST_REQUIRE(device.Readback_Texture(sampled,actual,32*4));
+        BOOST_CHECK(reference==actual);
+    }
+    for (const auto handle : handles) instances.Release(handle);
+    instances.Release(unused);
+    renderer.Destroy_Mesh(mesh);renderer.Shutdown();
+    device.Destroy_Texture(target);device.Destroy_Texture(depth);
+}
 
 BOOST_AUTO_TEST_CASE(geometry_bounds_follow_owned_vertices_and_successful_edits)
 {
@@ -172,6 +267,52 @@ BOOST_AUTO_TEST_CASE(prepared_vertex_colors_retain_quantization_and_alpha_when_d
         BOOST_REQUIRE(device.Readback_Texture(target,pixels,8*4));
         for (unsigned channel=0;channel<4;++channel)
             BOOST_CHECK_SMALL(std::to_integer<int>(pixels[(4*8+4)*4+channel])-value.expected[channel],2);
+    }
+    renderer.Destroy_Mesh(mesh); renderer.Shutdown();
+    device.Destroy_Texture(target); device.Destroy_Texture(depth);
+}
+
+BOOST_AUTO_TEST_CASE(instance_stream_versions_preserve_pending_draws_across_command_list_reuse)
+{
+    GraphicsTestDevice device({true});
+    PropRenderer renderer;
+    BOOST_REQUIRE(renderer.Initialize(device,Graphics::Test_Shader_Directory(GRAPHICS_TERRAIN_SHADER_DIRECTORY)));
+    const auto target=device.Create_Texture({16,16,1,RHITextureFormat::RGBA8_UNorm,
+        static_cast<unsigned>(RHITextureUsage::RenderTarget)});
+    const auto depth=device.Create_Texture({16,16,1,RHITextureFormat::D32_Float,
+        static_cast<unsigned>(RHITextureUsage::DepthStencil)});
+    std::array<PropVertex,4> vertices{};
+    vertices[0].position={-.4f,-.8f,.5f}; vertices[1].position={.4f,-.8f,.5f};
+    vertices[2].position={.4f,.8f,.5f}; vertices[3].position={-.4f,.8f,.5f};
+    for (auto& vertex:vertices) vertex.color={1,0,0,1};
+    const std::array<std::uint32_t,6> indices{0,1,2,0,2,3};
+    const auto mesh=renderer.Create_Mesh(vertices,indices);
+    PropStyle style; style.cull=RHICullMode::None; style.depth_test=false; style.depth_write=false;
+    PropParameters parameters; parameters.textured=0;
+    parameters.view_projection={1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1};
+    auto& commands=device.Immediate_Command_List();
+    std::array<std::array<float,16>,1> worlds{parameters.world};
+    for (unsigned frame=0;frame<8;++frame) {
+        BOOST_REQUIRE(commands.Set_Render_Targets(target,depth));
+        BOOST_REQUIRE(commands.Set_Viewport({0,0,16,16}));
+        BOOST_REQUIRE(commands.Clear({0,0,0,1},1));
+        // No readback separates these updates: the first draw must retain its
+        // own structured-buffer contents while the next draw changes them.
+        for (float x:{-.5f,.5f}) {
+            worlds[0][3]=x;
+            BOOST_REQUIRE(renderer.Draw_Instances(commands,mesh,style,parameters,{},worlds));
+        }
+        std::array<std::byte,16*16*4> pixels{};
+        BOOST_REQUIRE(device.Readback_Texture(target,pixels,16*4));
+        for (unsigned x:{4u,12u}) {
+            BOOST_CHECK_EQUAL(std::to_integer<int>(pixels[(8*16+x)*4]),255);
+            BOOST_CHECK_EQUAL(std::to_integer<int>(pixels[(8*16+x)*4+1]),0);
+        }
+        // Readback starts a fresh command list. An unchanged stream still
+        // needs descriptors valid for that list's allocation lifetime.
+        BOOST_REQUIRE(renderer.Draw_Instances(commands,mesh,style,parameters,{},worlds));
+        BOOST_REQUIRE(device.Readback_Texture(target,pixels,16*4));
+        BOOST_CHECK_EQUAL(std::to_integer<int>(pixels[(8*16+12)*4]),255);
     }
     renderer.Destroy_Mesh(mesh); renderer.Shutdown();
     device.Destroy_Texture(target); device.Destroy_Texture(depth);

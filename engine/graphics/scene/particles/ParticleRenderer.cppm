@@ -381,19 +381,36 @@ public:
                 || !m_bindless.Register_Material(m_material, m_material_constants).Is_Valid()) return false;
             std::size_t count = 0;
             std::size_t texture_count = 0;
+            MaterialHandle last_material{};
+            std::uint32_t last_texture_index=Invalid_Particle_Material_Index;
+            bool has_material=false;
             while (first + count < draws.size()) {
                 const auto& draw = draws[first + count];
-                const Material* material = m_materials.Resolve(particles.materials[draw.particle_index]);
-                if (material == nullptr) return false;
-                const TextureHandle texture = material->textures[0];
-                if (texture.Is_Valid() && !m_bindless.Texture_Index(texture).Is_Valid()) {
-                    if (texture_count == 126) break;
-                    const auto resident = m_residency->Texture_Info(texture);
-                    if (!resident.texture.Is_Valid()
-                        || !m_bindless.Register_Texture(texture, resident.texture).Is_Valid()) return false;
-                    ++texture_count;
+                const auto material_handle=particles.materials[draw.particle_index];
+                if (!has_material || material_handle!=last_material) {
+                    const Material* material=m_materials.Resolve(material_handle);
+                    if (material==nullptr) return false;
+                    const TextureHandle texture=material->textures[0];
+                    last_texture_index=Invalid_Particle_Material_Index;
+                    if (texture.Is_Valid()) {
+                        auto index=m_bindless.Texture_Index(texture);
+                        if (!index.Is_Valid()) {
+                            if (texture_count==126) break;
+                            const auto resident=m_residency->Texture_Info(texture);
+                            if (!resident.texture.Is_Valid()) return false;
+                            index=m_bindless.Register_Texture(texture,resident.texture);
+                            if (!index.Is_Valid()) return false;
+                            ++texture_count;
+                        }
+                        last_texture_index=index.Get_Index();
+                    }
+                    last_material=material_handle;has_material=true;
                 }
-                m_gpu_particles[count] = Pack_Draw_Particle(particles, draw.particle_index, draw.material_index);
+                // Material owners and this page's texture table remain stable
+                // while packing the ordered run; keep the resolved binding.
+                auto data=Pack_GPU_Particle(particles,draw.particle_index,draw.material_index);
+                data.texture_index=last_texture_index;
+                m_gpu_particles[count]=data;
                 ++count;
             }
             if (!m_device->Update_Buffer(m_particle_buffer, 0,
@@ -419,17 +436,6 @@ public:
 	}
 
 private:
-    GPUParticleData Pack_Draw_Particle(const ParticleData& particles, std::size_t index,
-        std::uint32_t material_index) const noexcept
-    {
-        GPUParticleData data = Pack_GPU_Particle(particles,index,material_index);
-        if (const Material* material = m_materials.Resolve(particles.materials[index]);
-            material != nullptr && material->textures[0].Is_Valid()) {
-            const ResourceIndex texture_index = m_bindless.Texture_Index(material->textures[0]);
-            if (texture_index.Is_Valid()) data.texture_index = texture_index.Get_Index();
-        }
-        return data;
-    }
 
 	bool Rebuild_GPU_Scene() noexcept
 	{

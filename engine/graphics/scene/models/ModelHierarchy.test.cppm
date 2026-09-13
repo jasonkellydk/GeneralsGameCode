@@ -6,6 +6,7 @@ module;
 #include <cstdint>
 #include <string>
 #include <vector>
+#include <utility>
 export module Graphics.Scene.Models.Hierarchy.Tests;
 import Graphics.Scene.Models.Hierarchy;
 import Graphics.Scene.Props.Renderer;
@@ -131,4 +132,27 @@ BOOST_AUTO_TEST_CASE(captured_and_hidden_attachments_draw_after_source_release_a
         }
         renderer.Shutdown();
     }
+}
+
+BOOST_AUTO_TEST_CASE(copied_and_moved_hierarchies_keep_independent_pose_revision_domains)
+{
+    ModelHierarchy original(Rig());original.Evaluate_Rest(Affine_Identity());
+    const auto original_revision=original.Revision();
+    auto copy=original;
+    BOOST_CHECK_NE(copy.Revision(),original_revision);
+    auto root=Affine_Identity();root.matrix[3]=10;
+    copy.Evaluate_Rest(root);
+    BOOST_CHECK_EQUAL(original.Revision(),original_revision);
+    BOOST_CHECK_EQUAL(original.World_Transform(0).matrix[3],0.f);
+    original=copy;
+    BOOST_CHECK_NE(original.Revision(),copy.Revision());
+    const auto assigned_revision=original.Revision();
+    root.matrix[3]=20;copy.Evaluate_Rest(root);
+    BOOST_CHECK_EQUAL(original.Revision(),assigned_revision);
+    BOOST_CHECK_EQUAL(original.World_Transform(0).matrix[3],10.f);
+    auto moved=std::move(original);
+    const auto moved_revision=moved.Revision();
+    original.Initialize_Default();
+    BOOST_CHECK_EQUAL(moved.Revision(),moved_revision);
+    BOOST_CHECK_EQUAL(moved.World_Transform(0).matrix[3],10.f);
 }

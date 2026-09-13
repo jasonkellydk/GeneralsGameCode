@@ -1226,6 +1226,38 @@ void W3DDisplay::updateAverageFPS()
 	m_averageFPS = sum / FPS_HISTORY_SIZE;
 
 	lastUpdateTime64 = time64;
+
+	// Opt-in wall-clock frame counts for repeatable shellmap performance runs.
+	// Write only once a second; reported time includes logging overhead.
+	static std::ofstream benchmark([] {
+		const char* path = std::getenv("GENERALS_GRAPHICS_BENCHMARK");
+		return path ? path : "";
+	}());
+	if (benchmark.is_open()) {
+		static Int64 intervalStart = time64;
+		static Int64 runStart = time64;
+		static unsigned frames = 0;
+		static std::uint64_t draws = 0, triangles = 0;
+		static unsigned logicChanges = 0;
+		static auto lastLogicTime = Graphics::Get_Render_Clock().Sync_Time();
+		const auto logicTime = Graphics::Get_Render_Clock().Sync_Time();
+		logicChanges += logicTime != lastLogicTime;
+		lastLogicTime = logicTime;
+		const auto submitted = Graphics::Get_Frame_Submission_Statistics().Last_Frame();
+		draws += submitted.draw_calls;
+		triangles += submitted.triangles;
+		++frames;
+		const double seconds = double(time64 - intervalStart) / double(freq64);
+		if (seconds >= 1.0) {
+			benchmark << double(time64 - runStart) / double(freq64) << ','
+				<< frames << ',' << seconds << ',' << frames / seconds << ','
+				<< double(draws) / frames << ',' << double(triangles) / frames << ',' << logicChanges << '\n';
+			benchmark.flush();
+			frames = 0;
+			draws = triangles = logicChanges = 0;
+			intervalStart = time64;
+		}
+	}
 }
 
 #if defined(RTS_DEBUG)	//debug hack to view object under mouse stats

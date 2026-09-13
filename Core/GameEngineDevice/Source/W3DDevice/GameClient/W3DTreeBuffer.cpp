@@ -535,7 +535,7 @@ void W3DTreeBuffer::updateTexture()
 /** Calculates the diffuse lighting as affected by dynamic lighting. */
 //=============================================================================
 UnsignedInt W3DTreeBuffer::doLighting(const Vector3 *normal,
-															const GlobalData::TerrainLighting	*objectLighting,
+															const GlobalData::TerrainLighting	*objectLighting, const Vector3* lightRays,
 															const Vector3 *emissive, UnsignedInt vertDiffuse, Real scale) const
 {
 
@@ -547,10 +547,7 @@ UnsignedInt W3DTreeBuffer::doLighting(const Vector3 *normal,
 
 	Int i;
 	for	(i=0; i<MAX_GLOBAL_LIGHTS; i++) {
-		Vector3 lightDirection(objectLighting[i].lightPos.x, objectLighting[i].lightPos.y, objectLighting[i].lightPos.z);
-		lightDirection.Normalize();
-		Vector3 lightRay(-lightDirection.X, -lightDirection.Y, -lightDirection.Z);
-		shade = Vector3::Dot_Product(lightRay, *normal);
+		shade = Vector3::Dot_Product(lightRays[i], *normal);
 
 		if (shade > 1.0) shade = 1.0;
 		if(shade < 0.0f) shade = 0.0f;
@@ -594,7 +591,7 @@ UnsignedInt W3DTreeBuffer::doLighting(const Vector3 *normal,
 //=============================================================================
 void W3DTreeBuffer::loadTreesInVertexAndIndexBuffers(Graphics::SceneObjectList<W3DRenderObject>::Cursor *pDynamicLightsIterator)
 {
-    m_graphicsGeometryDirty = true;
+    m_graphicsGeometryDirty.fill(true);
 	if (m_indexTree[0].empty() || m_vertexTree[0].empty() || !m_initialized) {
 		return;
 	}
@@ -610,6 +607,13 @@ void W3DTreeBuffer::loadTreesInVertexAndIndexBuffers(Graphics::SceneObjectList<W
 	Int curTree=0;
 	Int bNdx;
 	const GlobalData::TerrainLighting *objectLighting = TheGlobalData->m_terrainObjectsLighting[TheGlobalData->m_timeOfDay];
+    std::array<Vector3,MAX_GLOBAL_LIGHTS> lightRays;
+    for (Int light=0;light<MAX_GLOBAL_LIGHTS;++light) {
+        const auto& position=objectLighting[light].lightPos;
+        Vector3 direction(position.x,position.y,position.z);
+        direction.Normalize();
+        lightRays[light]=Vector3(-direction.X,-direction.Y,-direction.Z);
+    }
 	for (bNdx=0; bNdx<MAX_BUFFERS; bNdx++) {
 		m_curNumTreeVertices[bNdx] = 0;
 		m_curNumTreeIndices[bNdx] = 0;
@@ -674,7 +678,7 @@ void W3DTreeBuffer::loadTreesInVertexAndIndexBuffers(Graphics::SceneObjectList<W
 			m_trees[curTree].bufferNdx = bNdx;
 			Int i;
 			Int numVertex = m_treeTypes[type].m_mesh->Peek_Model()->Get_Vertex_Count();
-			Vector3 *pVert = m_treeTypes[type].m_mesh->Peek_Model()->Get_Vertex_Array();
+			const Vector3 *pVert = m_treeTypes[type].m_mesh->Peek_Model()->Peek_Vertex_Array();
 
 
 
@@ -697,7 +701,7 @@ void W3DTreeBuffer::loadTreesInVertexAndIndexBuffers(Graphics::SceneObjectList<W
 			if (normals == nullptr) {
 				doVertexLighting = false;
 				Vector3 normal(0.0f,0.0f,1.0f);
-				diffuse = doLighting(&normal, objectLighting, &emissive, 0xFFFFFFFF, 1.0f);
+				diffuse = doLighting(&normal, objectLighting, lightRays.data(), &emissive, 0xFFFFFFFF, 1.0f);
 			}
 
 			Real Uscale = m_treeTypes[type].m_tileWidth * (Real)TILE_PIXEL_EXTENT / (Real)m_textureWidth;
@@ -771,7 +775,7 @@ void W3DTreeBuffer::loadTreesInVertexAndIndexBuffers(Graphics::SceneObjectList<W
 					} else {
 						vertexDiffuse = 0xffffffff;
 					}
-					curVb->color = Assets::Color_From_ARGB(doLighting(&normal, objectLighting, &emissive,
+					curVb->color = Assets::Color_From_ARGB(doLighting(&normal, objectLighting, lightRays.data(), &emissive,
 														vertexDiffuse, 1.0f)).To_Array();
 				} else {
 					curVb->color = Assets::Color_From_ARGB(diffuse).To_Array();
@@ -799,7 +803,7 @@ void W3DTreeBuffer::loadTreesInVertexAndIndexBuffers(Graphics::SceneObjectList<W
 //=============================================================================
 void W3DTreeBuffer::updateVertexBuffer()
 {
-    m_graphicsGeometryDirty = true;
+    m_graphicsGeometryDirty.fill(true);
 	if (m_indexTree[0].empty() || m_vertexTree[0].empty() || !m_initialized) {
 		return;
 	}
@@ -837,7 +841,7 @@ void W3DTreeBuffer::updateVertexBuffer()
 			curVb = vb+startVertex;
 			Int i;
 			Int numVertex = m_treeTypes[type].m_mesh->Peek_Model()->Get_Vertex_Count();
-			Vector3 *pVert = m_treeTypes[type].m_mesh->Peek_Model()->Get_Vertex_Array();
+			const Vector3 *pVert = m_treeTypes[type].m_mesh->Peek_Model()->Peek_Vertex_Array();
 
 			for (i=0; i<numVertex; i++) {
 				Real x = pVert[i].X;
@@ -930,12 +934,14 @@ void W3DTreeBuffer::freeTreeBuffers()
 {
 	Int i;
 	for	(i=0; i<MAX_BUFFERS; i++) {
-        Graphics::Get_Tree_Renderer().Destroy_Mesh(m_graphicsMeshes[i]);
-        m_graphicsMeshes[i] = {};
+        for (auto& pass : m_graphicsMeshes) {
+            Graphics::Get_Tree_Renderer().Destroy_Mesh(pass[i]);
+            pass[i] = {};
+        }
         m_vertexTree[i].clear();
         m_indexTree[i].clear();
 	}
-	m_graphicsGeometryDirty = true;
+	m_graphicsGeometryDirty.fill(true);
 }
 
 //=============================================================================
@@ -1141,7 +1147,7 @@ Int W3DTreeBuffer::addTreeType(const W3DTreeDrawModuleData *data)
 	}
 
 	Int numVertex = m_treeTypes[m_numTreeTypes].m_mesh->Peek_Model()->Get_Vertex_Count();
-	Vector3 *pVert = m_treeTypes[m_numTreeTypes].m_mesh->Peek_Model()->Get_Vertex_Array();
+	const Vector3 *pVert = m_treeTypes[m_numTreeTypes].m_mesh->Peek_Model()->Peek_Vertex_Array();
 
 	SphereClass bounds(pVert, numVertex);
 	bounds.Center += offset;
@@ -1410,20 +1416,24 @@ void W3DTreeBuffer::drawTrees(W3DCamera * camera, Graphics::SceneObjectList<W3DR
     auto* device = Graphics::Shared_Frame_Device();
     if (!device || !camera) return;
     auto& renderer = Graphics::Get_Tree_Renderer();
-    if (m_graphicsGeometryDirty) {
+    // Main and reflected visibility must not overwrite each other's retained
+    // mesh versions. CPU geometry changes dirty both consumers independently.
+    const unsigned pass=Get_W3D_Render_Services().Is_Reflection_Render_Pass() ? 1u : 0u;
+    auto& meshes=m_graphicsMeshes[pass];
+    if (m_graphicsGeometryDirty[pass]) {
         for (Int batch=0; batch<MAX_BUFFERS; ++batch) {
             if (m_curNumTreeIndices[batch] == 0) break;
             const auto vertices = std::span<const Graphics::TreeVertex>(m_vertexTree[batch]).first(m_curNumTreeVertices[batch]);
             const std::vector<std::uint32_t> indices(m_indexTree[batch].begin(),
                 m_indexTree[batch].begin()+m_curNumTreeIndices[batch]);
-            if (m_graphicsMeshes[batch].Is_Valid()) {
-                if (!renderer.Update_Mesh(m_graphicsMeshes[batch],vertices,indices)) return;
+            if (meshes[batch].Is_Valid()) {
+                if (!renderer.Update_Mesh(meshes[batch],vertices,indices)) return;
             } else {
-                m_graphicsMeshes[batch] = renderer.Create_Mesh(vertices,indices);
-                if (!m_graphicsMeshes[batch].Is_Valid()) return;
+                meshes[batch] = renderer.Create_Mesh(vertices,indices);
+                if (!meshes[batch].Is_Valid()) return;
             }
         }
-        m_graphicsGeometryDirty = false;
+        m_graphicsGeometryDirty[pass] = false;
     }
     auto surface = Make_Surface_Parameters(*camera);
     const auto shroud = Set_Surface_Shroud(surface, TheTerrainRenderObject ? TheTerrainRenderObject->getShroud() : nullptr);
@@ -1436,49 +1446,100 @@ void W3DTreeBuffer::drawTrees(W3DCamera * camera, Graphics::SceneObjectList<W3DR
         parameters.sway[i] = {m_currentSwayFactor[i].X,m_currentSwayFactor[i].Y,m_currentSwayFactor[i].Z,0};
     const std::array<Graphics::RHITextureHandle,2> textures{Resolve_Graphics_Texture(m_treeTexture),shroud};
     for (Int batch=0;batch<MAX_BUFFERS && m_curNumTreeIndices[batch]!=0;++batch)
-        renderer.Draw(device->Immediate_Command_List(),m_graphicsMeshes[batch],parameters,textures);
+        renderer.Draw(device->Immediate_Command_List(),meshes[batch],parameters,textures);
 }
 
 Bool W3DTreeBuffer::collectShadowCasters()
 {
     prepareFrame();
     if (m_treeTexture == nullptr) return m_numTrees == 0;
-    std::vector<Graphics::TreeVertex> vertices;
-    std::vector<std::uint32_t> indices;
+    // Shadow geometry is independent of camera sorting and uniform breeze.
+    // Compare its actual inputs, including legacy writable source arrays, so
+    // unchanged trees keep their transformed vertices between render frames.
+    m_shadowInputScratch.clear();
+    const auto append = [this](const auto& value) {
+        const auto* bytes = reinterpret_cast<const std::byte*>(&value);
+        m_shadowInputScratch.insert(m_shadowInputScratch.end(),bytes,bytes+sizeof(value));
+    };
+    append(m_textureWidth); append(m_textureHeight); append(m_numTrees);
+    std::array<bool,MAX_TYPES> copied{};
     for (Int tree_index=0;tree_index<m_numTrees;++tree_index) {
-        const TTree& tree = m_trees[tree_index];
-        if (tree.treeType < 0) continue;
-        const TTreeType& type = m_treeTypes[tree.treeType];
-        if (!type.m_doShadow || type.m_mesh == nullptr) continue;
-        auto* model = type.m_mesh->Peek_Model();
-        const auto* positions = model->Get_Vertex_Array();
-        const auto* uvs = model->Get_UV_Array_By_Index(0);
-        const auto* triangles = model->Get_Polygon_Array();
-        if (positions == nullptr || uvs == nullptr || triangles == nullptr) return FALSE;
-        Real u_scale = type.m_tileWidth*Real(TILE_PIXEL_EXTENT)/m_textureWidth;
-        Real v_scale = type.m_tileWidth*Real(TILE_PIXEL_EXTENT)/m_textureHeight;
-        const Real u_offset = Real(type.m_textureOrigin.x)/m_textureWidth;
-        Real v_offset = Real(type.m_textureOrigin.y)/m_textureHeight;
-        if (type.m_halfTile) {
-            u_scale *= 0.5f;
-            v_scale *= 0.5f;
-            v_offset += Real(TILE_PIXEL_EXTENT/2)/m_textureHeight;
+        const auto& tree=m_trees[tree_index];
+        append(tree.treeType);
+        if (tree.treeType<0) continue;
+        const auto& type=m_treeTypes[tree.treeType];
+        append(type.m_doShadow);
+        const bool has_mesh=type.m_mesh!=nullptr;
+        append(has_mesh);
+        if (!type.m_doShadow || !has_mesh) continue;
+        append(tree.location); append(tree.scale); append(tree.sin); append(tree.cos);
+        append(tree.swayType); append(tree.m_toppleState);
+        if (tree.m_toppleState!=TOPPLE_UPRIGHT) append(tree.m_mtx);
+        else {
+            append(tree.pushAside);
+            if (tree.pushAside>0) {
+                append(tree.pushAsideCos); append(tree.pushAsideSin);
+                append(type.m_data->m_maxOutwardMovement);
+            }
         }
-        const auto first = static_cast<std::uint32_t>(vertices.size());
-        for (Int index=0;index<model->Get_Vertex_Count();++index) {
-            const auto position = Transform_Tree_Vertex(tree,type,positions[index],Vector3(0,0,0));
-            Graphics::TreeVertex vertex;
-            vertex.position = {position.X,position.Y,position.Z};
-            vertex.uv = {std::clamp(uvs[index].U,0.0f,1.0f)*u_scale+u_offset,
-                std::clamp(uvs[index].V,0.0f,1.0f)*v_scale+v_offset};
-            vertex.sway = {Real(tree.swayType),1,tree.location.Z};
-            vertices.push_back(vertex);
+        if (copied[tree.treeType]) continue;
+        copied[tree.treeType]=true;
+        append(type.m_offset); append(type.m_tileWidth);
+        append(type.m_textureOrigin); append(type.m_halfTile);
+        auto* model=type.m_mesh->Peek_Model();
+        const auto* positions=model->Peek_Vertex_Array();
+        const auto* uvs=model->Get_UV_Array_By_Index(0);
+        const auto* triangles=model->Get_Polygon_Array();
+        if (!positions || !uvs || !triangles) return FALSE;
+        append(model->Get_Vertex_Count()); append(model->Get_Polygon_Count());
+        const auto append_array=[this](const auto* values,std::size_t count) {
+            const auto* bytes=reinterpret_cast<const std::byte*>(values);
+            m_shadowInputScratch.insert(m_shadowInputScratch.end(),bytes,bytes+count*sizeof(*values));
+        };
+        append_array(positions,model->Get_Vertex_Count());
+        append_array(uvs,model->Get_Vertex_Count());
+        append_array(triangles,model->Get_Polygon_Count());
+    }
+    auto& vertices=m_shadowVertices;
+    auto& indices=m_shadowIndices;
+    if (m_shadowInputs!=m_shadowInputScratch) {
+        vertices.clear(); indices.clear();
+        for (Int tree_index=0;tree_index<m_numTrees;++tree_index) {
+            const TTree& tree = m_trees[tree_index];
+            if (tree.treeType < 0) continue;
+            const TTreeType& type = m_treeTypes[tree.treeType];
+            if (!type.m_doShadow || type.m_mesh == nullptr) continue;
+            auto* model = type.m_mesh->Peek_Model();
+            const auto* positions = model->Peek_Vertex_Array();
+            const auto* uvs = model->Get_UV_Array_By_Index(0);
+            const auto* triangles = model->Get_Polygon_Array();
+            if (positions == nullptr || uvs == nullptr || triangles == nullptr) return FALSE;
+            Real u_scale = type.m_tileWidth*Real(TILE_PIXEL_EXTENT)/m_textureWidth;
+            Real v_scale = type.m_tileWidth*Real(TILE_PIXEL_EXTENT)/m_textureHeight;
+            const Real u_offset = Real(type.m_textureOrigin.x)/m_textureWidth;
+            Real v_offset = Real(type.m_textureOrigin.y)/m_textureHeight;
+            if (type.m_halfTile) {
+                u_scale *= 0.5f;
+                v_scale *= 0.5f;
+                v_offset += Real(TILE_PIXEL_EXTENT/2)/m_textureHeight;
+            }
+            const auto first = static_cast<std::uint32_t>(vertices.size());
+            for (Int index=0;index<model->Get_Vertex_Count();++index) {
+                const auto position = Transform_Tree_Vertex(tree,type,positions[index],Vector3(0,0,0));
+                Graphics::TreeVertex vertex;
+                vertex.position = {position.X,position.Y,position.Z};
+                vertex.uv = {std::clamp(uvs[index].U,0.0f,1.0f)*u_scale+u_offset,
+                    std::clamp(uvs[index].V,0.0f,1.0f)*v_scale+v_offset};
+                vertex.sway = {Real(tree.swayType),1,tree.location.Z};
+                vertices.push_back(vertex);
+            }
+            for (Int index=0;index<model->Get_Polygon_Count();++index) {
+                indices.push_back(first+triangles[index].I);
+                indices.push_back(first+triangles[index].J);
+                indices.push_back(first+triangles[index].K);
+            }
         }
-        for (Int index=0;index<model->Get_Polygon_Count();++index) {
-            indices.push_back(first+triangles[index].I);
-            indices.push_back(first+triangles[index].J);
-            indices.push_back(first+triangles[index].K);
-        }
+        m_shadowInputs.swap(m_shadowInputScratch);
     }
     Graphics::TreeParameters parameters;
     for (Int index=0;index<MAX_SWAY_TYPES;++index) {

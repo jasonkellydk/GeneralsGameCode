@@ -53,8 +53,7 @@ public:
 	void init( Real width, Real length, const Vector2 &start, const Vector2 &end, const Char *texturename, Int waveTimeOffset);	///<allocate W3D resources and set size
 	void init( Real width, const Vector2 &start, const Vector2 &end, const Char *texturename);	///<allocate W3D resources and set size
 	Int	update(Int msElapsed);	///< update animation state
-	void render(WaterMaterialClass& material, Graphics::WaterMeshHandle& mesh,
-        std::vector<WaterSurfaceVertex>& vertices, std::span<const unsigned short> indices);	///<draw this object
+	void Append_Vertices(std::vector<WaterSurfaceVertex>& vertices);
 
 protected:
 	W3DTextureHandle *m_stageZeroTexture;	///<primary texture
@@ -129,6 +128,7 @@ public:
 protected:
     std::vector<WaterSurfaceVertex> m_vertices;
     std::vector<UnsignedShort> m_indices;
+    std::vector<UnsignedShort> m_batchIndices;
     Graphics::WaterMeshHandle m_graphicsMesh;
 	WaterMaterialClass m_material;	///<explicit programmable track material
 

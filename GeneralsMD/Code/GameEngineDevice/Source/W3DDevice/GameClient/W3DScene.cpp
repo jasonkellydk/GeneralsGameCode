@@ -868,6 +868,10 @@ void RTS3DScene::Render_Water_Reflection(W3DCamera *camera,
 	if (camera == nullptr)
 		return;
 
+	// Reflection traversal shares the frame's scene state. Keep the scope
+	// alive through deferred submission so winding, updates and shadow work
+	// follow the reflection path rather than running another main pass.
+	W3DRenderServices::ReflectionRenderPassScope reflection_scope;
 	Graphics::RHIViewport pass_viewport = viewport;
 	Get_W3D_Render_Services().Render_Scene_Pass(this, camera, &pass_viewport);
 }
@@ -941,8 +945,9 @@ void RTS3DScene::Flush(W3DRenderContext & rinfo)
 		//USE_PERF_TIMER(translucentRender)
 
 		//don't draw transparent in this mode because they interfere with destination alpha
-		if (m_customPassMode == SCENE_PASS_DEFAULT && Get_Extra_Pass_Polygon_Mode() == EXTRA_PASS_DISABLE)
-			DoParticles(rinfo);	//queue up particles for rendering.
+		if (m_customPassMode == SCENE_PASS_DEFAULT && Get_Extra_Pass_Polygon_Mode() == EXTRA_PASS_DISABLE
+            && !Get_W3D_Render_Services().Is_Reflection_Render_Pass())
+			DoParticles(rinfo);	//prepare the main frame's deferred particle pass.
 
 		Graphics::Get_Prop_Submission().Flush_Transparent();	//draw sorted translucent polygons like particles.
 
@@ -1285,8 +1290,9 @@ void RTS3DScene::Customized_Render( W3DRenderContext &rinfo )
 		TheW3DShadowManager->queueShadows(TRUE);
 	}
 
-	// only render particles once per frame
-	if (TheParticleSystemManager != nullptr &&
+	// Particles and distortion execute in the main frame's deferred passes.
+    // Reflection preparation would be overwritten before any consumer draws it.
+	if (TheParticleSystemManager != nullptr && !Get_W3D_Render_Services().Is_Reflection_Render_Pass() &&
 		Get_Extra_Pass_Polygon_Mode() == EXTRA_PASS_DISABLE)
 	{
 		TheParticleSystemManager->queueParticleRender();

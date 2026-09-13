@@ -31,6 +31,37 @@ import Graphics.Resources.Residency.GPUResourceResidency;
 
 using namespace Graphics;
 
+BOOST_AUTO_TEST_CASE(texture_content_versions_track_writes_and_exclude_gpu_outputs)
+{
+    GraphicsTestDevice device({true});
+    std::array<std::uint8_t,16> pixels{};
+    const auto texture=device.Create_Texture_Initialized({2,2},{std::as_bytes(std::span(pixels)),8});
+    BOOST_REQUIRE(texture.Is_Valid());
+    auto version=device.Texture_Content_Version(texture);
+    BOOST_REQUIRE_NE(version,0u);
+    BOOST_REQUIRE(device.Update_Texture(texture,{std::as_bytes(std::span(pixels)),8}));
+    BOOST_CHECK_GT(device.Texture_Content_Version(texture),version);
+    version=device.Texture_Content_Version(texture);
+    RHITextureMapping mapping;
+    BOOST_REQUIRE(device.Map_Texture(texture,0,0,true,mapping));
+    BOOST_CHECK_EQUAL(device.Texture_Content_Version(texture),0u);
+    BOOST_REQUIRE(device.Unmap_Texture(texture,0,0));
+    BOOST_CHECK_EQUAL(device.Texture_Content_Version(texture),version);
+    BOOST_REQUIRE(device.Map_Texture(texture,0,0,false,mapping));
+    BOOST_REQUIRE(device.Unmap_Texture(texture,0,0));
+    BOOST_CHECK_GT(device.Texture_Content_Version(texture),version);
+    version=device.Texture_Content_Version(texture);
+    const auto source=device.Create_Texture({2,2});
+    BOOST_REQUIRE(device.Immediate_Command_List().Copy_Texture(source,texture));
+    BOOST_CHECK_GT(device.Texture_Content_Version(texture),version);
+    const auto target=device.Create_Texture({2,2,1,RHITextureFormat::RGBA8_UNorm,
+        static_cast<unsigned>(RHITextureUsage::RenderTarget)});
+    BOOST_CHECK_EQUAL(device.Texture_Content_Version(target),0u);
+    BOOST_REQUIRE(device.Destroy_Texture(texture));
+    BOOST_CHECK_EQUAL(device.Texture_Content_Version(texture),0u);
+    device.Destroy_Texture(target); device.Destroy_Texture(source);
+}
+
 BOOST_AUTO_TEST_CASE(backend_coexistence_requires_a_shared_device)
 {
 	Graphics_Shutdown_Shared_Frame();
@@ -41,6 +72,26 @@ BOOST_AUTO_TEST_CASE(backend_coexistence_requires_a_shared_device)
 	BOOST_CHECK(!Graphics_Present());
 	Graphics_Abort_Frame();
 	Graphics_Shutdown_Shared_Frame();
+}
+
+BOOST_AUTO_TEST_CASE(destroyed_storage_descriptors_survive_more_than_one_heap_of_allocations)
+{
+    GraphicsTestDevice device({true});
+    BOOST_REQUIRE(device.Is_Valid());
+    // Long matches used to consume one permanent descriptor for every
+    // short-lived storage buffer, failing at the DX12 heap's 262,144 slots.
+    // A small live set must remain usable regardless of total creation count.
+    const auto retained=device.Create_Buffer({16,RHIBufferUsage::Storage,16});
+    BOOST_REQUIRE(retained.Is_Valid());
+    for (unsigned allocation=0;allocation<270000;++allocation) {
+        const auto buffer=device.Create_Buffer({16,RHIBufferUsage::Storage,16});
+        BOOST_REQUIRE_MESSAGE(buffer.Is_Valid(),"Storage allocation failed at " << allocation);
+        BOOST_REQUIRE(device.Destroy_Buffer(buffer));
+    }
+    const std::array<std::byte,16> values{};
+    BOOST_REQUIRE(device.Update_Buffer(retained,0,values));
+    BOOST_REQUIRE(device.Destroy_Buffer(retained));
+    BOOST_CHECK(device.Get_Status()==RHIDeviceStatus::Ready);
 }
 
 static LRESULT CALLBACK Frame_Test_Window_Proc(HWND window, UINT message, WPARAM wparam, LPARAM lparam)
@@ -649,12 +700,14 @@ BOOST_AUTO_TEST_CASE(scissor_state_survives_pipeline_switches_and_rebinding)
 
 BOOST_AUTO_TEST_CASE(repeated_constant_binding_preserves_updated_and_replaced_colors)
 {
+    for (const unsigned constant_slot : {0u,12u}) {
     struct WindowScope final {
         HWND window = Create_Frame_Test_Window();
         ~WindowScope() { DestroyWindow(window); }
     } scope;
     BOOST_REQUIRE(scope.window != nullptr);
     auto options = Make_Graphics_Test_Options();
+    if (constant_slot==12) options.fragment_shader_name="visual_extended.pso";
     options.window = scope.window;
     options.width = options.height = 16;
     GraphicsTestDevice device(options);
@@ -682,7 +735,7 @@ BOOST_AUTO_TEST_CASE(repeated_constant_binding_preserves_updated_and_replaced_co
     auto& commands = device.Immediate_Command_List();
     RHIBindlessResource resource{};
     resource.type = RHIResourceType::Material;
-    resource.constant_buffer_slot = 0;
+    resource.constant_buffer_slot = constant_slot;
     const auto draw_and_check = [&](RHIBufferHandle buffer, bool expect_red) {
         const auto target = device.Get_Swap_Chain().Backbuffer();
         BOOST_REQUIRE(commands.Set_Render_Targets(target.texture,device.Get_Swap_Chain().Depth_Target().texture));
@@ -756,6 +809,7 @@ BOOST_AUTO_TEST_CASE(repeated_constant_binding_preserves_updated_and_replaced_co
     BOOST_REQUIRE(device.Destroy_Buffer(other_buffer));
     BOOST_REQUIRE(device.Destroy_Buffer(vertex_buffer));
     BOOST_REQUIRE(device.Destroy_Pipeline(pipeline));
+    }
 }
 
 BOOST_AUTO_TEST_CASE(repeated_shader_resources_preserve_output_transitions_and_generations)
@@ -813,7 +867,8 @@ BOOST_AUTO_TEST_CASE(repeated_shader_resources_preserve_output_transitions_and_g
         BOOST_REQUIRE(commands.Set_Render_Targets(device.Get_Swap_Chain().Backbuffer().texture,
             device.Get_Swap_Chain().Depth_Target().texture));
     };
-    const auto draw_and_check = [&](RHITextureHandle texture, std::array<unsigned,4> expected, unsigned tolerance=0) {
+    const auto draw_and_check = [&](RHITextureHandle texture, std::array<unsigned,4> expected,
+        unsigned tolerance=0, bool retire_while_pending=false) {
         const auto target = device.Get_Swap_Chain().Backbuffer();
         BOOST_REQUIRE(commands.Clear_Color_Target(target.texture,{0,0,1,1}));
         BOOST_REQUIRE(commands.Set_Viewport({0,0,target.width,target.height,0,1}));
@@ -823,6 +878,14 @@ BOOST_AUTO_TEST_CASE(repeated_shader_resources_preserve_output_transitions_and_g
         BOOST_REQUIRE(commands.Set_Bindless_Resources(resources));
         BOOST_REQUIRE(commands.Bind_Pipeline(pipeline));
         BOOST_REQUIRE(commands.Draw(3));
+        if (retire_while_pending) {
+            BOOST_REQUIRE(device.Destroy_Texture(texture));
+            for (unsigned replacement=0;replacement<16;++replacement) {
+                const auto next=device.Create_Texture_Initialized({1,1},{std::as_bytes(std::span(green)),4});
+                BOOST_REQUIRE(next.Is_Valid());
+                BOOST_REQUIRE(device.Destroy_Texture(next));
+            }
+        }
         std::vector<std::byte> pixels(target.width*target.height*4);
         BOOST_REQUIRE(device.Readback_Texture(target.texture,pixels,target.width*4));
         const auto center = (target.height/2*target.width+target.width/2)*4;
@@ -901,6 +964,15 @@ BOOST_AUTO_TEST_CASE(repeated_shader_resources_preserve_output_transitions_and_g
     draw_and_check(source,{255,255,0,255});
     BOOST_REQUIRE(device.End_Frame());
     BOOST_REQUIRE(device.Get_Swap_Chain().Present());
+    for (unsigned round=0;round<32;++round) {
+        set_output();
+        const auto pending=device.Create_Texture(source_description);
+        BOOST_REQUIRE(pending.Is_Valid());
+        BOOST_REQUIRE(commands.Clear_Color_Target(pending,{1,0,0,1}));
+        // Recycled SRVs must not change a draw already recorded against a
+        // destroyed texture, including after earlier retirement fences finish.
+        draw_and_check(pending,{255,0,0,255},0,true);
+    }
     BOOST_REQUIRE(device.Destroy_Texture(source));
     BOOST_REQUIRE(device.Destroy_Texture(other));
     BOOST_REQUIRE(device.Destroy_Texture(sampled_depth));

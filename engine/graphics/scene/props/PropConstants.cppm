@@ -134,12 +134,15 @@ public:
         m_buffer = {}; m_uploaded = false;
     }
     bool Update(Device& device, std::span<const std::byte,sizeof(Value)> bytes) {
-        if (m_uploaded && std::memcmp(m_bytes.data(), bytes.data(), bytes.size()) == 0) return true;
+        if (Matches(bytes)) return true;
         if (!device.Update_Buffer(m_buffer, 0, bytes)) return false;
         std::memcpy(m_bytes.data(), bytes.data(), bytes.size()); m_uploaded = true;
         return true;
     }
     RHIBufferHandle Buffer() const noexcept { return m_buffer; }
+    bool Matches(std::span<const std::byte,sizeof(Value)> bytes) const noexcept {
+        return m_uploaded && std::memcmp(m_bytes.data(),bytes.data(),bytes.size())==0;
+    }
 private:
     RHIBufferHandle m_buffer{};
     std::array<std::byte,sizeof(Value)> m_bytes{};
@@ -151,6 +154,12 @@ private:
 // update it even when the source material itself has not changed.
 export class PropMaterialBinding final {
 public:
+    bool Matches(const PropParameters& parameters) const noexcept {
+        return m_constants.Matches(std::as_bytes(std::span(&parameters,1)).subspan<656,288>());
+    }
+    bool Matches(const PropMaterialConstants& parameters) const noexcept {
+        return m_constants.Matches(std::as_bytes(std::span<const PropMaterialConstants,1>(&parameters,1)));
+    }
     bool Prepare(Device& device, const PropParameters& parameters) {
         if (!m_constants.Buffer().Is_Valid() && !m_constants.Initialize(device)) return false;
         const auto bytes = std::as_bytes(std::span(&parameters,1));
@@ -218,20 +227,22 @@ public:
         m_object.Shutdown(device);
     }
     bool Prepare_Resources(Device& device, const PropParameters& parameters,
-        PropMaterialBinding& material, std::span<RHIBindlessResource,4> resources, bool instance_records = false) {
+        PropMaterialBinding& material, std::span<RHIBindlessResource,4> resources, bool instance_records = false,
+        bool lighting = true, bool material_prepared = false) {
         const auto bytes = std::as_bytes(std::span(&parameters,1));
         if (!m_view.Update(device, bytes.subspan<0,192>())
-            || (!instance_records && !m_lighting.Update(device, bytes.subspan<192,464>()))
-            || !material.Prepare(device, parameters)
+            || (lighting && !instance_records && !m_lighting.Update(device, bytes.subspan<192,464>()))
+            || (!material_prepared && !material.Prepare(device, parameters))
             || (!instance_records && !m_object.Update(device, bytes.subspan<944,64>()))) return false;
         Bind(material,resources);
         return true;
     }
     bool Prepare_Resources(Device& device, const PropSharedParameters& parameters,
-        PropMaterialBinding& material, std::span<RHIBindlessResource,4> resources, bool instance_records) {
+        PropMaterialBinding& material, std::span<RHIBindlessResource,4> resources, bool instance_records,
+        bool lighting = true, bool material_prepared = false) {
         assert(instance_records);
         if (!m_view.Update(device,std::as_bytes(std::span<const PropViewConstants,1>(&parameters.view,1)))
-            || !material.Prepare(device,parameters.material)) return false;
+            || (!material_prepared && !material.Prepare(device,parameters.material))) return false;
         Bind(material,resources);
         return true;
     }

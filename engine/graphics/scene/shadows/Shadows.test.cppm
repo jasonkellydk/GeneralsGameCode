@@ -13,6 +13,16 @@ import Graphics.Scene.Shadows;
 
 using namespace Graphics;
 
+BOOST_AUTO_TEST_CASE(shadow_resolution_tracks_viewport_in_bounded_quality_tiers)
+{
+    BOOST_CHECK_EQUAL(Shadow_Map_Size_For_Viewport(1280,720),3072u);
+    BOOST_CHECK_EQUAL(Shadow_Map_Size_For_Viewport(1281,721),3072u);
+    BOOST_CHECK_EQUAL(Shadow_Map_Size_For_Viewport(1920,1080),4096u);
+    BOOST_CHECK_EQUAL(Shadow_Map_Size_For_Viewport(1080,1920),4096u);
+    BOOST_CHECK_EQUAL(Shadow_Map_Size_For_Viewport(7680,4320),4096u);
+    BOOST_CHECK_EQUAL(Shadow_Map_Size_For_Viewport(1280,720),3072u);
+}
+
 namespace
 {
 Matrix4x4 Make_Perspective(float near_clip, float far_clip) noexcept

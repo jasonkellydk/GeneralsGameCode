@@ -20,13 +20,69 @@ namespace Graphics {
 export struct PropInstanceTag;
 export using PropInstanceHandle = ResourceHandle<PropInstanceTag>;
 
-// This layout is shared with the prop shader's structured buffer.
+// CPU snapshot retained by queued consumers and individual lighting bindings.
 export struct PropInstanceData final {
     std::array<float,16> world{};
     std::array<std::byte,464> lighting{};
     std::array<std::uint32_t,4> skin{};
 };
 static_assert(sizeof(PropInstanceData) == 544);
+
+// Vertex consumers need only transforms and palette addresses. Pixel lighting
+// has independent ownership and dirtiness, so moving an object or rendering a
+// shadow does not upload an unused lighting block.
+struct PropInstanceRecord final {
+    std::array<float,16> world{};
+    std::array<std::uint32_t,4> skin{};
+};
+static_assert(sizeof(PropInstanceRecord)==80);
+
+template<class Value>
+class PropInstanceStream final {
+public:
+    void Set(std::size_t index,const Value& value) {
+        const bool added=index>=m_values.size();
+        if (added) m_values.resize(index+1);
+        if (!added && std::memcmp(&m_values[index],&value,sizeof(Value))==0) return;
+        m_values[index]=value;
+        m_first_dirty=(std::min)(m_first_dirty,index);
+        m_dirty_end=(std::max)(m_dirty_end,index+1);
+    }
+    bool Prepare(Device& device) {
+        if (m_values.empty()) return false;
+        if (m_values.size()>m_capacity) {
+            const auto capacity=std::bit_ceil(m_values.size());
+            if (capacity>(std::numeric_limits<std::uint32_t>::max)()/sizeof(Value)) return false;
+            const auto buffer=device.Create_Buffer({static_cast<std::uint32_t>(capacity*sizeof(Value)),
+                RHIBufferUsage::Storage,sizeof(Value)});
+            if (!buffer.Is_Valid()) return false;
+            if (!device.Update_Buffer(buffer,0,std::as_bytes(std::span(m_values)))) {
+                device.Destroy_Buffer(buffer);return false;
+            }
+            m_uploaded_bytes+=m_values.size()*sizeof(Value);
+            if (m_buffer.Is_Valid()) device.Destroy_Buffer(m_buffer);
+            m_buffer=buffer;m_capacity=capacity;
+        } else if (m_first_dirty<m_dirty_end) {
+            const auto bytes=std::as_bytes(std::span(m_values).subspan(m_first_dirty,m_dirty_end-m_first_dirty));
+            if (!device.Update_Buffer(m_buffer,static_cast<std::uint32_t>(m_first_dirty*sizeof(Value)),bytes)) return false;
+            m_uploaded_bytes+=bytes.size();
+        }
+        m_first_dirty=(std::numeric_limits<std::size_t>::max)();m_dirty_end=0;
+        return true;
+    }
+    void Shutdown(Device& device) noexcept {
+        if (m_buffer.Is_Valid()) device.Destroy_Buffer(m_buffer);
+        m_buffer={};m_capacity=0;
+    }
+    RHIBufferHandle Buffer() const noexcept { return m_buffer; }
+    std::uint64_t Uploaded_Bytes() const noexcept { return m_uploaded_bytes; }
+private:
+    std::vector<Value> m_values;
+    RHIBufferHandle m_buffer{};
+    std::size_t m_capacity=0;
+    std::size_t m_first_dirty=(std::numeric_limits<std::size_t>::max)(),m_dirty_end=0;
+    std::uint64_t m_uploaded_bytes=0;
+};
 
 // Handles identify immutable submission snapshots. An owner may change its
 // record in place only while no deferred consumer retains that generation.
@@ -50,8 +106,8 @@ public:
         } else m_palettes.Release(entry->skin);
         entry->skin = skin;
         m_values[handle.Get_Index()] = value;
-        m_first_dirty = (std::min)(m_first_dirty, std::size_t(handle.Get_Index()));
-        m_dirty_end = (std::max)(m_dirty_end, std::size_t(handle.Get_Index()+1));
+        m_records.Set(handle.Get_Index(),PropInstanceRecord{value.world,value.skin});
+        m_lighting.Set(handle.Get_Index(),value.lighting);
         return handle;
     }
     bool Retain(PropInstanceHandle handle) noexcept {
@@ -81,51 +137,25 @@ public:
         const auto* entry = m_entries.Resolve(handle);
         return entry ? m_palettes.Resolve(entry->skin) : std::span<const PropBoneTransform>{};
     }
-    bool Prepare(Device& device) {
-        if (!m_palettes.Prepare(device)) return false;
-        if (m_values.empty()) return false;
-        if (m_values.size() > m_capacity) {
-            const auto capacity = std::bit_ceil(m_values.size());
-            if (capacity > (std::numeric_limits<std::uint32_t>::max)()/sizeof(PropInstanceData)) return false;
-            const auto buffer = device.Create_Buffer(
-                {static_cast<std::uint32_t>(capacity*sizeof(PropInstanceData)), RHIBufferUsage::Storage,
-                    sizeof(PropInstanceData)});
-            if (!buffer.Is_Valid()) return false;
-            if (!device.Update_Buffer(buffer,0,std::as_bytes(std::span(m_values)))) {
-                device.Destroy_Buffer(buffer);
-                return false;
-            }
-            m_uploaded_bytes += m_values.size()*sizeof(PropInstanceData);
-            if (m_buffer.Is_Valid()) device.Destroy_Buffer(m_buffer);
-            m_buffer = buffer;
-            m_capacity = capacity;
-        } else if (m_first_dirty < m_dirty_end) {
-            const auto bytes = std::as_bytes(std::span(m_values).subspan(m_first_dirty,m_dirty_end-m_first_dirty));
-            if (!device.Update_Buffer(m_buffer,static_cast<std::uint32_t>(m_first_dirty*sizeof(PropInstanceData)),bytes)) return false;
-            m_uploaded_bytes += bytes.size();
-        }
-        m_first_dirty = (std::numeric_limits<std::size_t>::max)();
-        m_dirty_end = 0;
-        return true;
+    bool Prepare(Device& device,bool lighting=true) {
+        return m_palettes.Prepare(device) && m_records.Prepare(device)
+            && (!lighting || m_lighting.Prepare(device));
     }
     void Shutdown(Device& device) noexcept {
         m_palettes.Shutdown(device);
-        if (m_buffer.Is_Valid()) device.Destroy_Buffer(m_buffer);
-        m_buffer = {};
-        m_capacity = 0;
+        m_records.Shutdown(device);m_lighting.Shutdown(device);
     }
-    RHIBufferHandle Buffer() const noexcept { return m_buffer; }
-    std::uint64_t Uploaded_Bytes() const noexcept { return m_uploaded_bytes; }
+    RHIBufferHandle Buffer() const noexcept { return m_records.Buffer(); }
+    RHIBufferHandle Lighting_Buffer() const noexcept { return m_lighting.Buffer(); }
+    std::uint64_t Uploaded_Bytes() const noexcept { return m_records.Uploaded_Bytes()+m_lighting.Uploaded_Bytes(); }
+
 private:
     struct Entry { std::size_t references = 1; PropSkinPaletteHandle skin{}; };
     PropSkinPalettes m_palettes;
     ResourcePool<Entry,PropInstanceHandle> m_entries;
     std::vector<PropInstanceData> m_values;
-    RHIBufferHandle m_buffer{};
-    std::size_t m_capacity = 0;
-    std::size_t m_first_dirty = (std::numeric_limits<std::size_t>::max)();
-    std::size_t m_dirty_end = 0;
-    std::uint64_t m_uploaded_bytes = 0;
+    PropInstanceStream<PropInstanceRecord> m_records;
+    PropInstanceStream<std::array<std::byte,464>> m_lighting;
 };
 
 export class PropInstanceOwner final {

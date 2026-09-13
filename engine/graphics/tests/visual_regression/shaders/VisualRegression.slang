@@ -80,3 +80,10 @@ float4 Sample_Bindless(uint index, float2 coordinates)
     const float shadow = shadow_depth + 0.01 < input.position.z / input.position.w ? 0.35 : 1.0;
     return float4(input.color.rgb * MaterialColor.rgb * (0.25 + 0.75 * shadow), input.color.a * MaterialColor.a);
 }
+
+// Exercises the descriptor-table CBV range beyond the eight DX12 root CBVs.
+cbuffer ExtendedMaterialData : register(b12) { float4 ExtendedMaterialColor; };
+[shader("pixel")] float4 ExtendedMaterialPixel(VisualVertexOutput input) : SV_TARGET
+{
+    return input.color * ExtendedMaterialColor;
+}

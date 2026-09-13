@@ -65,6 +65,11 @@ BOOST_AUTO_TEST_CASE(track_texture_and_vertex_fade_blend_without_writing_depth)
     std::array<std::byte,16*16*4> pixels{};
     BOOST_REQUIRE(device.Readback_Texture(target,pixels,16*4));
     for (int c=0;c<4;++c) BOOST_CHECK_SMALL(std::to_integer<int>(pixels[(8*16+8)*4+c])-191,2);
+    BOOST_REQUIRE(renderer.Update_Mesh(mesh,geometry.vertices,geometry.indices));
+    BOOST_REQUIRE(commands.Clear({1,1,1,0.75f},1));
+    BOOST_REQUIRE(renderer.Draw(commands,mesh,style,parameters,textures));
+    BOOST_REQUIRE(device.Readback_Texture(target,pixels,16*4));
+    for (int c=0;c<4;++c) BOOST_CHECK_SMALL(std::to_integer<int>(pixels[(8*16+8)*4+c])-191,2);
     for (auto& edge : edges) for (auto& position : edge.positions) position[2] = 0.75f;
     edges[0].alpha = edges[1].alpha = 1;
     geometry.Build(edges,8,4,{1,0,0});
