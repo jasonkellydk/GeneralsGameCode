@@ -1,5 +1,8 @@
 module;
 #include <array>
+#include <algorithm>
+#include <cassert>
+#include <vector>
 #include <cmath>
 #include <cstdint>
 #include <limits>
@@ -24,6 +27,70 @@ bool ValidFrame(float frame) {
         && double(frame)<double(std::numeric_limits<int>::max())-2;
 }
 }
+// A playback owner keeps its retained clip alive and resets this cache before
+// releasing it. Only endpoint-dependent work is cached; the displayed fraction
+// still uses the original authored interpolation and visibility policies.
+export class ConsecutiveClipSamples final {
+public:
+    void Reset() noexcept { m_clip=nullptr; }
+    bool Prepare(const Assets::AnimationClip& clip,float frame,std::uint32_t count) {
+        if (clip.sampling!=Assets::AnimationSampling::Consecutive || !ClipDetail::ValidFrame(frame)) return false;
+        count=(std::min)(count,clip.bone_count);
+        const auto frames=ClipDetail::Consecutive(clip,frame);
+        const int visibility_frame=static_cast<int>(frame);
+        m_fraction=frames.fraction;
+        if (m_clip==&clip && m_first==frames.first && m_second==frames.second
+            && m_visibility_frame==visibility_frame && m_bones.size()==count) return true;
+        m_bones.resize(count);
+        for (std::uint32_t index=0;index<count;++index) {
+            auto& bone=m_bones[index];
+            bone.first={};bone.second={};
+            for (unsigned axis=0;axis<3;++axis) {
+                const auto* channel=clip.channels.Channel(index,static_cast<Assets::ModelChannelComponent>(axis));
+                if (!channel) continue;
+                bone.first[axis]=Read_Animation_Frame(*channel,frames.first)[0];
+                bone.second[axis]=Read_Animation_Frame(*channel,frames.second)[0];
+            }
+            const auto* rotation=clip.channels.Channel(index,Assets::ModelChannelComponent::Rotation);
+            bone.has_rotation=rotation!=nullptr;
+            bone.rotation=rotation ? PreparedAnimationRotation(Read_Animation_Frame(*rotation,frames.first),
+                Read_Animation_Frame(*rotation,frames.second)) : PreparedAnimationRotation{};
+            const auto* visibility=clip.channels.Channel(index,Assets::ModelChannelComponent::Visibility);
+            bone.visible=!visibility || Sample_Animation_Visibility(*visibility,float(visibility_frame));
+        }
+        m_clip=&clip;m_first=frames.first;m_second=frames.second;m_visibility_frame=visibility_frame;
+        return true;
+    }
+    std::array<float,3> Translation(std::uint32_t index) const {
+        assert(index<m_bones.size());
+        const auto& bone=m_bones[index];
+        if (m_fraction==0) return bone.first;
+        std::array<float,3> result;
+        for (unsigned axis=0;axis<3;++axis)
+            result[axis]=bone.first[axis]+(bone.second[axis]-bone.first[axis])*m_fraction;
+        return result;
+    }
+    std::array<float,4> Rotation(std::uint32_t index) const {
+        assert(index<m_bones.size());
+        if (!m_bones[index].has_rotation) return {0,0,0,1};
+        const auto& rotation=m_bones[index].rotation;
+        if (m_fraction==0) return rotation.First();
+        if (m_fraction==1) return rotation.Second();
+        return rotation.Sample(m_fraction);
+    }
+    bool Visible(std::uint32_t index) const { assert(index<m_bones.size());return m_bones[index].visible; }
+private:
+    struct Bone {
+        std::array<float,3> first{},second{};
+        PreparedAnimationRotation rotation;
+        bool visible=true,has_rotation=false;
+    };
+    std::vector<Bone> m_bones;
+    const Assets::AnimationClip* m_clip=nullptr;
+    int m_first=0,m_second=0,m_visibility_frame=0;
+    float m_fraction=0;
+};
+
 export std::array<float,3> Sample_Clip_Translation(const Assets::AnimationCache& cache,
     Assets::AnimationAssetHandle handle,int bone,float frame) {
     const auto* clip=cache.Resolve(handle);

@@ -61,6 +61,9 @@ bool Build_Graphics_Particle_Texture(const char *texture_name, Graphics::Texture
 
 W3DParticleSystemManager::W3DParticleSystemManager()
 {
+    // Legacy simulation supplies final render positions. These neutral columns
+    // never vary between particles, emitters or displayed frames.
+    m_graphicsLifetimes.fill(1.0f);
 	m_graphicsEmitters.reserve(1024);
 	m_graphicsStreaks.reserve(256);
 	m_graphicsMaterials.reserve(256);
@@ -153,6 +156,7 @@ void W3DParticleSystemManager::Reset_Graphics_Particle_Bindings() noexcept
 		}
 	}
 	m_graphicsEmitters.clear();
+    m_graphicsEmitterSlots.clear();
 	m_graphicsStreaks.clear();
 	m_graphicsMaterials.clear();
 	m_graphicsSyncStamp = 0;
@@ -248,19 +252,9 @@ void W3DParticleSystemManager::Prepare_Graphics_Particles()
 		if (!Is_Graphics_Particle_System(*system))
 			continue;
 
-		const Graphics::ParticleEmitterHandle emitter_handle = Ensure_Graphics_Emitter(*system);
-		if (!emitter_handle.Is_Valid())
-			continue;
-
-		GraphicsEmitterBinding *binding = nullptr;
-		for (GraphicsEmitterBinding &candidate : m_graphicsEmitters) {
-			if (candidate.legacy_system == system) {
-				binding = &candidate;
-				break;
-			}
-		}
-		if (binding == nullptr)
-			continue;
+        auto* binding=Ensure_Graphics_Emitter(*system);
+        if (binding==nullptr) continue;
+        const auto emitter_handle=binding->graphics_emitter;
 		binding->sync_stamp = m_graphicsSyncStamp;
 
 		Coord3D system_position;
@@ -269,7 +263,12 @@ void W3DParticleSystemManager::Prepare_Graphics_Particles()
 		Graphics::ParticleEmitter emitter;
 		emitter.position = {system_position.x, system_position.y, system_position.z};
 		emitter.velocity = drift != nullptr ? Graphics::Vector3{drift->x, drift->y, drift->z} : Graphics::Vector3{};
-		emitter.material = Ensure_Graphics_Material(system->getParticleTypeName().str());
+        const char* texture_name=system->getParticleTypeName().str();
+        if (binding->texture_name!=texture_name) {
+            binding->material=Ensure_Graphics_Material(texture_name);
+            binding->texture_name=texture_name;
+        }
+        emitter.material=binding->material;
 		emitter.flags = Graphics_Particle_Flags(*system);
 		emitter.pipeline = renderer.Pipeline_For_Flags(emitter.flags);
 		emitter.max_particles = static_cast<std::uint32_t>(MAX_PARTICLES_PER_SYSTEM);
@@ -295,37 +294,40 @@ void W3DParticleSystemManager::Prepare_Graphics_Particles()
 			if (!Passes_Terrain_Bounds(position->x, position->y, position->z, size))
 				continue;
 			++source_count;
-			const float to_camera_x = m_graphicsView.position.x - position->x;
-			const float to_camera_y = m_graphicsView.position.y - position->y;
-			const float to_camera_z = m_graphicsView.position.z - position->z;
-			const float distance_squared = to_camera_x * to_camera_x + to_camera_y * to_camera_y + to_camera_z * to_camera_z;
-			const float inverse_distance = distance_squared > 1.0e-12f ? 1.0f / std::sqrt(distance_squared) : 0.0f;
-			for (std::size_t layer = 0; layer < layer_count && count < MAX_VOLUME_PARTICLES_PER_SYSTEM; ++layer) {
-				const float shift = billboard ? static_cast<float>(layer) * size * layer_scale : 0.0f;
-				m_graphicsPositionX[count] = position->x + to_camera_x * inverse_distance * shift;
-				m_graphicsPositionY[count] = position->y + to_camera_y * inverse_distance * shift;
-				m_graphicsPositionZ[count] = position->z + to_camera_z * inverse_distance * shift;
-				m_graphicsVelocityX[count] = 0.0f;
-				m_graphicsVelocityY[count] = 0.0f;
-				m_graphicsVelocityZ[count] = 0.0f;
-				m_graphicsLifetimes[count] = 1.0f;
-				// Authored billboard size is its full width; ground effects use
-				// that value as a half extent in the original point-group geometry.
-				m_graphicsSizes[count] = billboard ? size * 0.5f : size;
-				m_graphicsColorR[count] = color->red;
-				m_graphicsColorG[count] = color->green;
-				m_graphicsColorB[count] = color->blue;
-				m_graphicsColorA[count] = particle->getAlpha();
-				m_graphicsAngles[count] = particle->getAngle();
-				m_graphicsParticleMaterials[count] = emitter.material;
-				m_graphicsEmitterFlags[count] = emitter.flags;
-				m_graphicsPipelines[count] = emitter.pipeline;
-				++count;
-			}
+            const float px=position->x,py=position->y,pz=position->z;
+            const RGBColor rgb=*color;
+            const float alpha=particle->getAlpha(),angle=particle->getAngle();
+            // Authored billboard size is its full width; ground effects use
+            // that value as a half extent in the original point-group geometry.
+            const float render_size=billboard ? size*.5f : size;
+            const auto append=[&](float x,float y,float z) {
+                m_graphicsPositionX[count]=x;m_graphicsPositionY[count]=y;m_graphicsPositionZ[count]=z;
+                m_graphicsSizes[count]=render_size;
+                m_graphicsColorR[count]=rgb.red;m_graphicsColorG[count]=rgb.green;m_graphicsColorB[count]=rgb.blue;
+                m_graphicsColorA[count]=alpha;m_graphicsAngles[count]=angle;
+                ++count;
+            };
+            if (layer_count==1) {
+                append(px,py,pz);
+            } else {
+                const float to_camera_x=m_graphicsView.position.x-px;
+                const float to_camera_y=m_graphicsView.position.y-py;
+                const float to_camera_z=m_graphicsView.position.z-pz;
+                const float distance_squared=to_camera_x*to_camera_x+to_camera_y*to_camera_y+to_camera_z*to_camera_z;
+                const float inverse_distance=billboard && distance_squared>1.0e-12f ? 1.0f/std::sqrt(distance_squared) : 0.0f;
+                for (std::size_t layer=0;layer<layer_count && count<MAX_VOLUME_PARTICLES_PER_SYSTEM;++layer) {
+                    const float shift=billboard ? static_cast<float>(layer)*size*layer_scale : 0.0f;
+                    append(px+to_camera_x*inverse_distance*shift,py+to_camera_y*inverse_distance*shift,
+                        pz+to_camera_z*inverse_distance*shift);
+                }
+            }
 			}
 		}
 		m_fieldParticleCount += system->getPriority() == AREA_EFFECT && system->m_isGroundAligned != FALSE ? static_cast<Int>(source_count) : 0;
 
+        std::fill_n(m_graphicsParticleMaterials.begin(),count,emitter.material);
+        std::fill_n(m_graphicsEmitterFlags.begin(),count,emitter.flags);
+        std::fill_n(m_graphicsPipelines.begin(),count,emitter.pipeline);
 		const Graphics::ParticleData data{
 			std::span<const float>(m_graphicsPositionX.data(), count),
 			std::span<const float>(m_graphicsPositionY.data(), count),
@@ -360,7 +362,11 @@ void W3DParticleSystemManager::Prepare_Graphics_Particles()
 			continue;
 		}
 		renderer.Destroy_Emitter(binding.graphics_emitter);
-		m_graphicsEmitters[index] = m_graphicsEmitters.back();
+        m_graphicsEmitterSlots.erase(binding.legacy_system);
+        if (index+1!=m_graphicsEmitters.size()) {
+            m_graphicsEmitters[index]=m_graphicsEmitters.back();
+            m_graphicsEmitterSlots.at(m_graphicsEmitters[index].legacy_system)=index;
+        }
 		m_graphicsEmitters.pop_back();
 	}
 
@@ -422,21 +428,11 @@ bool W3DParticleSystemManager::Is_Graphics_Particle_System(const ParticleSystem 
 	return system.m_particleType == ParticleSystemInfo::PARTICLE || system.m_particleType == ParticleSystemInfo::VOLUME_PARTICLE;
 }
 
-Graphics::ParticleEmitterHandle W3DParticleSystemManager::Find_Graphics_Emitter(ParticleSystem *system) const noexcept
-{
-	GENERALS_GRAPHICS_PROFILE_SCOPE("W3DParticleSystemManager::Find_Graphics_Emitter");
-	for (const GraphicsEmitterBinding &binding : m_graphicsEmitters)
-		if (binding.legacy_system == system)
-			return binding.graphics_emitter;
-	return {};
-}
-
-Graphics::ParticleEmitterHandle W3DParticleSystemManager::Ensure_Graphics_Emitter(ParticleSystem &system)
+W3DParticleSystemManager::GraphicsEmitterBinding* W3DParticleSystemManager::Ensure_Graphics_Emitter(ParticleSystem &system)
 {
 	GENERALS_GRAPHICS_PROFILE_SCOPE("W3DParticleSystemManager::Ensure_Graphics_Emitter");
-	const Graphics::ParticleEmitterHandle existing = Find_Graphics_Emitter(&system);
-	if (existing.Is_Valid())
-		return existing;
+    if (const auto existing=m_graphicsEmitterSlots.find(&system);existing!=m_graphicsEmitterSlots.end())
+        return &m_graphicsEmitters[existing->second];
 
 	Graphics::ParticleEmitter emitter;
 	emitter.material = Ensure_Graphics_Material(system.getParticleTypeName().str());
@@ -447,8 +443,15 @@ Graphics::ParticleEmitterHandle W3DParticleSystemManager::Ensure_Graphics_Emitte
 	if (!handle.Is_Valid())
 		return {};
 
-	m_graphicsEmitters.push_back({&system, handle, 0});
-	return handle;
+    try {
+        m_graphicsEmitterSlots.emplace(&system,m_graphicsEmitters.size());
+        m_graphicsEmitters.push_back({&system,handle,0,system.getParticleTypeName().str(),emitter.material});
+    } catch (...) {
+        m_graphicsEmitterSlots.erase(&system);
+        Graphics::GetParticleRenderer().Destroy_Emitter(handle);
+        throw;
+    }
+    return &m_graphicsEmitters.back();
 }
 
 Graphics::MaterialHandle W3DParticleSystemManager::Ensure_Graphics_Material(const char *texture_name)

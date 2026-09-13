@@ -14,6 +14,10 @@ import Graphics.Scene.Props.Submission;
 #include "W3DDevice/GameClient/W3DRenderContext.h"
 
 #include <algorithm>
+#include <chrono>
+#include <cstdlib>
+#include <fstream>
+#include <string>
 
 import Graphics.Frame.Runtime;
 import Graphics.Scene.Shadows.DirectionalRenderer;
@@ -150,9 +154,33 @@ bool Render_Directional_Shadow_Maps(W3DRenderContext& info)
     const auto saved_target=Graphics::Get_Attachment_Bindings().Capture();
     const auto color = device->Get_Swap_Chain().Backbuffer();
     const auto depth = device->Get_Swap_Chain().Depth_Target();
+    const auto before=device->Immediate_Command_List().Submission_Counts();
     const bool rendered = Graphics::Get_Directional_Shadow_Renderer().Render(
         device->Immediate_Command_List(),view,light,settings,color.texture,depth.texture,
         viewport);
+    static std::ofstream benchmark([] {
+        const auto* path=std::getenv("GENERALS_GRAPHICS_BENCHMARK");
+        return path ? std::string(path)+".shadows.csv" : std::string{};
+    }());
+    if (benchmark.is_open() && rendered) {
+        using Clock=std::chrono::steady_clock;
+        static auto start=Clock::now(), interval=start;
+        static Graphics::View previous;
+        static std::uint64_t frames=0,draws=0,triangles=0,unchanged=0;
+        const auto after=device->Immediate_Command_List().Submission_Counts();
+        draws+=after.draw_calls-before.draw_calls;
+        triangles+=after.triangles-before.triangles;
+        unchanged+=previous.view_matrix.values==view.view_matrix.values
+            && previous.projection_matrix.values==view.projection_matrix.values;
+        previous=view; ++frames;
+        const auto now=Clock::now();
+        if (std::chrono::duration<double>(now-interval).count()>=1) {
+            benchmark<<std::chrono::duration<double>(now-start).count()<<','<<frames<<','
+                <<double(draws)/frames<<','<<double(triangles)/frames<<','<<double(unchanged)/frames<<'\n';
+            benchmark.flush(); interval=now;
+            frames=draws=triangles=unchanged=0;
+        }
+    }
     Graphics::Get_Attachment_Bindings().Restore(saved_target);
     Graphics::Get_Prop_Submission().Clear_Shadows();
     return rendered;

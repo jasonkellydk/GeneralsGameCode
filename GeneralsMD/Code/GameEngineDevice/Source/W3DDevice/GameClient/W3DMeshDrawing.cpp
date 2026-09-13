@@ -58,7 +58,7 @@ bool Draw_W3D_Mesh(W3DMeshRenderObject& mesh, W3DRenderContext& info, const Grap
         bone_links=std::span(model->Get_Vertex_Bone_Links(),vertex_count);
         skin_palette=mesh.Graphics_Skin().Update(Graphics::Get_Prop_Renderer().Instances().Palettes(),
             static_cast<std::size_t>(hierarchy.Bone_Count()),
-            [&](std::size_t bone) -> const auto& { return hierarchy.World_Transform(static_cast<int>(bone)).matrix; });
+            [&](std::size_t bone) -> const auto& { return hierarchy.World_Transform(static_cast<int>(bone)).matrix; }, hierarchy.Revision());
         world.Make_Identity();
     }
     const Graphics::PropSkinLease skin_lease(Graphics::Get_Prop_Renderer().Instances().Palettes(),skin_palette);
@@ -108,10 +108,10 @@ bool Draw_W3D_Mesh(W3DMeshRenderObject& mesh, W3DRenderContext& info, const Grap
     if (context.sorted) submission_context.sorting_depth = {camera.view.values[8], camera.view.values[9],
         camera.view.values[10], camera.view.values[11]};
     const auto submit = [&](auto vertices, auto indices, auto shader, auto textures,
-        auto parameters, auto draw_overrides) {
+        auto& parameters, auto draw_overrides) {
         draw_overrides.instance = &mesh.Graphics_Instance();
         draw_overrides.skin = skin_palette;
-        return Graphics::Submit_Prop_Material(*device, Graphics::Get_Prop_Renderer(), Graphics::Get_Prop_Submission(),
+        return Graphics::Submit_Prop_Material_In_Place(*device, Graphics::Get_Prop_Renderer(), Graphics::Get_Prop_Submission(),
             vertices, indices, shader, textures,
             [](W3DTextureHandle* source, bool load) -> std::optional<Graphics::PropMaterialTexture> {
                 if (load && !source->Ensure_Render_Backend_Texture()) return std::nullopt;

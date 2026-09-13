@@ -1,5 +1,6 @@
 module;
 #include <algorithm>
+#include <array>
 #include <cstdint>
 export module Graphics.Scene.Models.Playback;
 import Assets.Cache.Animations;
@@ -24,6 +25,8 @@ public:
     ~ModelPlayback() { Reset(); }
 
     void Reset() {
+        m_evaluated_revision=0;
+        m_first_samples.Reset();m_second_samples.Reset();
         m_cache.Release(m_first);
         m_cache.Release(m_second);
         m_first = {};
@@ -33,11 +36,15 @@ public:
 
     void Set(Assets::AnimationAssetHandle clip, float frame,
         ModelPlaybackMode mode, std::uint32_t milliseconds) {
-        // Replacement can be the last remaining reference to the same clip.
-        const bool retained = m_cache.Retain(clip);
-        Reset();
-        if (!retained) return;
-        m_first = clip;
+        // Reusing this retained generation preserves endpoint preparation and
+        // an already evaluated pose. Playback controls are still reset below.
+        if (!clip || m_blended || clip!=m_first) {
+            // Replacement can be the last remaining reference to the same clip.
+            const bool retained=m_cache.Retain(clip);
+            Reset();
+            if (!retained) return;
+            m_first=clip;
+        }
         m_frame = frame;
         m_mode = mode;
         m_last_time = milliseconds;
@@ -47,11 +54,13 @@ public:
 
     void Blend(Assets::AnimationAssetHandle first, float first_frame,
         Assets::AnimationAssetHandle second, float second_frame, float percentage) {
-        const bool retained_first = m_cache.Retain(first);
-        const bool retained_second = m_cache.Retain(second);
-        Reset();
-        m_first = retained_first ? first : Assets::AnimationAssetHandle{};
-        m_second = retained_second ? second : Assets::AnimationAssetHandle{};
+        if (!m_blended || first!=m_first || second!=m_second) {
+            const bool retained_first=m_cache.Retain(first);
+            const bool retained_second=m_cache.Retain(second);
+            Reset();
+            m_first=retained_first ? first : Assets::AnimationAssetHandle{};
+            m_second=retained_second ? second : Assets::AnimationAssetHandle{};
+        }
         m_frame = first_frame;
         m_second_frame = second_frame;
         m_percentage = percentage;
@@ -144,25 +153,40 @@ public:
         const auto* first = m_cache.Resolve(m_first);
         const auto* second = m_cache.Resolve(m_second);
         if (!first || (m_blended && !second)) return;
-        const auto count = m_blended ? (std::min)(first->bone_count, second->bone_count) : first->bone_count;
-        hierarchy.Evaluate(root, [&](int bone) {
+        // Clips are immutable retained generations. Source replacement invalidates
+        // this key; hierarchy revisions cover controls, scale and external poses.
+        if (m_evaluated_revision != 0 && m_evaluated_revision == hierarchy.Revision()
+            && m_evaluated_frame == m_frame && m_evaluated_root.matrix == root.matrix
+            && (!m_blended || (m_evaluated_second_frame==m_second_frame && m_evaluated_percentage==m_percentage))) return;
+        const auto count=m_blended ? (std::min)(first->bone_count,second->bone_count) : first->bone_count;
+        const bool prepared_first=m_first_samples.Prepare(*first,m_frame,count);
+        const bool prepared_second=m_blended && m_second_samples.Prepare(*second,m_second_frame,count);
+        hierarchy.Evaluate(root,[&](int bone) {
             BoneMotion sample;
-            if (static_cast<std::uint32_t>(bone) >= count) return sample;
-            sample.translation = Sample_Clip_Translation(m_cache, m_first, bone, m_frame);
-            sample.orientation = Sample_Clip_Rotation(m_cache, m_first, bone, m_frame);
-            sample.visible = Sample_Clip_Visibility(m_cache, m_first, bone, m_frame);
+            if (static_cast<std::uint32_t>(bone)>=count) return sample;
+            sample.translation = prepared_first ? m_first_samples.Translation(bone) : Sample_Clip_Translation(m_cache, m_first, bone, m_frame);
+            sample.orientation = prepared_first ? m_first_samples.Rotation(bone) : Sample_Clip_Rotation(m_cache, m_first, bone, m_frame);
+            sample.visible = prepared_first ? m_first_samples.Visible(bone) : Sample_Clip_Visibility(m_cache, m_first, bone, m_frame);
             if (m_blended) {
-                const auto translation = Sample_Clip_Translation(m_cache, m_second, bone, m_second_frame);
+                const auto translation = prepared_second ? m_second_samples.Translation(bone) : Sample_Clip_Translation(m_cache, m_second, bone, m_second_frame);
                 const float first_weight = static_cast<float>(1.0 - m_percentage);
                 for (unsigned axis = 0; axis < 3; ++axis)
                     sample.translation[axis] = first_weight * sample.translation[axis] + m_percentage * translation[axis];
                 sample.orientation = Interpolate_Animation_Rotation(sample.orientation,
-                    Sample_Clip_Rotation(m_cache, m_second, bone, m_second_frame), m_percentage);
-                sample.visible = sample.visible || Sample_Clip_Visibility(m_cache, m_second, bone, m_second_frame);
+                    prepared_second ? m_second_samples.Rotation(bone) : Sample_Clip_Rotation(m_cache, m_second, bone, m_second_frame), m_percentage);
+                sample.visible = sample.visible || (prepared_second ? m_second_samples.Visible(bone) : Sample_Clip_Visibility(m_cache, m_second, bone, m_second_frame));
             }
-            sample.translate = sample.rotate = sample.set_visibility = true;
+            // Missing or stationary channels commonly sample exact identity.
+            // Keep authored non-identity magnitudes, including tiny rotations;
+            // only omit operations that leave the rest transform unchanged.
+            sample.translate = sample.translation != std::array<float,3>{};
+            sample.rotate = sample.orientation != std::array<float,4>{0,0,0,1};
+            sample.set_visibility = true;
             return sample;
         });
+        m_evaluated_revision=hierarchy.Revision();
+        m_evaluated_frame=m_frame;m_evaluated_root=root;
+        m_evaluated_second_frame=m_second_frame;m_evaluated_percentage=m_percentage;
     }
 
     bool Evaluate_Bone(const ModelHierarchy& hierarchy, int bone, float frame,
@@ -185,5 +209,9 @@ private:
     std::uint32_t m_last_time = 0;
     ModelPlaybackMode m_mode = ModelPlaybackMode::Manual;
     bool m_blended = false;
+    std::uint64_t m_evaluated_revision=0;
+    float m_evaluated_frame=0,m_evaluated_second_frame=0,m_evaluated_percentage=0;
+    RenderTransform m_evaluated_root{};
+    ConsecutiveClipSamples m_first_samples,m_second_samples;
 };
 }

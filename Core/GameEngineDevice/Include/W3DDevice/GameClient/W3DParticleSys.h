@@ -5,6 +5,7 @@
 #include <span>
 #include <string>
 #include <vector>
+#include <unordered_map>
 
 #include "GameClient/ParticleSys.h"
 #include "W3DDevice/GameClient/W3DRenderContext.h"
@@ -37,6 +38,8 @@ private:
 		ParticleSystem *legacy_system = nullptr;
 		Graphics::ParticleEmitterHandle graphics_emitter{};
 		std::uint32_t sync_stamp = 0;
+        std::string texture_name;
+        Graphics::MaterialHandle material{};
 	};
 
 	struct GraphicsStreakBinding final
@@ -58,8 +61,7 @@ private:
 
 	void Prepare_Graphics_Particles();
 	bool Is_Graphics_Particle_System(const ParticleSystem &system) const noexcept;
-	Graphics::ParticleEmitterHandle Find_Graphics_Emitter(ParticleSystem *system) const noexcept;
-	Graphics::ParticleEmitterHandle Ensure_Graphics_Emitter(ParticleSystem &system);
+	GraphicsEmitterBinding* Ensure_Graphics_Emitter(ParticleSystem &system);
 	GraphicsStreakBinding *Find_Graphics_Streak(ParticleSystem *system) noexcept;
 	GraphicsStreakBinding *Ensure_Graphics_Streak(ParticleSystem &system);
 	Graphics::BeamFlags Graphics_Streak_Flags(const ParticleSystem &system) const noexcept;
@@ -71,6 +73,7 @@ private:
 	void Prepare_Graphics_Smudges();
 
 	std::vector<GraphicsEmitterBinding> m_graphicsEmitters;
+    std::unordered_map<ParticleSystem*,std::size_t> m_graphicsEmitterSlots;
 	std::vector<GraphicsStreakBinding> m_graphicsStreaks;
 	std::vector<GraphicsMaterialBinding> m_graphicsMaterials;
 	std::uint32_t m_graphicsSyncStamp = 0;

@@ -37,6 +37,30 @@ BOOST_AUTO_TEST_CASE(consecutive_clips_retain_fractional_bias_wrap_defaults_and_
     BOOST_CHECK_EQUAL(Sample_Clip_Translation(cache,handle,8,1)[0],0);
     BOOST_CHECK_EQUAL(Sample_Clip_Rotation(cache,handle,1,1)[2],1);
 }
+BOOST_AUTO_TEST_CASE(prepared_consecutive_endpoints_match_sampling_across_fraction_and_clip_changes) {
+    AnimationCache cache;std::string error;
+    const auto first=cache.Publish(MovingClip(),3,AnimationSampling::Consecutive,error);
+    auto description=MovingClip();description.name="OTHER";
+    description.channels[0].samples={{.2f,0,0,0},{-.1f,0,0,0},{.6f,0,0,0}};
+    description.channels[1].samples={{.1f,.2f,.3f,.9f},{-.2f,.1f,-.4f,-.85f},{0,0,0,1}};
+    const auto second=cache.Publish(description,3,AnimationSampling::Consecutive,error);
+    BOOST_REQUIRE(first);BOOST_REQUIRE(second);
+    ConsecutiveClipSamples samples;
+    for (const auto handle : {first,second,first}) {
+        const auto* clip=cache.Resolve(handle);BOOST_REQUIRE(clip);
+        for (const float frame : {-.75f,-.25f,0.f,.01f,.1f,.25f,.49f,.5f,.75f,1.f,1.01f,1.25f,
+            1.49f,1.5f,1.75f,2.f,2.25f,2.75f,3.f,3.25f}) {
+            BOOST_REQUIRE(samples.Prepare(*clip,frame,3));
+            for (unsigned bone=0;bone<3;++bone) {
+                BOOST_CHECK(samples.Translation(bone)==Sample_Clip_Translation(cache,handle,bone,frame));
+                BOOST_CHECK(samples.Rotation(bone)==Sample_Clip_Rotation(cache,handle,bone,frame));
+                BOOST_CHECK_EQUAL(samples.Visible(bone),Sample_Clip_Visibility(cache,handle,bone,frame));
+            }
+        }
+        samples.Reset();
+    }
+}
+
 BOOST_AUTO_TEST_CASE(pose_clips_interpolate_referenced_poses_and_keep_their_visibility_contract) {
     AnimationCache cache;std::string error;
     auto description=MovingClip();

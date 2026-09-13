@@ -71,6 +71,7 @@ public:
 	void setOwnerDrawable(const Drawable *owner) {m_ownerDrawable = owner;}
 
 protected:
+    Graphics::SurfaceMeshHandle m_graphicsMesh;
 	W3DTextureHandle *m_stageZeroTexture;	///<primary texture
 	SphereClass	m_boundingSphere;		///<bounding sphere of TerrainTracks
 	AABoxClass	m_boundingBox;			///<bounding box of TerrainTracks
@@ -131,7 +132,6 @@ public:
 	void unbindTrack( TerrainTracksRenderObjClass *mod );	///<releases control of track object
 
 protected:
-	Graphics::SurfaceMeshHandle m_graphicsMesh;
 
 	TerrainTracksRenderObjClass *m_usedModules;	///<active objects being rendered in the scene
 	TerrainTracksRenderObjClass *m_freeModules;	//<unused modules that are free to use again

@@ -6,6 +6,7 @@ module;
 #include <optional>
 #include <span>
 #include <vector>
+#include <utility>
 export module Graphics.Scene.Props.MaterialSubmission;
 import Graphics.RHI;
 import Graphics.Materials.State;
@@ -72,7 +73,7 @@ PropStyle Prepare_Style(MaterialState shader, const PropMaterialDrawContext& con
 
 // A model packet retains material and sampler preparation. Compare
 // the complete inputs on use: scene scopes and authored sampling remain mutable.
-// Texture generations are borrowed afresh and transferred by submission below.
+// Texture generations are resolved afresh and retained once per submission interval.
 export class PropMaterialPreparation final {
 public:
     PropStyle Apply(MaterialState shader, const PropMaterialDrawContext& context,
@@ -137,35 +138,13 @@ private:
     std::uint64_t m_preparations = 0;
 };
 
-namespace MaterialSubmissionDetail {
-class TextureTransfers final {
-public:
-    explicit TextureTransfers(Device& device) : m_device(device) {}
-    ~TextureTransfers() {
-        if (!m_transferred)
-            for (const auto texture : textures)
-                if (texture.Is_Valid()) m_device.Destroy_Texture(texture);
-    }
-    bool Retain(unsigned stage, RHITextureHandle texture) {
-        if (!m_device.Retain_Texture(texture)) return false;
-        textures[stage] = texture;
-        return true;
-    }
-    void Transfer() noexcept { m_transferred = true; }
-    std::array<RHITextureHandle, 2> textures{};
-private:
-    Device& m_device;
-    bool m_transferred = false;
-};
-}
-
 // Sources and their resolver belong to the asset adapter. Material policy,
 // sampling, temporary geometry and successful reference transfer live here.
 export template<class Source, class Resolve>
-bool Submit_Prop_Material(Device& device, PropRenderer& renderer, PropSubmission& submission,
+bool Submit_Prop_Material_In_Place(Device& device, PropRenderer& renderer, PropSubmission& submission,
     std::span<const PropVertex> vertices, std::span<const std::uint32_t> indices,
     MaterialState shader, std::array<Source, 2> sources, Resolve&& resolve,
-    PropParameters parameters, const PropMaterialDrawContext& context,
+    PropParameters& parameters, const PropMaterialDrawContext& context,
     PropMaterialDrawOverrides overrides = {})
 {
     GRAPHICS_PROFILE_SCOPE("Graphics.Mesh.SubmitMaterial");
@@ -173,7 +152,7 @@ bool Submit_Prop_Material(Device& device, PropRenderer& renderer, PropSubmission
     const bool textured = shader.Get_Texturing() != MaterialState::TEXTURING_DISABLE;
     const bool muzzle = overrides.muzzle_flash != MuzzleFlashDesignation::None && sources[0] && textured;
     if (muzzle) sources[1] = sources[0];
-    MaterialSubmissionDetail::TextureTransfers transfers(device);
+    std::array<RHITextureHandle, 2> textures{};
     std::array<std::optional<TextureSampling>, 2> sampling;
     for (unsigned stage = 0; stage < 2; ++stage) {
         if (!sources[stage]) continue;
@@ -181,15 +160,18 @@ bool Submit_Prop_Material(Device& device, PropRenderer& renderer, PropSubmission
         const auto binding = resolve(sources[stage], textured);
         if (!binding) return false;
         sampling[stage] = binding->sampling;
-        if (textured && !transfers.Retain(stage, binding->texture)) return false;
+        if (textured) {
+            if (!submission.Retain_Borrowed_Texture(binding->texture)) return false;
+            textures[stage] = binding->texture;
+        }
     }
-    parameters.textured = transfers.textures[0].Is_Valid() ? 1.0f : 0.0f;
-    parameters.secondary_texture = transfers.textures[1].Is_Valid() ? 1.0f : 0.0f;
+    parameters.textured = textures[0].Is_Valid() ? 1.0f : 0.0f;
+    parameters.secondary_texture = textures[1].Is_Valid() ? 1.0f : 0.0f;
     const auto settings = Get_Texture_Sampling_Settings();
     auto style = overrides.preparation
         ? overrides.preparation->Apply(shader, context, overrides, sampling, settings, parameters)
         : MaterialSubmissionDetail::Prepare_Style(shader, context, overrides, sampling, settings, parameters);
-    if (muzzle && transfers.textures[0].Is_Valid())
+    if (muzzle && textures[0].Is_Valid())
         Prepare_Muzzle_Flash(parameters, style, overrides.muzzle_flash, context.milliseconds);
     auto phase = context.batchable ? PropDrawPhase::Batchable : PropDrawPhase::Immediate;
     if (overrides.shadow_capture) phase = PropDrawPhase::Shadow;
@@ -198,11 +180,23 @@ bool Submit_Prop_Material(Device& device, PropRenderer& renderer, PropSubmission
     else if (context.sorting_depth) phase = PropDrawPhase::Transparent;
     const auto mesh = overrides.mesh.Is_Valid() ? overrides.mesh : renderer.Create_Mesh(vertices, indices);
     const auto instance = overrides.instance ? overrides.instance->Update(renderer.Instances(),parameters,overrides.skin) : PropInstanceHandle{};
-    const bool drawn = submission.Submit(mesh, style, parameters, transfers.textures, phase,
-        context.sorting_depth.value_or(std::array<float, 4>{}),instance);
+    const bool drawn = submission.Submit(mesh, style, parameters, textures, phase,
+        context.sorting_depth.value_or(std::array<float, 4>{}),instance,false);
     if (!overrides.mesh.Is_Valid()) renderer.Destroy_Mesh(mesh);
-    if (drawn) transfers.Transfer();
     return drawn;
+}
+
+// Value callers keep their input snapshot. Draw sessions that already own a
+// private packet can prepare it in place and avoid another full parameter copy.
+export template<class Source, class Resolve>
+bool Submit_Prop_Material(Device& device, PropRenderer& renderer, PropSubmission& submission,
+    std::span<const PropVertex> vertices, std::span<const std::uint32_t> indices,
+    MaterialState shader, std::array<Source, 2> sources, Resolve&& resolve,
+    PropParameters parameters, const PropMaterialDrawContext& context,
+    PropMaterialDrawOverrides overrides = {})
+{
+    return Submit_Prop_Material_In_Place(device,renderer,submission,vertices,indices,shader,sources,
+        std::forward<Resolve>(resolve),parameters,context,overrides);
 }
 
 export template<class Source, class Resolve>

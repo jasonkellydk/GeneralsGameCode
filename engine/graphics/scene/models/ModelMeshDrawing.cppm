@@ -5,6 +5,7 @@ module;
 #include <cassert>
 #include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <cstring>
 #include <limits>
 #include <memory>
@@ -162,17 +163,17 @@ public:
     ModelMeshDrawing(std::span<const Position> positions, std::span<const Position> normals,
         std::span<const Triangle> triangles, std::uint64_t revision,
         MeshMaterialBindings<TextureOwner, UV>& materials, ModelMeshState<TextureOwner>& state,
-        PropRenderer& renderer, PropExtractionCache& cache, ModelMeshDrawContext context,
+        PropRenderer& renderer, PropExtractionCache& cache, std::reference_wrapper<const ModelMeshDrawContext> context,
         std::optional<std::uint64_t> topology_revision = std::nullopt)
         : m_positions(positions), m_normals(normals), m_triangles(triangles), m_revision(revision),
           m_topology_revision(topology_revision.value_or(revision)),
-          m_materials(materials), m_state(state), m_renderer(renderer), m_context(std::move(context)),
+          m_materials(materials), m_state(state), m_renderer(renderer), m_context(context.get()),
           m_cache(cache)
     {
         assert(m_context.bone_links.empty() || m_context.bone_links.size()==positions.size());
         m_bone_revision=m_state.Update_Bone_Links(m_context.bone_links);
         m_bones=m_state.Bone_Links();
-        if (m_bones) m_context.bone_links=*m_bones;
+        if (m_bones) m_bone_links=*m_bones;
         if (m_revision == 0) Prepare_Source();
     }
 
@@ -289,12 +290,12 @@ public:
                         {bytes(uv), geometry_key.revisions[3]}, {bytes(secondary_uv), geometry_key.revisions[4]},
                         {std::as_bytes(std::span(vertex_material, vertex_material ? 1u : 0u))},
                         {std::as_bytes(std::span(preparation_state))},
-                        {std::as_bytes(m_context.bone_links),m_bone_revision}}});
+                        {std::as_bytes(m_bone_links),m_bone_revision}}});
                     mesh = m_state.base.Find_Versioned(m_renderer, slot, *inputs);
                 }
                 const auto extract = [&](unsigned index) {
                     auto vertex = m_source[index].Make_Vertex();
-                if (!m_context.bone_links.empty()) vertex.bone_index=m_context.bone_links[index];
+                if (!m_bone_links.empty()) vertex.bone_index=m_bone_links[index];
                     if (primary) vertex.color = MeshDrawingDetail::Unpack_Color(primary[index]);
                     if (secondary) vertex.secondary_color = MeshDrawingDetail::Unpack_Color(secondary[index]);
                     if (uv) vertex.uv = {uv[index][0], uv[index][1]};
@@ -384,7 +385,7 @@ public:
             {bytes(uv), m_materials.UV_Revision(0,0)}, {bytes(secondary_uv), m_materials.UV_Revision(0,1)},
             {std::as_bytes(std::span(vertex_material, vertex_material ? 1u : 0u))},
             {std::as_bytes(std::span(preparation_state))},
-            {std::as_bytes(m_context.bone_links),m_bone_revision}}};
+            {std::as_bytes(m_bone_links),m_bone_revision}}};
         auto mesh = m_state.additional.Find_Versioned(m_renderer,slot,inputs);
         if (!mesh.Is_Valid()) {
             Prepare_Source();
@@ -395,7 +396,7 @@ public:
             const bool scale_emissive = vertex_material && vertex_material->emissive_source == PropColorSource::Material;
             const auto extract = [&](unsigned index) {
                 auto vertex = m_source[index].Make_Vertex();
-                if (!m_context.bone_links.empty()) vertex.bone_index=m_context.bone_links[index];
+                if (!m_bone_links.empty()) vertex.bone_index=m_bone_links[index];
                 if (primary) vertex.color = MeshDrawingDetail::Unpack_Color(primary[index]);
                 if (secondary) vertex.secondary_color = MeshDrawingDetail::Unpack_Color(secondary[index]);
                 if (uv) vertex.uv = {uv[index][0], uv[index][1]};
@@ -459,7 +460,11 @@ private:
     MeshMaterialBindings<TextureOwner, UV>& m_materials;
     ModelMeshState<TextureOwner>& m_state;
     PropRenderer& m_renderer;
-    ModelMeshDrawContext m_context;
+    // Like geometry/material inputs, the draw context belongs to the caller
+    // for this immediate extraction scope. reference_wrapper rejects temporary
+    // contexts; queued submissions still acquire their own value snapshots.
+    const ModelMeshDrawContext& m_context;
+    std::span<const std::uint16_t> m_bone_links;
     PropExtractionCache& m_cache;
     std::optional<PropExtractionCache::Lease> m_workspace;
     std::span<PropSourceVertex> m_source;

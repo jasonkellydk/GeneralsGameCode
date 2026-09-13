@@ -37,16 +37,34 @@ export class PropSkinPalettes final {
 public:
     template<class ReadTransform>
     PropSkinPaletteHandle Update(PropSkinPaletteHandle handle, std::size_t count,
-        const ReadTransform& read_transform)
+        const ReadTransform& read_transform,std::uint64_t revision=0)
     {
         assert(count != 0 && count <= 65536);
+        // Sibling meshes can retain one published hierarchy pose. This lookup
+        // borrows a full generation; owners and queued consumers hold its leases.
+        if (revision!=0 && revision==m_cached_revision) {
+            if (auto* cached=m_entries.Resolve(m_cached_handle); cached && cached->count==count) {
+                const auto shared=m_cached_handle;
+                if (handle!=shared) {
+                    assert(cached->references!=(std::numeric_limits<std::size_t>::max)());
+                    ++cached->references;
+                    Release(handle);
+                }
+                return shared;
+            }
+        }
+        // An untracked update may mutate the previously borrowed entry.
+        m_cached_revision=0;
+        const auto remember=[&](PropSkinPaletteHandle result) {
+            m_cached_revision=revision;m_cached_handle=result;return result;
+        };
         auto* entry=m_entries.Resolve(handle);
         bool same=entry && entry->count==count;
         for (std::size_t bone=0; same && bone<count; ++bone) {
             const auto& matrix=read_transform(bone);
             same=std::memcmp(m_values[entry->first+bone].data(),matrix.data(),sizeof(PropBoneTransform))==0;
         }
-        if (same) return handle;
+        if (same) return remember(handle);
         if (!entry || entry->references!=1 || count>entry->capacity) {
             Release(handle);
             const auto capacity=std::bit_ceil(count);
@@ -67,7 +85,7 @@ public:
         }
         m_first_dirty=(std::min)(m_first_dirty,entry->first);
         m_dirty_end=(std::max)(m_dirty_end,entry->first+count);
-        return handle;
+        return remember(handle);
     }
     bool Retain(PropSkinPaletteHandle handle) noexcept {
         auto* entry=m_entries.Resolve(handle);
@@ -126,6 +144,8 @@ private:
         std::size_t references=1;
     };
     ResourcePool<Entry,PropSkinPaletteHandle> m_entries;
+    std::uint64_t m_cached_revision=0;
+    PropSkinPaletteHandle m_cached_handle{};
     // A valid identity record also supplies the binding for unskinned draws.
     std::vector<PropBoneTransform> m_values{{1,0,0,0,0,1,0,0,0,0,1,0}};
     std::array<std::vector<std::size_t>,17> m_free_ranges;
@@ -162,19 +182,26 @@ public:
     ~PropSkinOwner() { Reset(); }
     void Reset() noexcept {
         if (m_palettes) m_palettes->Release(m_handle);
-        m_palettes=nullptr; m_handle={};
+        m_palettes=nullptr; m_handle={}; m_revision=0;
     }
     template<class ReadTransform>
-    PropSkinPaletteHandle Update(PropSkinPalettes& palettes,std::size_t count,const ReadTransform& read_transform) {
+    // Nonzero revisions identify the complete immutable source pose globally.
+    // Untracked callers retain the content comparison path.
+    PropSkinPaletteHandle Update(PropSkinPalettes& palettes,std::size_t count,const ReadTransform& read_transform,
+        std::uint64_t revision=0) {
         if (m_palettes!=&palettes) {
             if (m_palettes) m_palettes->Release(m_handle);
-            m_palettes=&palettes; m_handle={};
+            m_palettes=&palettes; m_handle={}; m_revision=0;
         }
-        m_handle=palettes.Update(m_handle,count,read_transform);
+        if (revision!=0 && revision==m_revision && count==m_count) return m_handle;
+        m_handle=palettes.Update(m_handle,count,read_transform,revision);
+        m_revision=revision; m_count=count;
         return m_handle;
     }
 private:
     PropSkinPalettes* m_palettes=nullptr;
     PropSkinPaletteHandle m_handle{};
+    std::uint64_t m_revision=0;
+    std::size_t m_count=0;
 };
 }

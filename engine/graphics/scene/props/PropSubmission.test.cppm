@@ -16,6 +16,36 @@ import Graphics.Scene.Shadows.DirectionalRenderer;
 import Graphics.Tests.Device;
 using namespace Graphics;
 
+BOOST_AUTO_TEST_CASE(borrowed_texture_generations_are_owned_once_until_clear)
+{
+    GraphicsTestDevice device({true});
+    BOOST_REQUIRE(device.Is_Valid());
+    PropRenderer renderer;
+    DirectionalShadowRenderer shadows;
+    PropSubmission submission;
+    submission.Initialize(device,renderer,shadows);
+    const auto texture = device.Create_Texture({1,1});
+    BOOST_REQUIRE(texture.Is_Valid());
+    for (unsigned i=0; i<100; ++i)
+        BOOST_REQUIRE(submission.Retain_Borrowed_Texture(texture));
+    BOOST_REQUIRE(device.Destroy_Texture(texture)); // Drop the source owner.
+    BOOST_REQUIRE(device.Retain_Texture(texture)); // Submission still owns it.
+    BOOST_REQUIRE(device.Destroy_Texture(texture));
+    submission.Clear_Shadows(); // Other phases may still reference this texture.
+    BOOST_REQUIRE(device.Retain_Texture(texture));
+    BOOST_REQUIRE(device.Destroy_Texture(texture));
+    submission.Clear();
+    BOOST_CHECK(!device.Retain_Texture(texture)); // No per-draw references leaked.
+    const auto replacement = device.Create_Texture({1,1});
+    BOOST_REQUIRE(replacement.Is_Valid());
+    BOOST_REQUIRE(replacement != texture);
+    BOOST_CHECK(!submission.Retain_Borrowed_Texture(texture));
+    BOOST_REQUIRE(submission.Retain_Borrowed_Texture(replacement));
+    BOOST_REQUIRE(device.Destroy_Texture(replacement));
+    submission.Shutdown();
+    BOOST_CHECK(!device.Retain_Texture(replacement));
+}
+
 BOOST_AUTO_TEST_CASE(decal_groups_materials_and_transparency_preserve_order_and_ownership)
 {
     GraphicsTestDevice device({true});
@@ -494,7 +524,19 @@ BOOST_AUTO_TEST_CASE(retained_instances_batch_distinct_lighting_and_keep_queued_
     parameters.scene_ambient={.25f,0,1,0};
     BOOST_CHECK(left.Update(renderer.Instances(),parameters)==blue);
     BOOST_REQUIRE(renderer.Instances().Prepare(device));
-    BOOST_CHECK_EQUAL(renderer.Instances().Uploaded_Bytes()-uploaded,544u);
+    BOOST_CHECK_EQUAL(renderer.Instances().Uploaded_Bytes()-uploaded,464u);
+    const auto after_lighting=renderer.Instances().Uploaded_Bytes();
+    parameters.world[3]=-.25f;
+    BOOST_CHECK(left.Update(renderer.Instances(),parameters)==blue);
+    BOOST_REQUIRE(renderer.Instances().Prepare(device,false));
+    BOOST_CHECK_EQUAL(renderer.Instances().Uploaded_Bytes()-after_lighting,80u);
+    const auto after_transform=renderer.Instances().Uploaded_Bytes();
+    parameters.scene_ambient={};
+    BOOST_CHECK(left.Update(renderer.Instances(),parameters)==blue);
+    BOOST_REQUIRE(renderer.Instances().Prepare(device,false));
+    BOOST_CHECK_EQUAL(renderer.Instances().Uploaded_Bytes(),after_transform);
+    BOOST_REQUIRE(renderer.Instances().Prepare(device));
+    BOOST_CHECK_EQUAL(renderer.Instances().Uploaded_Bytes()-after_transform,464u);
     renderer.Shutdown();
     BOOST_REQUIRE(renderer.Initialize(device,Test_Shader_Directory(GRAPHICS_TERRAIN_SHADER_DIRECTORY)));
     BOOST_REQUIRE(renderer.Instances().Prepare(device));
@@ -705,4 +747,58 @@ BOOST_AUTO_TEST_CASE(nonadjacent_opaque_batches_merge_only_with_disjoint_raster_
     }
     submission.Shutdown(); renderer.Destroy_Mesh(a); renderer.Destroy_Mesh(b); renderer.Shutdown();
     device.Destroy_Texture(target); device.Destroy_Texture(depth);
+}
+
+BOOST_AUTO_TEST_CASE(skin_pose_revision_reuses_owned_palettes_and_preserves_retained_generations)
+{
+    PropSkinPalettes palettes, replacement;
+    PropSkinOwner owner;
+    std::array<PropBoneTransform,2> pose{{{1,0,0,0,0,1,0,0,0,0,1,0},{1,0,0,1,0,1,0,0,0,0,1,0}}};
+    unsigned reads=0;
+    const auto read=[&](std::size_t bone) -> const auto& { ++reads;return pose[bone]; };
+    const auto first=owner.Update(palettes,pose.size(),read,1);
+    BOOST_REQUIRE(palettes.Retain(first));
+    reads=0;
+    BOOST_CHECK(owner.Update(palettes,pose.size(),read,1)==first);
+    BOOST_CHECK_EQUAL(reads,0u);
+    pose[1][3]=2;
+    const auto second=owner.Update(palettes,pose.size(),read,2);
+    BOOST_CHECK(second!=first);
+    BOOST_CHECK_EQUAL(palettes.Resolve(first)[1][3],1.f);
+    BOOST_CHECK_EQUAL(palettes.Resolve(second)[1][3],2.f);
+    // Untracked writes invalidate the revision shortcut, and an owner reset or
+    // new palette pool must acquire a new lease even for the same revision.
+    pose[1][3]=3;
+    owner.Update(palettes,pose.size(),read);
+    reads=0;owner.Update(palettes,pose.size(),read,2);BOOST_CHECK(reads>0);
+    owner.Reset();reads=0;owner.Update(palettes,pose.size(),read,2);BOOST_CHECK(reads>0);
+    reads=0;const auto moved=owner.Update(replacement,pose.size(),read,2);BOOST_CHECK(reads>0);
+    BOOST_CHECK_EQUAL(replacement.Resolve(moved)[1][3],3.f);
+    palettes.Release(first);
+}
+
+BOOST_AUTO_TEST_CASE(sibling_meshes_share_tracked_skin_poses_without_extending_borrowed_lifetime)
+{
+    PropSkinPalettes palettes;
+    PropSkinOwner first,second;
+    std::array<PropBoneTransform,1> pose{{{1,0,0,0,0,1,0,0,0,0,1,0}}};
+    unsigned reads=0;
+    const auto read=[&](std::size_t bone) -> const auto& { ++reads;return pose[bone]; };
+    const auto old=first.Update(palettes,1,read,17);
+    BOOST_REQUIRE(palettes.Retain(old)); // Deferred draw keeps the old pose.
+    reads=0;BOOST_CHECK(second.Update(palettes,1,read,17)==old);BOOST_CHECK_EQUAL(reads,0u);
+    pose[0][3]=3;
+    const auto current=first.Update(palettes,1,read,18);
+    BOOST_CHECK(current!=old);
+    reads=0;BOOST_CHECK(second.Update(palettes,1,read,18)==current);BOOST_CHECK_EQUAL(reads,0u);
+    BOOST_CHECK_EQUAL(palettes.Resolve(old)[0][3],0.f);
+    BOOST_CHECK_EQUAL(palettes.Resolve(current)[0][3],3.f);
+    first.Reset();second.Reset();BOOST_CHECK(palettes.Resolve(current).empty());
+    reads=0;const auto replacement=first.Update(palettes,1,read,18);BOOST_CHECK(reads>0);
+    BOOST_CHECK(replacement!=current);
+    pose[0][3]=7;first.Update(palettes,1,read); // Untracked write invalidates the borrowed key.
+    pose[0][3]=3;reads=0;
+    const auto restored=second.Update(palettes,1,read,18);BOOST_CHECK(reads>0);
+    BOOST_CHECK_EQUAL(palettes.Resolve(restored)[0][3],3.f);
+    palettes.Release(old);
 }

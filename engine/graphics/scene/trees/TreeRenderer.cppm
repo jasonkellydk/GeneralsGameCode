@@ -2,6 +2,9 @@ module;
 #include "../../profiling/Tracy.h"
 #include <array>
 #include <algorithm>
+#include <bit>
+#include <cstring>
+#include <map>
 #include <cstddef>
 #include <cstdint>
 #include <filesystem>
@@ -70,6 +73,7 @@ public:
 
     void Shutdown() noexcept
     {
+        Release_Shadow_Geometry();
         if (m_device != nullptr) {
             m_environment.Shutdown(*m_device);
             m_meshes.For_Each([&](TreeMeshHandle handle, const TreeMesh &) {
@@ -95,7 +99,13 @@ public:
         std::span<const std::uint32_t> indices)
     {
         TreeMesh *mesh = m_meshes.Resolve(handle);
-        if (mesh == nullptr || !mesh->geometry.Assign(vertices, indices)) return false;
+        if (mesh == nullptr) return false;
+        const auto old_vertices=mesh->geometry.Vertices();
+        const auto old_indices=mesh->geometry.Indices();
+        if (old_vertices.size()==vertices.size() && old_indices.size()==indices.size()
+            && (vertices.empty() || std::memcmp(old_vertices.data(),vertices.data(),vertices.size_bytes())==0)
+            && (indices.empty() || std::memcmp(old_indices.data(),indices.data(),indices.size_bytes())==0)) return true;
+        if (!mesh->geometry.Assign(vertices,indices)) return false;
         Release_GPU(*mesh);
         return true;
     }
@@ -111,6 +121,79 @@ public:
     // Use the same height-relative deformation and atlas alpha as the visible
     // tree pass. Caster geometry may include trees outside the camera view.
     bool Add_Shadow_Caster(DirectionalShadowRenderer& shadows,
+        std::span<const TreeVertex> vertices, std::span<const std::uint32_t> indices,
+        const TreeParameters& parameters, RHITextureHandle texture)
+    {
+        if (indices.empty()) return true;
+        if (!texture.Is_Valid()) return false;
+        auto& renderer = shadows.Caster_Renderer();
+        if (m_shadow_renderer != &renderer) {
+            Release_Shadow_Geometry();
+            m_shadow_renderer = &renderer;
+        }
+        const bool same = m_shadow_mesh.Is_Valid()
+            && m_shadow_geometry.Vertices().size() == vertices.size()
+            && m_shadow_geometry.Indices().size() == indices.size()
+            && std::memcmp(m_shadow_geometry.Vertices().data(),vertices.data(),vertices.size_bytes()) == 0
+            && std::memcmp(m_shadow_geometry.Indices().data(),indices.data(),indices.size_bytes()) == 0;
+        if (!same) {
+            if (!m_shadow_geometry.Assign(vertices,indices)) return false;
+            if (m_shadow_mesh.Is_Valid()) renderer.Destroy_Mesh(m_shadow_mesh);
+            m_shadow_mesh = {};
+            std::map<std::pair<unsigned,std::uint32_t>,std::uint32_t> bones;
+            m_shadow_bones.clear();
+            std::vector<PropVertex> bind_pose;
+            bind_pose.reserve(vertices.size());
+            for (const auto& source : vertices) {
+                const auto sway_index = static_cast<unsigned>(std::clamp(source.sway[0],1.0f,10.0f))-1;
+                const auto key = std::pair{sway_index,std::bit_cast<std::uint32_t>(source.sway[2])};
+                const auto [entry,inserted] = bones.try_emplace(key,static_cast<std::uint32_t>(bones.size()));
+                if (inserted) m_shadow_bones.push_back({sway_index,source.sway[2]});
+                PropVertex vertex;
+                vertex.position = source.position;
+                vertex.position[2] -= source.sway[2];
+                vertex.uv = source.uv;
+                vertex.bone_index = static_cast<float>(entry->second);
+                bind_pose.push_back(vertex);
+            }
+            if (m_shadow_bones.size() > 65536)
+                return Add_CPU_Shadow_Caster(shadows,vertices,indices,parameters,texture);
+            const auto next = renderer.Create_Mesh(bind_pose,indices);
+            if (!next.Is_Valid()) return false;
+            if (m_shadow_mesh.Is_Valid()) renderer.Destroy_Mesh(m_shadow_mesh);
+            m_shadow_mesh = next;
+            m_shadow_pose.resize(m_shadow_bones.size());
+        }
+        for (std::size_t i=0; i<m_shadow_bones.size(); ++i) {
+            const auto& bone = m_shadow_bones[i];
+            const auto& sway = parameters.sway[bone.sway];
+            m_shadow_pose[i] = {1,0,sway[0],0, 0,1,sway[1],0, 0,0,1+sway[2],bone.base};
+        }
+        PropParameters material;
+        material.alpha_cutoff = parameters.options[1];
+        const auto skin = m_shadow_skin.Update(renderer.Instances().Palettes(),m_shadow_pose.size(),
+            [&](std::size_t bone) -> const auto& { return m_shadow_pose[bone]; });
+        const auto instance = m_shadow_instance.Update(renderer.Instances(),material,skin);
+        PropStyle style;
+        style.samplers[0].address.fill(RHISamplerAddress::Clamp);
+        return shadows.Add_Caster(renderer,m_shadow_mesh,material,std::array{texture},style,instance);
+    }
+
+private:
+    void Release_Shadow_Geometry() noexcept
+    {
+        m_shadow_instance.Reset();
+        m_shadow_skin.Reset();
+        if (m_shadow_renderer && m_shadow_mesh.Is_Valid()) m_shadow_renderer->Destroy_Mesh(m_shadow_mesh);
+        m_shadow_mesh = {};
+        m_shadow_renderer = nullptr;
+        m_shadow_geometry = {};
+        m_shadow_bones.clear();
+        m_shadow_pose.clear();
+    }
+
+    // Preserve support for inputs exceeding the GPU palette address range.
+    bool Add_CPU_Shadow_Caster(DirectionalShadowRenderer& shadows,
         std::span<const TreeVertex> vertices, std::span<const std::uint32_t> indices,
         const TreeParameters& parameters, RHITextureHandle texture)
     {
@@ -136,6 +219,7 @@ public:
         return shadows.Add_Caster(casters,indices,material,textures,style);
     }
 
+public:
     bool Draw(CommandList &commands, TreeMeshHandle handle,
         const TreeParameters &parameters, std::span<const RHITextureHandle> textures)
     {
@@ -213,6 +297,14 @@ private:
     }
 
     EnvironmentLightingBinding m_environment;
+    struct ShadowBone { unsigned sway; float base; };
+    PropRenderer* m_shadow_renderer = nullptr;
+    PropMeshHandle m_shadow_mesh{};
+    PropInstanceOwner m_shadow_instance;
+    PropSkinOwner m_shadow_skin;
+    TreeGeometry m_shadow_geometry;
+    std::vector<ShadowBone> m_shadow_bones;
+    std::vector<PropBoneTransform> m_shadow_pose;
     Device *m_device = nullptr;
     ShaderLibrary m_shaders;
     ShaderHandle m_shader{};

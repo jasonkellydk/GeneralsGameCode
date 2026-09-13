@@ -9,6 +9,7 @@ module;
 #include <cstdint>
 #include <filesystem>
 #include <functional>
+#include <limits>
 #include <numeric>
 #include <span>
 #include <vector>
@@ -30,6 +31,8 @@ export using ShadowCasterHandle = ResourceHandle<ShadowCasterTag>;
 export class DirectionalShadowRenderer final
 {
 public:
+    // Shared owner for persistent caster geometry and immutable pose snapshots.
+    PropRenderer& Caster_Renderer() noexcept { return m_renderer; }
     DirectionalShadowRenderer() = default;
     DirectionalShadowRenderer(const DirectionalShadowRenderer&) = delete;
     DirectionalShadowRenderer& operator=(const DirectionalShadowRenderer&) = delete;
@@ -43,6 +46,7 @@ public:
         return true;
     }
 
+    std::uint64_t Caster_Sort_Count() const noexcept { return m_caster_sort_count; }
     void Clear_Casters() noexcept
     {
         for (const auto& caster : m_casters)
@@ -51,7 +55,7 @@ public:
                 caster.source->Destroy_Mesh(caster.source_mesh);
             }
         m_casters.clear();
-        m_caster_order.clear(); m_batches.clear(); m_instance_worlds.clear(); m_instance_indices.clear();
+        m_batches.clear(); m_instance_worlds.clear(); m_instance_indices.clear();
         if (m_transient_mesh.Is_Valid()) m_renderer.Update_Mesh(m_transient_mesh,{},{});
         m_transient_index_count = 0;
     }
@@ -109,7 +113,7 @@ public:
     }
 
     bool Add_Caster(std::span<const PropVertex> vertices,
-        std::span<const std::uint32_t> indices, PropParameters parameters,
+        std::span<const std::uint32_t> indices, const PropParameters& parameters,
         std::span<const RHITextureHandle> textures, const PropStyle& material_style = {})
     {
         if (m_device == nullptr || textures.size() > PropTextureCount) return false;
@@ -133,7 +137,7 @@ public:
 
     // Retained geometry remains valid across frame-list clears. Its owner
     // releases it when geometry changes, before this renderer is destroyed.
-    bool Add_Caster(ShadowCasterHandle mesh,PropParameters parameters,
+    bool Add_Caster(ShadowCasterHandle mesh,const PropParameters& parameters,
         std::span<const RHITextureHandle> textures,const PropStyle& material_style = {})
     {
         if (!Is_Caster_Valid(mesh) || textures.size() > PropTextureCount) return false;
@@ -146,7 +150,7 @@ public:
 
     // Share the exact mesh version used by color/reflection passes. Retain it
     // through all cascades even if its source publishes new geometry meanwhile.
-    bool Add_Caster(PropRenderer& source,PropMeshHandle mesh,PropParameters parameters,
+    bool Add_Caster(PropRenderer& source,PropMeshHandle mesh,const PropParameters& parameters,
         std::span<const RHITextureHandle> textures,const PropStyle& material_style = {}, PropInstanceHandle instance = {})
     {
         if (m_device == nullptr || textures.size() > PropTextureCount) return false;
@@ -199,21 +203,29 @@ public:
                     for (auto index=batch.first; index<batch.end; ++index) {
                         const auto& caster = m_casters[m_caster_order[index]];
                         if (Intersects_Cascade(caster.bounds,planes)) {
-                            m_instance_worlds[instance_count] = caster.parameters.world;
+                            if (!first.source) m_instance_worlds[instance_count] = caster.world;
                             m_instance_indices[instance_count] = caster.instance.Get_Index();
                             ++instance_count;
                         }
                     }
                     if (instance_count == 0) continue;
-                    auto parameters = first.parameters;
-                    parameters.view_projection = cascades.views[cascade].view_projection.values;
-                    parameters.world = m_instance_worlds.front();
-                    const auto records = first.source ? std::span<const std::uint32_t>(m_instance_indices.data(),instance_count)
-                        : std::span<const std::uint32_t>{};
-                    const auto worlds = first.source || instance_count == 1 ? std::span<const std::array<float,16>>{}
-                        : std::span<const std::array<float,16>>(m_instance_worlds.data(),instance_count);
-                    if (!batch.renderer->Draw_Range(list,batch.mesh,first.style,parameters,
-                        std::span(first.textures.data(),first.texture_count),batch.first_index,batch.index_count,worlds,records)) return false;
+                    const auto textures=std::span(first.textures.data(),first.texture_count);
+                    if (first.source) {
+                        auto parameters=first.parameters;
+                        parameters.view.view_projection=cascades.views[cascade].view_projection.values;
+                        if (!batch.renderer->Draw_Records(list,batch.mesh,first.style,parameters,textures,
+                            std::span<const std::uint32_t>(m_instance_indices.data(),instance_count))) return false;
+                    } else {
+                        PropParameters parameters;
+                        std::memcpy(&parameters,&first.parameters.view,sizeof(PropViewConstants));
+                        std::memcpy(&parameters.textured,&first.parameters.material,sizeof(PropMaterialConstants));
+                        parameters.view_projection=cascades.views[cascade].view_projection.values;
+                        parameters.world=m_instance_worlds.front();
+                        const auto worlds=instance_count==1 ? std::span<const std::array<float,16>>{}
+                            : std::span<const std::array<float,16>>(m_instance_worlds.data(),instance_count);
+                        if (!batch.renderer->Draw_Range(list,batch.mesh,first.style,parameters,textures,
+                            batch.first_index,batch.index_count,worlds)) return false;
+                    }
                 }
                 return true;
             });
@@ -244,23 +256,26 @@ private:
 
     static Mesh Transform_Bounds(const Mesh& local,const std::array<float,16>& world) noexcept
     {
+        // Skinned palettes already publish world-space bounds. Identity does
+        // not introduce rounding, so it needs neither transformation nor padding.
+        if (world==std::array<float,16>{1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1}) return local;
         Mesh result;
         result.handle = local.handle;
-        for (unsigned corner=0;corner<8;++corner) {
-            const std::array<float,3> point{
-                corner&1 ? local.maximum[0] : local.minimum[0],
-                corner&2 ? local.maximum[1] : local.minimum[1],
-                corner&4 ? local.maximum[2] : local.minimum[2]};
-            for (unsigned axis=0;axis<3;++axis) {
-                const auto offset=axis*4;
-                const auto value=world[offset]*point[0]+world[offset+1]*point[1]
-                    +world[offset+2]*point[2]+world[offset+3];
-                if (corner==0) result.minimum[axis]=result.maximum[axis]=value;
-                else {
-                    result.minimum[axis]=std::min(result.minimum[axis],value);
-                    result.maximum[axis]=std::max(result.maximum[axis],value);
-                }
+        for (unsigned axis=0;axis<3;++axis) {
+            const auto offset=axis*4;
+            float lower=0,upper=0,magnitude=std::abs(world[offset+3]);
+            // Each row's extrema select endpoints independently. Pad outward
+            // for CPU/GPU float rounding, including negative scales and shear.
+            for (unsigned column=0;column<3;++column) {
+                const float a=world[offset+column]*local.minimum[column];
+                const float b=world[offset+column]*local.maximum[column];
+                lower+=(std::min)(a,b);upper+=(std::max)(a,b);
+                magnitude+=(std::max)(std::abs(a),std::abs(b));
             }
+            const float error=8*std::numeric_limits<float>::epsilon()*magnitude
+                +8*std::numeric_limits<float>::min();
+            result.minimum[axis]=(lower+world[offset+3])-error;
+            result.maximum[axis]=(upper+world[offset+3])+error;
         }
         return result;
     }
@@ -302,6 +317,7 @@ private:
 
     struct Caster final
     {
+        explicit Caster(const PropParameters& input) : parameters(input),world(input.world) {}
         PropRenderer* source = nullptr;
         PropMeshHandle source_mesh{};
         PropInstanceHandle instance{};
@@ -309,10 +325,21 @@ private:
         Mesh bounds;
         std::uint32_t first_index = 0;
         std::uint32_t index_count = 0;
-        PropParameters parameters;
+        // Depth consumes view, alpha/mapping and world inputs. RGB lighting
+        // remains with color submissions instead of every cascade's hot records.
+        PropSharedParameters parameters;
+        std::array<float,16> world;
         PropStyle style;
         std::array<RHITextureHandle,PropTextureCount> textures{};
         std::uint32_t texture_count = 0;
+    };
+
+    struct SortKey final {
+        PropRenderer* source=nullptr;
+        PropMeshHandle source_mesh{};
+        ShadowCasterHandle mesh{};
+        std::uint32_t first_index=0;
+        bool operator==(const SortKey&) const noexcept = default;
     };
 
     struct Batch final {
@@ -327,10 +354,15 @@ private:
         // Every caster uses LessEqual depth writes with color and stencil
         // writes disabled. Equal-depth fragments therefore commute as well.
         // Group retained geometry once, before any cascade visibility loops.
-        m_caster_order.resize(m_casters.size());
-        std::iota(m_caster_order.begin(),m_caster_order.end(),std::size_t{0});
+        bool reorder=m_sort_keys.size()!=m_casters.size() || m_caster_order.size()!=m_casters.size();
+        m_sort_keys.resize(m_casters.size());
+        for (std::size_t index=0;index<m_casters.size();++index) {
+            const auto& caster=m_casters[index];
+            const SortKey key{caster.source,caster.source_mesh,caster.mesh,caster.first_index};
+            if (key!=m_sort_keys[index]) { m_sort_keys[index]=key;reorder=true; }
+        }
         const auto less = [&](std::size_t a, std::size_t b) {
-            const auto& left = m_casters[a]; const auto& right = m_casters[b];
+            const auto& left = m_sort_keys[a]; const auto& right = m_sort_keys[b];
             if (left.source != right.source) return std::less<PropRenderer*>{}(left.source,right.source);
             if (left.source_mesh.Get_Index() != right.source_mesh.Get_Index())
                 return left.source_mesh.Get_Index() < right.source_mesh.Get_Index();
@@ -340,7 +372,12 @@ private:
             if (left.mesh.Get_Generation() != right.mesh.Get_Generation()) return left.mesh.Get_Generation() < right.mesh.Get_Generation();
             return left.first_index < right.first_index;
         };
-        std::sort(m_caster_order.begin(),m_caster_order.end(),less);
+        if (reorder) {
+            m_caster_order.resize(m_casters.size());
+            std::iota(m_caster_order.begin(),m_caster_order.end(),std::size_t{0});
+            std::sort(m_caster_order.begin(),m_caster_order.end(),less);
+            ++m_caster_sort_count;
+        }
         m_batches.clear();
         m_batches.reserve(m_casters.size());
         m_instance_worlds.resize(m_casters.size());
@@ -381,25 +418,17 @@ private:
         return true;
     }
 
-    static bool Same_Depth_Parameters(const PropParameters& left,const PropParameters& right) noexcept
+    static bool Same_Depth_Parameters(const PropSharedParameters& left,const PropSharedParameters& right) noexcept
     {
-        // Local lights and ambient affect RGB only. Preserve all view, alpha,
-        // mapping and material inputs; the caster pipeline masks every color write.
-        constexpr auto lighting = offsetof(PropParameters,scene_ambient);
-        constexpr auto material = offsetof(PropParameters,textured);
-        constexpr auto world = offsetof(PropParameters,world);
-        return std::memcmp(&left,&right,lighting) == 0
-            && std::memcmp(reinterpret_cast<const std::byte*>(&left)+material,
-                reinterpret_cast<const std::byte*>(&right)+material,world-material) == 0;
+        return std::memcmp(&left,&right,sizeof(PropSharedParameters))==0;
     }
 
-    static Caster Make_Caster(PropParameters parameters,std::span<const RHITextureHandle> textures,
+    static Caster Make_Caster(const PropParameters& parameters,std::span<const RHITextureHandle> textures,
         const PropStyle& material_style)
     {
-        Caster caster;
-        caster.parameters = parameters;
-        caster.parameters.shroud = caster.parameters.shroud_only = 0;
-        caster.parameters.fog_state = {};
+        Caster caster(parameters);
+        caster.parameters.material.shroud = caster.parameters.material.shroud_only = 0;
+        caster.parameters.view.fog_state = {};
         caster.style = material_style;
         caster.style.blend = RHIBlendMode::Disabled;
         caster.style.source_blend = RHIBlendFactor::One;
@@ -442,7 +471,11 @@ private:
     std::array<GraphPassHandle,4> m_passes{};
     std::array<GraphResourceBinding,4> m_bindings{};
     std::vector<Caster> m_casters;
+    // This cache owns only ordering metadata. Every frame still rebuilds batch
+    // compatibility and evaluates current bounds, poses, textures and materials.
+    std::vector<SortKey> m_sort_keys;
     std::vector<std::size_t> m_caster_order;
+    std::uint64_t m_caster_sort_count=0;
     std::vector<Batch> m_batches;
     std::vector<std::array<float,16>> m_instance_worlds;
     std::vector<std::uint32_t> m_instance_indices;

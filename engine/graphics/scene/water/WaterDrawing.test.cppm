@@ -12,6 +12,7 @@ module;
 #include <vector>
 export module Graphics.Scene.Water.Drawing.Tests;
 import Graphics.Tests.Device;
+import Graphics.Frame.AttachmentBindings;
 import Graphics.Scene.Water.Renderer;
 import Graphics.Scene.Terrain.Renderer;
 import Graphics.Resources.Textures.Sampling;
@@ -1269,6 +1270,64 @@ BOOST_AUTO_TEST_CASE(surface_normal_octaves_repeat_beyond_the_first_texture_tile
     renderer.Shutdown();
     for (auto texture : {normal,reflection,black,target,depth}) device.Destroy_Texture(texture);
 }
+BOOST_AUTO_TEST_CASE(batched_shoreline_tracks_preserve_overlapping_alpha_order)
+{
+    GraphicsTestDevice device({true});
+    BOOST_REQUIRE(device.Is_Valid());
+    WaterRenderer renderer;
+    BOOST_REQUIRE(renderer.Initialize(device,Test_Shader_Directory(GRAPHICS_TERRAIN_SHADER_DIRECTORY)));
+    const std::array<std::uint8_t,4> white{255,255,255,255};
+    const auto texture=device.Create_Texture_Initialized({1,1},{std::as_bytes(std::span(white)),4});
+    const auto target=device.Create_Texture({32,32,1,RHITextureFormat::RGBA8_UNorm,
+        static_cast<std::uint32_t>(RHITextureUsage::RenderTarget)});
+    const auto depth=device.Create_Texture({32,32,1,RHITextureFormat::D32_Float,
+        static_cast<std::uint32_t>(RHITextureUsage::DepthStencil)});
+    const std::array<std::uint32_t,4> strip{2,0,3,1};
+    const auto indices=Expand_Water_Strip(strip);
+    std::array<WaterVertex,4> quad{};
+    quad[0].position={-0.8f,-0.8f,0.5f}; quad[1].position={0.8f,-0.8f,0.5f};
+    quad[2].position={-0.8f,0.8f,0.5f}; quad[3].position={0.8f,0.8f,0.5f};
+    WaterParameters parameters;
+    parameters.world=parameters.view=parameters.projection={1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1};
+    WaterStyle style;
+    style.pass=WaterPass::Track;
+    style.blend=RHIBlendMode::Alpha;
+    std::array<RHITextureHandle,9> textures;
+    textures.fill(texture);
+    auto& commands=device.Immediate_Command_List();
+    BOOST_REQUIRE(commands.Set_Render_Targets(target,depth));
+    BOOST_REQUIRE(commands.Set_Viewport({0,0,32,32}));
+    for (unsigned frame=0; frame<3; ++frame) {
+        BOOST_REQUIRE(commands.Clear({0.1f,0.2f,0.3f,1},1));
+        std::vector<WaterVertex> vertices;
+        std::vector<std::uint32_t> batch_indices;
+        for (unsigned layer=0; layer<3; ++layer) {
+            auto current=quad;
+            for (auto& vertex : current) {
+                vertex.position[0]+=(static_cast<float>(layer)-1)*0.15f;
+                vertex.color={0,0,0,0.2f+0.1f*frame};
+                vertex.color[layer]=1;
+            }
+            const auto mesh=renderer.Create_Mesh(current,indices);
+            BOOST_REQUIRE(renderer.Draw(commands,mesh,style,parameters,textures));
+            renderer.Destroy_Mesh(mesh);
+            for (const auto index : indices) batch_indices.push_back(static_cast<std::uint32_t>(vertices.size())+index);
+            vertices.insert(vertices.end(),current.begin(),current.end());
+        }
+        std::array<std::byte,32*32*4> reference{}, batched{};
+        BOOST_REQUIRE(device.Readback_Texture(target,reference,32*4));
+        BOOST_CHECK_GT(std::to_integer<int>(reference[(16*32+16)*4]),30);
+        BOOST_REQUIRE(commands.Clear({0.1f,0.2f,0.3f,1},1));
+        const auto mesh=renderer.Create_Mesh(vertices,batch_indices);
+        BOOST_REQUIRE(renderer.Draw(commands,mesh,style,parameters,textures));
+        BOOST_REQUIRE(device.Readback_Texture(target,batched,32*4));
+        BOOST_CHECK(reference == batched);
+        renderer.Destroy_Mesh(mesh);
+    }
+    renderer.Shutdown();
+    for (const auto handle : {texture,target,depth}) device.Destroy_Texture(handle);
+}
+
 BOOST_AUTO_TEST_CASE(water_shader_passes_preserve_sampling_blending_and_displacement)
 {
     GraphicsTestDevice device({true});

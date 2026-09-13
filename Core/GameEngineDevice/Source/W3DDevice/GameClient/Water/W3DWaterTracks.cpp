@@ -272,8 +272,7 @@ Int WaterTracksObj::update(Int msElapsed)
  */
 //=============================================================================
 
-void WaterTracksObj::render(WaterMaterialClass& material, Graphics::WaterMeshHandle& mesh,
-    std::vector<WaterSurfaceVertex>& vertices, std::span<const unsigned short> indices)
+void WaterTracksObj::Append_Vertices(std::vector<WaterSurfaceVertex>& vertices)
 {
 	// TheSuperHackers @tweak The wave movement time step is now decoupled from the render update.
 	m_elapsedMs += TheFramePacer->getLogicTimeStepMilliseconds();
@@ -286,8 +285,9 @@ void WaterTracksObj::render(WaterMaterialClass& material, Graphics::WaterMeshHan
 	Real	widthFrac;
 	Real	heightFrac;
 
-    vertices.resize(m_x*m_y);
-    vb = vertices.data();
+    const auto first_vertex = vertices.size();
+    vertices.resize(first_vertex + m_x*m_y);
+    vb = vertices.data() + first_vertex;
 	for (Int vertex = 0; vertex < m_x * m_y; ++vertex)
 	{
 		vb[vertex].nx = 0.0f;
@@ -447,10 +447,6 @@ void WaterTracksObj::render(WaterMaterialClass& material, Graphics::WaterMeshHan
 		vb->u1=1.0f;
 	vb->v1=1.0f;
 	vb++;
-
-    const unsigned count = static_cast<unsigned>((m_y-1)*(m_x*2+2)-2);
-    if (indices.size() >= count && Upload_Water_Geometry(mesh,vertices,indices.first(count),true))
-        material.Draw(mesh,Matrix4x4(true));
 
 }
 
@@ -636,6 +632,7 @@ void WaterTracksRenderSystem::ReleaseResources()
     m_graphicsMesh = {};
     m_vertices.clear();
     m_indices.clear();
+    m_batchIndices.clear();
     m_material.Shutdown();
 }
 
@@ -822,18 +819,43 @@ Try improving the fit to vertical surfaces like cliffs.
 		camera_position.Z, 1.0f);
 
 
-	WaterTracksObj *mod=m_usedModules;
-
-	while( mod )
-	{
-		if (m_material.Apply_Track(mod->m_stageZeroTexture))
-		{
-			mod->render(m_material,m_graphicsMesh,m_vertices,m_indices);
-
-		}
-
-		mod = mod->m_nextSystem;
-	}
+    // The list already groups wave textures. Keep its blend order while sharing
+    // one upload and draw between adjacent tracks with identical material state.
+    m_vertices.clear();
+    m_batchIndices.clear();
+    W3DTextureHandle* texture = nullptr;
+    bool material_ready = false;
+    const auto flush_batch = [&] {
+        if (!m_batchIndices.empty()
+            && Upload_Water_Geometry(m_graphicsMesh,m_vertices,m_batchIndices,false))
+            m_material.Draw(m_graphicsMesh,Matrix4x4(true));
+        m_vertices.clear();
+        m_batchIndices.clear();
+    };
+    for (auto* mod=m_usedModules; mod; mod=mod->m_nextSystem) {
+        const auto vertex_count = static_cast<std::size_t>(mod->m_x*mod->m_y);
+        const auto index_count = static_cast<std::size_t>((mod->m_y-1)*(mod->m_x*2+2)-2);
+        if (vertex_count > 65535 || index_count > m_indices.size()) continue;
+        if (!material_ready || texture != mod->m_stageZeroTexture
+            || m_vertices.size()+vertex_count > 65535) {
+            flush_batch();
+            texture = mod->m_stageZeroTexture;
+            material_ready = m_material.Apply_Track(texture);
+        }
+        if (!material_ready) continue;
+        const auto base = static_cast<UnsignedShort>(m_vertices.size());
+        mod->Append_Vertices(m_vertices);
+        // Expand each strip independently so no triangles join adjacent waves.
+        for (std::size_t i=2; i<index_count; ++i) {
+            auto a=m_indices[i-2], b=m_indices[i-1], c=m_indices[i];
+            if (a==b || b==c || a==c) continue;
+            if (i%2 != 0) std::swap(a,b);
+            m_batchIndices.insert(m_batchIndices.end(),{
+                static_cast<UnsignedShort>(base+a),static_cast<UnsignedShort>(base+b),
+                static_cast<UnsignedShort>(base+c)});
+        }
+    }
+    flush_batch();
 }
 
 WaterTracksObj *WaterTracksRenderSystem::findTrack(Vector2 &start, Vector2 &end, waveType type)

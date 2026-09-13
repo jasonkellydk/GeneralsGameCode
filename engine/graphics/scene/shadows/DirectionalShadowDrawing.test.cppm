@@ -18,6 +18,120 @@ import Graphics.Scene.Trees.Renderer;
 import Graphics.Scene.Terrain.Renderer;
 using namespace Graphics;
 
+BOOST_AUTO_TEST_CASE(terrain_shadow_patches_match_full_geometry_and_cull_distant_cells)
+{
+    struct ResetEnvironment { ~ResetEnvironment() { Get_Environment_Lighting()={}; } } reset;
+    GraphicsTestDevice device({true});
+    DirectionalShadowRenderer patches,reference;
+    TerrainRenderer terrain;
+    const auto shaders=Graphics::Test_Shader_Directory(GRAPHICS_TERRAIN_SHADER_DIRECTORY);
+    BOOST_REQUIRE(patches.Initialize(device,shaders));
+    BOOST_REQUIRE(reference.Initialize(device,shaders));
+    BOOST_REQUIRE(terrain.Initialize(device,shaders));
+    const auto target=device.Create_Texture({32,32,1,RHITextureFormat::RGBA8_UNorm,
+        static_cast<unsigned>(RHITextureUsage::RenderTarget)});
+    const auto depth=device.Create_Texture({32,32,1,RHITextureFormat::D32_Float,
+        static_cast<unsigned>(RHITextureUsage::DepthStencil)});
+    std::vector<TerrainCell> cells;
+    for (unsigned y=0;y<9;++y) for (unsigned x=0;x<9;++x) {
+        TerrainCell cell; cell.origin={float(x*2)-9,float(y*2)-9};
+        cell.spacing={2,2}; cell.heights.fill(-4); cell.alternate_diagonal=(x+y)%2;
+        cells.push_back(cell);
+    }
+    auto projection=Matrix4x4::Identity();
+    projection.values[10]=projection.values[11]=-1.f/9.f;
+    const View view{Matrix4x4::Identity(),projection,{}, {0,0,32,32,0,1}};
+    RenderLight light; light.type=RenderLightType::Directional;
+    light.flags=RenderLightFlags::Enabled; light.direction={0,0,-1};
+    ShadowSettings settings{1,1,10,.5f,2,64};
+    auto& commands=device.Immediate_Command_List();
+    for (unsigned frame=0;frame<3;++frame) {
+        patches.Clear_Casters(); reference.Clear_Casters();
+        if (frame==2) cells[40].heights[2]=-3;
+        if (frame!=1) BOOST_REQUIRE(terrain.Set_Cells(cells));
+        BOOST_REQUIRE(terrain.Add_Shadow_Caster(patches,Matrix4x4::Identity().values));
+        TerrainGeometry geometry; BOOST_REQUIRE(geometry.Build(cells,1));
+        std::vector<PropVertex> vertices(geometry.Vertices().size());
+        for (unsigned i=0;i<vertices.size();++i) vertices[i].position=geometry.Vertices()[i].position;
+        PropParameters parameters; parameters.textured=0;
+        BOOST_REQUIRE(reference.Add_Caster(vertices,geometry.Indices(),parameters,{}));
+        std::array<float,64*64> actual,expected;
+        const auto before=commands.Submission_Counts();
+        BOOST_REQUIRE(patches.Render(commands,view,light,settings,target,depth,{0,0,32,32}));
+        BOOST_CHECK_LT(commands.Submission_Counts().triangles-before.triangles,geometry.Indices().size()/3);
+        BOOST_REQUIRE(device.Readback_Texture(Get_Environment_Lighting().shadow_textures[0],std::as_writable_bytes(std::span(actual)),64*4));
+        BOOST_REQUIRE(reference.Render(commands,view,light,settings,target,depth,{0,0,32,32}));
+        BOOST_REQUIRE(device.Readback_Texture(Get_Environment_Lighting().shadow_textures[0],std::as_writable_bytes(std::span(expected)),64*4));
+        for (unsigned pixel=0;pixel<actual.size();++pixel) BOOST_CHECK_SMALL(actual[pixel]-expected[pixel],.00001f);
+    }
+    terrain.Shutdown(); patches.Shutdown(); reference.Shutdown();
+    device.Destroy_Texture(target); device.Destroy_Texture(depth);
+}
+
+BOOST_AUTO_TEST_CASE(tree_sway_reuses_geometry_and_matches_cpu_deformed_cutout_shadows)
+{
+    struct ResetEnvironment { ~ResetEnvironment() { Get_Environment_Lighting() = {}; } } reset;
+    GraphicsTestDevice device({true});
+    BOOST_REQUIRE(device.Is_Valid());
+    DirectionalShadowRenderer retained,reference;
+    TreeRenderer trees;
+    const auto shaders=Graphics::Test_Shader_Directory(GRAPHICS_TERRAIN_SHADER_DIRECTORY);
+    BOOST_REQUIRE(retained.Initialize(device,shaders));
+    BOOST_REQUIRE(reference.Initialize(device,shaders));
+    const auto target=device.Create_Texture({32,32,1,RHITextureFormat::RGBA8_UNorm,
+        static_cast<std::uint32_t>(RHITextureUsage::RenderTarget)});
+    const auto depth=device.Create_Texture({32,32,1,RHITextureFormat::D32_Float,
+        static_cast<std::uint32_t>(RHITextureUsage::DepthStencil)});
+    const std::array<std::uint8_t,8> pixels{255,255,255,255,255,255,255,0};
+    const auto texture=device.Create_Texture_Initialized({2,1},{std::as_bytes(std::span(pixels)),8});
+    std::array<TreeVertex,4> vertices;
+    vertices[0].position={-1,-1,-4}; vertices[1].position={1,-1,-4};
+    vertices[2].position={1,1,-4}; vertices[3].position={-1,1,-4};
+    vertices[0].uv={0,1}; vertices[1].uv={1,1}; vertices[2].uv={1,0}; vertices[3].uv={0,0};
+    for (auto& vertex:vertices) vertex.sway={1,1,-5};
+    const std::array<std::uint32_t,6> indices{0,1,2,0,2,3};
+    auto projection=Matrix4x4::Identity();
+    projection.values[10]=projection.values[11]=-1.f/9.f;
+    const View view{Matrix4x4::Identity(),projection,{}, {0,0,32,32,0,1}};
+    RenderLight light; light.type=RenderLightType::Directional;
+    light.flags=RenderLightFlags::Enabled; light.direction={0,0,-1};
+    ShadowSettings settings{1,1,10,.5f,2,64};
+    auto& commands=device.Immediate_Command_List();
+    std::uint64_t uploaded=0, sorts=0;
+    for (unsigned frame=0; frame<5; ++frame) {
+        retained.Clear_Casters(); reference.Clear_Casters();
+        TreeParameters parameters;
+        parameters.sway[0]={frame%2 ? .5f : -.25f,0,.25f,0};
+        if (frame==4) for (auto& vertex:vertices) vertex.position[0]+=.25f;
+        BOOST_REQUIRE(trees.Add_Shadow_Caster(retained,vertices,indices,parameters,texture));
+        std::array<PropVertex,4> cpu;
+        for (unsigned i=0;i<cpu.size();++i) {
+            cpu[i].position=vertices[i].position; cpu[i].uv=vertices[i].uv;
+            for (unsigned axis=0;axis<3;++axis)
+                cpu[i].position[axis]+=(vertices[i].position[2]-vertices[i].sway[2])*parameters.sway[0][axis];
+        }
+        PropParameters material; material.alpha_cutoff=.5f;
+        PropStyle style; style.samplers[0].address.fill(RHISamplerAddress::Clamp);
+        BOOST_REQUIRE(reference.Add_Caster(cpu,indices,material,std::array{texture},style));
+        std::array<float,64*64> actual,expected;
+        BOOST_REQUIRE(retained.Render(commands,view,light,settings,target,depth,{0,0,32,32}));
+        BOOST_REQUIRE(device.Readback_Texture(Get_Environment_Lighting().shadow_textures[0],std::as_writable_bytes(std::span(actual)),64*4));
+        if (frame>0 && frame<4) BOOST_CHECK_EQUAL(retained.Caster_Sort_Count(),sorts);
+        else BOOST_CHECK_GT(retained.Caster_Sort_Count(),sorts);
+        sorts=retained.Caster_Sort_Count();
+        const auto current=retained.Caster_Renderer().Geometry_Uploaded_Bytes();
+        if (frame>0 && frame<4) BOOST_CHECK_EQUAL(current,uploaded);
+        else BOOST_CHECK_GT(current,uploaded);
+        uploaded=current;
+        BOOST_REQUIRE(reference.Render(commands,view,light,settings,target,depth,{0,0,32,32}));
+        BOOST_REQUIRE(device.Readback_Texture(Get_Environment_Lighting().shadow_textures[0],std::as_writable_bytes(std::span(expected)),64*4));
+        for (std::size_t pixel=0;pixel<actual.size();++pixel)
+            BOOST_CHECK_SMALL(actual[pixel]-expected[pixel],.00001f);
+    }
+    trees.Shutdown(); retained.Shutdown(); reference.Shutdown();
+    device.Destroy_Texture(texture); device.Destroy_Texture(target); device.Destroy_Texture(depth);
+}
+
 BOOST_AUTO_TEST_CASE(cascades_draw_off_slice_casters_and_clear_after_resource_resize)
 {
     struct ResetEnvironment final {

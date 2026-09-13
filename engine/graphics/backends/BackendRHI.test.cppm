@@ -649,12 +649,14 @@ BOOST_AUTO_TEST_CASE(scissor_state_survives_pipeline_switches_and_rebinding)
 
 BOOST_AUTO_TEST_CASE(repeated_constant_binding_preserves_updated_and_replaced_colors)
 {
+    for (const unsigned constant_slot : {0u,12u}) {
     struct WindowScope final {
         HWND window = Create_Frame_Test_Window();
         ~WindowScope() { DestroyWindow(window); }
     } scope;
     BOOST_REQUIRE(scope.window != nullptr);
     auto options = Make_Graphics_Test_Options();
+    if (constant_slot==12) options.fragment_shader_name="visual_extended.pso";
     options.window = scope.window;
     options.width = options.height = 16;
     GraphicsTestDevice device(options);
@@ -682,7 +684,7 @@ BOOST_AUTO_TEST_CASE(repeated_constant_binding_preserves_updated_and_replaced_co
     auto& commands = device.Immediate_Command_List();
     RHIBindlessResource resource{};
     resource.type = RHIResourceType::Material;
-    resource.constant_buffer_slot = 0;
+    resource.constant_buffer_slot = constant_slot;
     const auto draw_and_check = [&](RHIBufferHandle buffer, bool expect_red) {
         const auto target = device.Get_Swap_Chain().Backbuffer();
         BOOST_REQUIRE(commands.Set_Render_Targets(target.texture,device.Get_Swap_Chain().Depth_Target().texture));
@@ -756,6 +758,7 @@ BOOST_AUTO_TEST_CASE(repeated_constant_binding_preserves_updated_and_replaced_co
     BOOST_REQUIRE(device.Destroy_Buffer(other_buffer));
     BOOST_REQUIRE(device.Destroy_Buffer(vertex_buffer));
     BOOST_REQUIRE(device.Destroy_Pipeline(pipeline));
+    }
 }
 
 BOOST_AUTO_TEST_CASE(repeated_shader_resources_preserve_output_transitions_and_generations)

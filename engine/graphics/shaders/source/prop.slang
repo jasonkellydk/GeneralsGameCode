@@ -138,8 +138,14 @@ PropOutput Transform_Prop_Vertex(PropInput input, row_major float4x4 WorldTransf
         output.tangent.w*=orientation;
     }
     output.camera_position = mul(View,float4(world_position,1)).xyz;
-    output.camera_normal = normalize(mul(View,float4(world_normal,0)).xyz);
-    output.reflection = reflect(normalize(output.camera_position),output.camera_normal);
+    output.camera_normal = 0;
+    output.reflection = 0;
+    // These vectors exist only for generated texture coordinates. Ordinary
+    // authored UVs need neither normalisation nor a reflection calculation.
+    if (UVSources.x==2 || UVSources.x==3 || UVSources.z==2 || UVSources.z==3)
+        output.camera_normal = normalize(mul(View,float4(world_normal,0)).xyz);
+    if (UVSources.x==3 || UVSources.z==3)
+        output.reflection = reflect(normalize(output.camera_position),output.camera_normal);
     output.world_position = world_position;
     output.material_ambient = input.material_ambient;
     output.material_diffuse = input.material_diffuse;
@@ -170,13 +176,13 @@ GRAPHICS_STORAGE_BUFFER(PropInstances, PropInstance, 127)
 
 struct PropInstanceRecord {
     row_major float4x4 world;
-    PropLightingData lighting;
     uint4 skin;
 };
 GRAPHICS_STORAGE_BUFFER(PropRecords, PropInstanceRecord, 127)
 GRAPHICS_STORAGE_BUFFER(PropRecordIndices, uint, 126)
 struct PropBone { row_major float3x4 transform; };
 GRAPHICS_STORAGE_BUFFER(PropSkinPalette, PropBone, 125)
+GRAPHICS_STORAGE_BUFFER(PropRecordLighting, PropLightingData, 124)
 [shader("vertex")] PropOutput prop_vertex_records(PropInput input, uint instance : SV_InstanceID) {
     const uint index = PropRecordIndices()[instance];
     const PropInstanceRecord record = PropRecords()[index];
@@ -326,5 +332,54 @@ float4 Shade_Prop_Pixel(PropOutput input, PropLightingData lighting)
     return Shade_Prop_Pixel(input, SharedLighting);
 }
 [shader("pixel")] float4 prop_pixel_records(PropOutput input) : SV_TARGET {
-    return Shade_Prop_Pixel(input, PropRecords()[input.record_index].lighting);
+    return Shade_Prop_Pixel(input, PropRecordLighting()[input.record_index]);
+}
+
+// Only interpolate values that affect material discard or environment clipping.
+// Wrapping the shared transform preserves every coordinate-generation mode,
+// while dead-code elimination removes lighting normals, tangents and colours.
+struct PropDepthOutput {
+    float4 position : SV_POSITION;
+    float3 alpha : COLOR0;
+    float2 uv : TEXCOORD0;
+    float2 secondary_uv : TEXCOORD1;
+    float3 world_position : TEXCOORD5;
+    float3 camera_position : TEXCOORD6;
+    float3 camera_normal : TEXCOORD7;
+    float3 reflection : TEXCOORD8;
+};
+PropDepthOutput Depth_Prop_Output(PropOutput input) {
+    PropDepthOutput output;
+    output.position=input.position;
+    output.alpha=float3(input.color.a,input.material_diffuse.a,input.material_ambient.w);
+    output.uv=input.uv;
+    output.secondary_uv=input.secondary_uv;
+    output.world_position=input.world_position;
+    output.camera_position=input.camera_position;
+    output.camera_normal=input.camera_normal;
+    output.reflection=input.reflection;
+    return output;
+}
+[shader("vertex")] PropDepthOutput prop_depth_vertex(PropInput input) {
+    return Depth_Prop_Output(prop_vertex(input));
+}
+[shader("vertex")] PropDepthOutput prop_depth_vertex_instanced(PropInput input, uint instance : SV_InstanceID) {
+    return Depth_Prop_Output(prop_vertex_instanced(input,instance));
+}
+[shader("vertex")] PropDepthOutput prop_depth_vertex_records(PropInput input, uint instance : SV_InstanceID) {
+    return Depth_Prop_Output(prop_vertex_records(input,instance));
+}
+[shader("pixel")] void prop_depth_pixel(PropDepthOutput depth) {
+    PropOutput input=(PropOutput)0;
+    input.position=depth.position;
+    input.color.a=depth.alpha.x;
+    input.material_diffuse.a=depth.alpha.y;
+    input.material_ambient.w=depth.alpha.z;
+    input.uv=depth.uv;
+    input.secondary_uv=depth.secondary_uv;
+    input.world_position=depth.world_position;
+    input.camera_position=depth.camera_position;
+    input.camera_normal=depth.camera_normal;
+    input.reflection=depth.reflection;
+    Shade_Prop_Pixel(input, SharedLighting);
 }

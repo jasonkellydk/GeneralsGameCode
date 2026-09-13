@@ -58,11 +58,16 @@ if(NOT EXISTS "${RTS_FFMPEG_DEBUG_RUNTIME_DIRECTORY}" OR NOT EXISTS "${RTS_FFMPE
     endforeach()
 endif()
 
+option(RTS_STAGE_GAME_ASSETS "Synchronize game assets after linking (disable only after staging once)." ON)
+if(RTS_STAGE_GAME_ASSETS)
+    add_custom_command(TARGET z_generals POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E remove_directory "$<TARGET_FILE_DIR:z_generals>/Run"
+        COMMAND ${CMAKE_COMMAND} -E copy_directory_if_different
+            "${CMAKE_SOURCE_DIR}/GeneralsMD/Run"
+            "$<TARGET_FILE_DIR:z_generals>"
+    )
+endif()
 add_custom_command(TARGET z_generals POST_BUILD
-    COMMAND ${CMAKE_COMMAND} -E remove_directory "$<TARGET_FILE_DIR:z_generals>/Run"
-    COMMAND ${CMAKE_COMMAND} -E copy_directory
-        "${CMAKE_SOURCE_DIR}/GeneralsMD/Run"
-        "$<TARGET_FILE_DIR:z_generals>"
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
         "$<TARGET_FILE:SDL3::SDL3>"
         "$<TARGET_FILE_DIR:z_generals>"

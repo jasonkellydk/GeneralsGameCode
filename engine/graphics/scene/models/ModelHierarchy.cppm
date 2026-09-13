@@ -14,6 +14,7 @@ export import Graphics.Scene.Models.Animation;
 export import Graphics.Scene.AffineTransform;
 import Graphics.Memory.AlignedAllocator;
 import Assets.ModelRig;
+import Graphics.Scene.Models.SourceRevision;
 
 namespace Graphics {
 export struct BoneMotion final {
@@ -28,6 +29,19 @@ export struct BoneMotion final {
 // A model instance owns flat bone metadata, pose buffers and control state.
 // Animation sources supply samples; this component owns hierarchy evaluation.
 export class ModelHierarchy final {
+    // Pose and controls are deep-copied. Their revision domain must therefore
+    // be independent too, unlike shared mesh-source arrays.
+    struct PoseRevision final {
+        SourceRevision source;
+        PoseRevision()=default;
+        PoseRevision(const PoseRevision&) {}
+        PoseRevision& operator=(const PoseRevision& other) {
+            if (this!=&other) source.Reset();
+            return *this;
+        }
+        std::uint64_t Token() const noexcept { return source.Token(); }
+        void Invalidate() noexcept { source.Invalidate(); }
+    };
 public:
     ModelHierarchy() { Initialize_Default(); }
 
@@ -58,6 +72,7 @@ public:
         std::fill(m_pose.World_Transforms().begin(),m_pose.World_Transforms().end(),Affine_Identity());
         m_controls.assign(m_bones.size(),ControlState{});
         m_visible.assign(m_bones.size(),1);m_scale=1;
+        m_revision.Invalidate();
         error.clear();return true;
     }
 
@@ -66,6 +81,7 @@ public:
         m_bones={{Invalid_Bone_Index,Affine_Identity()}};
         m_pose.Initialize(1);m_pose.World_Transforms()[0]=Affine_Identity();
         m_controls.assign(1,ControlState{});m_visible.assign(1,1);m_scale=1;
+        m_revision.Invalidate();
     }
 
     const char* Name() const noexcept { return m_name.c_str(); }
@@ -85,27 +101,40 @@ public:
     }
     const RenderTransform& World_Transform(int bone) const { assert(Valid(bone));return m_pose.World_Transforms()[bone]; }
     bool Visible(int bone) const { assert(Valid(bone));return m_visible[bone]!=0; }
+    std::uint64_t Revision() const noexcept { return m_revision.Token(); }
 
     void Scale(float factor) {
         if(factor==1)return;
         for(auto& bone:m_bones)for(unsigned row=0;row<3;++row)bone.rest_transform.matrix[row*4+3]*=factor;
         m_scale*=factor;
+        m_revision.Invalidate();
     }
-    void Capture(int bone) { assert(Valid(bone));m_controls[bone].captured=true; }
-    void Release(int bone) { assert(Valid(bone));m_controls[bone].captured=false; }
+    void Capture(int bone) {
+        assert(Valid(bone));
+        if (!m_controls[bone].captured) { m_controls[bone].captured=true;m_revision.Invalidate(); }
+    }
+    void Release(int bone) {
+        assert(Valid(bone));
+        if (m_controls[bone].captured) { m_controls[bone].captured=false;m_revision.Invalidate(); }
+    }
     bool Is_Captured(int bone) const { assert(Valid(bone));return m_controls[bone].captured; }
     void Control(int bone,const RenderTransform& delta,bool world_translation=false) {
         assert(Valid(bone));assert(Is_Captured(bone));
+        if (m_controls[bone].delta.matrix == delta.matrix && m_controls[bone].world_translation == world_translation) return;
         m_controls[bone].delta=delta;m_controls[bone].world_translation=world_translation;
+        m_revision.Invalidate();
     }
 
     void Evaluate_Rest(const RenderTransform& root) {
         GRAPHICS_PROFILE_SCOPE("Graphics.Models.EvaluateRestHierarchy");
+        if (m_rest_revision != 0 && m_rest_revision == Revision() && m_rest_root.matrix == root.matrix) return;
         Evaluate(root,[](int) { BoneMotion motion;motion.set_visibility=true;return motion; });
+        m_rest_revision=Revision();m_rest_root=root;
     }
 
     template<class Sampler>
     void Evaluate(const RenderTransform& root,Sampler&& sample) {
+        m_revision.Invalidate();
         auto world=m_pose.World_Transforms();world[0]=root;m_visible[0]=1;
         for(std::size_t i=1;i<m_bones.size();++i) {
             auto transform=Multiply_Affine(world[m_bones[i].parent],m_bones[i].rest_transform);
@@ -157,5 +186,8 @@ private:
     AlignedVector<ControlState> m_controls;
     std::vector<std::uint8_t> m_visible;
     float m_scale=1;
+    PoseRevision m_revision;
+    std::uint64_t m_rest_revision=0;
+    RenderTransform m_rest_root{};
 };
 }

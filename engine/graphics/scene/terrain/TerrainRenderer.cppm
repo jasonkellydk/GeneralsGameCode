@@ -1,7 +1,9 @@
 module;
 #include "../../profiling/Tracy.h"
 
+#include <algorithm>
 #include <array>
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <filesystem>
@@ -76,23 +78,59 @@ public:
         if (m_geometry.Indices().empty()) return true;
         PropParameters parameters;
         parameters.textured = 0;
-        if (m_shadow_owner == &shadows && world == m_shadow_world
-            && shadows.Is_Caster_Valid(m_shadow_mesh))
-            return shadows.Add_Caster(m_shadow_mesh,parameters,{});
-        Release_Shadow_Caster();
-        std::vector<PropVertex> vertices;
-        vertices.reserve(m_geometry.Vertices().size());
-        for (const auto& source : m_geometry.Vertices()) {
-            PropVertex vertex;
-            for (unsigned row=0;row<3;++row)
-                vertex.position[row] = world[row*4]*source.position[0]
-                    +world[row*4+1]*source.position[1]+world[row*4+2]*source.position[2]+world[row*4+3];
-            vertices.push_back(vertex);
+        const bool current=m_shadow_owner==&shadows && world==m_shadow_world
+            && !m_shadow_meshes.empty()
+            && std::all_of(m_shadow_meshes.begin(),m_shadow_meshes.end(),
+                [&](auto mesh) { return shadows.Is_Caster_Valid(mesh); });
+        if (!current) {
+            Release_Shadow_Caster();
+            const auto source=m_geometry.Vertices();
+            auto minimum=source.front().position, maximum=minimum;
+            for (const auto& vertex:source) for (unsigned axis=0;axis<2;++axis) {
+                minimum[axis]=std::min(minimum[axis],vertex.position[axis]);
+                maximum[axis]=std::max(maximum[axis],vertex.position[axis]);
+            }
+            // Cells remain intact. Partition their XY footprint so each light
+            // cascade can cull retained patches instead of drawing the full map.
+            std::array<std::vector<PropVertex>,64> patch_vertices;
+            std::array<std::vector<std::uint32_t>,64> patch_indices;
+            const auto indices=m_geometry.Indices();
+            for (std::size_t cell=0;cell<source.size()/4;++cell) {
+                unsigned patch=0;
+                for (unsigned axis=0;axis<2;++axis) {
+                    const double extent=double(maximum[axis])-minimum[axis];
+                    const double center=(double(source[cell*4].position[axis])+source[cell*4+2].position[axis])*.5;
+                    const unsigned coordinate=extent>0
+                        ? static_cast<unsigned>(std::clamp((center-minimum[axis])*8/extent,0.,7.)) : 0;
+                    patch+=coordinate*(axis==0 ? 1u : 8u);
+                }
+                auto& vertices=patch_vertices[patch];
+                auto& triangles=patch_indices[patch];
+                const auto first=static_cast<std::uint32_t>(vertices.size());
+                for (unsigned corner=0;corner<4;++corner) {
+                    PropVertex vertex;
+                    const auto& position=source[cell*4+corner].position;
+                    for (unsigned row=0;row<3;++row)
+                        vertex.position[row]=world[row*4]*position[0]+world[row*4+1]*position[1]
+                            +world[row*4+2]*position[2]+world[row*4+3];
+                    vertices.push_back(vertex);
+                }
+                for (unsigned index=0;index<6;++index)
+                    triangles.push_back(first+indices[cell*6+index]-static_cast<std::uint32_t>(cell*4));
+            }
+            m_shadow_meshes.reserve(64);
+            m_shadow_owner=&shadows;
+            for (unsigned patch=0;patch<64;++patch) {
+                if (patch_indices[patch].empty()) continue;
+                const auto mesh=shadows.Create_Caster(patch_vertices[patch],patch_indices[patch]);
+                if (!mesh.Is_Valid()) { Release_Shadow_Caster(); return false; }
+                m_shadow_meshes.push_back(mesh);
+            }
+            m_shadow_world=world;
         }
-        m_shadow_mesh = shadows.Create_Caster(vertices,m_geometry.Indices());
-        m_shadow_owner = &shadows;
-        m_shadow_world = world;
-        return shadows.Add_Caster(m_shadow_mesh,parameters,{});
+        for (auto mesh:m_shadow_meshes)
+            if (!shadows.Add_Caster(mesh,parameters,{})) return false;
+        return true;
     }
 
     bool Initialize(Device &device, const std::filesystem::path &shader_directory)
@@ -290,13 +328,14 @@ private:
 
     void Release_Shadow_Caster() noexcept
     {
-        if (m_shadow_owner != nullptr) m_shadow_owner->Destroy_Caster(m_shadow_mesh);
+        if (m_shadow_owner != nullptr)
+            for (auto mesh:m_shadow_meshes) m_shadow_owner->Destroy_Caster(mesh);
         m_shadow_owner = nullptr;
-        m_shadow_mesh = {};
+        m_shadow_meshes.clear();
     }
 
     DirectionalShadowRenderer* m_shadow_owner = nullptr;
-    ShadowCasterHandle m_shadow_mesh{};
+    std::vector<ShadowCasterHandle> m_shadow_meshes;
     std::array<float,16> m_shadow_world{};
     EnvironmentLightingBinding m_environment;
     Device *m_device = nullptr;

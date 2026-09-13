@@ -5,6 +5,7 @@ module;
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <limits>
 #include <span>
 #include <utility>
@@ -254,6 +255,9 @@ public:
 
 		const std::uint32_t dense_index = m_emitter_slots[handle.Get_Index()].dense_index;
 		m_emitters[dense_index] = emitter;
+		// Frame submission clears particle counts before repopulating emitters.
+        // Updating an empty owner must not scan particles of earlier emitters.
+        if (m_emitter_particle_counts[dense_index] == 0) return true;
 		for (std::size_t particle_index = 0; particle_index < m_particle_emitters.size(); ++particle_index) {
 			if (m_particle_emitters[particle_index] != handle)
 				continue;
@@ -305,48 +309,40 @@ public:
 			return false;
 
 		const std::uint32_t dense_emitter_index = m_emitter_slots[handle.Get_Index()].dense_index;
-		const std::size_t first_particle = m_position_x.size();
-		const std::size_t new_size = first_particle + count;
-		m_position_x.resize(new_size);
-		m_position_y.resize(new_size);
-		m_position_z.resize(new_size);
-		m_velocity_x.resize(new_size);
-		m_velocity_y.resize(new_size);
-		m_velocity_z.resize(new_size);
-		m_lifetimes.resize(new_size);
-		m_sizes.resize(new_size);
-		m_color_r.resize(new_size);
-		m_color_g.resize(new_size);
-		m_color_b.resize(new_size);
-		m_color_a.resize(new_size);
-		m_angles.resize(new_size);
-		m_materials.resize(new_size);
-		m_particle_emitter_flags.resize(new_size);
-		m_particle_emitters.resize(new_size);
-		m_particle_pipelines.resize(new_size);
-		m_texture_regions.resize(new_size);
-
-		for (std::size_t index = 0; index < count; ++index) {
-			const std::size_t particle_index = first_particle + index;
-			m_position_x[particle_index] = source.position_x[index];
-			m_position_y[particle_index] = source.position_y[index];
-			m_position_z[particle_index] = source.position_z[index];
-			m_velocity_x[particle_index] = source.velocity_x[index];
-			m_velocity_y[particle_index] = source.velocity_y[index];
-			m_velocity_z[particle_index] = source.velocity_z[index];
-			m_lifetimes[particle_index] = source.lifetimes[index];
-			m_sizes[particle_index] = source.sizes[index];
-			m_color_r[particle_index] = source.color_r[index];
-			m_color_g[particle_index] = source.color_g[index];
-			m_color_b[particle_index] = source.color_b[index];
-			m_color_a[particle_index] = source.color_a[index];
-			m_angles[particle_index] = source.angles.empty() ? 0.0f : source.angles[index];
-			m_materials[particle_index] = source.materials[index];
-			m_particle_emitter_flags[particle_index] = source.emitter_flags[index];
-			m_particle_emitters[particle_index] = handle;
-			m_particle_pipelines[particle_index] = source.pipelines.empty() ? m_emitters[dense_emitter_index].pipeline : source.pipelines[index];
-			m_texture_regions[particle_index] = source.texture_regions.empty() ? ParticleTextureRegion{0, 0, 1, 1} : source.texture_regions[index];
-		}
+		// Append contiguous fields directly instead of clearing each destination
+		// element and then scattering all fields through a per-particle loop.
+		// Capacity was checked above, including the self-copy case.
+		const auto append = [](auto& destination, auto values) {
+			if (values.empty()) return;
+			const std::less<> less;
+			if (!destination.empty() && !less(values.data(), destination.data())
+				&& less(values.data(), destination.data() + destination.size())) {
+				const auto first = destination.size();
+				destination.resize(first + values.size());
+				std::copy(values.begin(), values.end(), destination.begin() + first);
+			} else destination.insert(destination.end(), values.begin(), values.end());
+		};
+		append(m_position_x, source.position_x);
+		append(m_position_y, source.position_y);
+		append(m_position_z, source.position_z);
+		append(m_velocity_x, source.velocity_x);
+		append(m_velocity_y, source.velocity_y);
+		append(m_velocity_z, source.velocity_z);
+		append(m_lifetimes, source.lifetimes);
+		append(m_sizes, source.sizes);
+		append(m_color_r, source.color_r);
+		append(m_color_g, source.color_g);
+		append(m_color_b, source.color_b);
+		append(m_color_a, source.color_a);
+		append(m_materials, source.materials);
+		append(m_particle_emitter_flags, source.emitter_flags);
+		if (source.angles.empty()) m_angles.insert(m_angles.end(), count, 0.0f);
+		else append(m_angles, source.angles);
+		if (source.pipelines.empty()) m_particle_pipelines.insert(m_particle_pipelines.end(), count, m_emitters[dense_emitter_index].pipeline);
+		else append(m_particle_pipelines, source.pipelines);
+		if (source.texture_regions.empty()) m_texture_regions.insert(m_texture_regions.end(), count, ParticleTextureRegion{0, 0, 1, 1});
+		else append(m_texture_regions, source.texture_regions);
+		m_particle_emitters.insert(m_particle_emitters.end(), count, handle);
 		m_emitter_particle_counts[dense_emitter_index] += static_cast<std::uint32_t>(count);
 		return true;
 	}

@@ -29,6 +29,7 @@ endfunction()
 
 _graphics_add_test_shader(visual_basic.vso vertex BasicVertex VisualRegression.slang)
 _graphics_add_test_shader(visual_basic.pso pixel BasicPixel VisualRegression.slang)
+_graphics_add_test_shader(visual_extended.pso pixel ExtendedMaterialPixel VisualRegression.slang)
 _graphics_add_test_shader(visual_textured.pso pixel TexturedPixel VisualRegression.slang)
 _graphics_add_test_shader(visual_shadow.vso vertex ShadowVertex VisualRegression.slang)
 _graphics_add_test_shader(visual_shadow.pso pixel ShadowPixel VisualRegression.slang)
